@@ -24,7 +24,7 @@ from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
 from ...dnd.world_store import save_doc, set_world_map
-from ..base import AgentResult, TrpgAgent
+from ..base import AgentResult, TrpgAgent, UsageEntry
 from .gen_story import StoryAgent, story_agent
 from .gen_world import WorldAgent, world_agent
 
@@ -61,6 +61,8 @@ class EntryReport:
     options: EntryOptions
     regions: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    #: 本流程里每一次模型调用的用量（供计费统计）
+    usages: list[UsageEntry] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -94,11 +96,13 @@ async def _safe(
 ) -> AgentResult | None:
     """调用一个生成 agent；失败时记入 ``report.errors`` 并返回 ``None``。"""
     try:
-        return await agent.run(**values)
+        result = await agent.run(**values)
     except Exception as e:
         log.warning(f"入场流程「{label}」生成失败：{str_traceback(e)}")
         report.errors.append(f"{label}：{e}")
         return None
+    report.usages.extend(getattr(result, "usages", None) or [])
+    return result
 
 
 async def run_entry_flow(

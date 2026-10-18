@@ -204,6 +204,7 @@ class AreaAgent(TrpgAgent):
             content=result.content,
             model_type=result.model_type,
             usage=result.usage,
+            usages=list(result.usages),
             sub_areas=sub_areas,
             settlements=settlements,
             dungeons=dungeons,

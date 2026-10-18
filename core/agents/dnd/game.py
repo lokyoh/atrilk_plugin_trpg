@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
+from ...dnd.billing import bind_save, record_result
 from ...dnd.combat import (
     advance_turn,
     all_enemies_out,
@@ -199,13 +200,15 @@ def _ending_text(save) -> str:
 async def build_scene_for_save(save, generic: str) -> str | None:
     """用场景构建器把**通用场景**改造成**本局专属场景**；失败返回 ``None``。"""
     try:
-        result = await scene_builder_agent.run(
-            scene=generic,
-            story=load_doc("story", "main") or "",
-            party=_party_text(save),
-            progress=_progress_text(save),
-            history=events_text(save, 10),
-        )
+        with bind_save(save.save_id):
+            result = await scene_builder_agent.run(
+                scene=generic,
+                story=load_doc("story", "main") or "",
+                party=_party_text(save),
+                progress=_progress_text(save),
+                history=events_text(save, 10),
+            )
+            record_result(result)
     except Exception as e:
         log.warning(f"场景构建失败：{str_traceback(e)}")
         return None
@@ -446,6 +449,7 @@ _OPENING_PROMPT = (
     "请做开场白——结合世界起点与故事设定开篇，点出在场角色的处境与眼前的机会；"
     "然后用 move_scene 把玩家们带进第一个地点并交代入场；"
     "最后用 await_players 声明第一轮要等待行动的玩家（默认全员）。"
+    "开场白的结尾，按叙述要求给玩家两三条「现在可以做什么」的具体提示。"
 )
 
 
@@ -542,16 +546,18 @@ async def run_dm_round(
         user_id=str(order[0]), save_id=save.save_id, chat_id=str(chat_id)
     )
     try:
-        result = await dm_agent.run(
-            context=context,
-            action=action_text,
-            character="\n\n".join(party),
-            scene=scene,
-            npcs=roster,
-            ending=_ending_text(save),
-            combat=combat_block,
-            history=history,
-        )
+        with bind_save(save.save_id):
+            result = await dm_agent.run(
+                context=context,
+                action=action_text,
+                character="\n\n".join(party),
+                scene=scene,
+                npcs=roster,
+                ending=_ending_text(save),
+                combat=combat_block,
+                history=history,
+            )
+            record_result(result)
     except AgentError as e:
         log.warning(f"DM 主持失败：{str_traceback(e)}")
         return TurnResult(

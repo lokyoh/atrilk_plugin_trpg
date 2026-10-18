@@ -18,6 +18,7 @@
 - :mod:`session_store` 建卡会话落盘（超出 ``session_expire_timeout`` 也能续接）
 - :mod:`world_store` 全局共享世界文档库（world / 剧情 / 地点等，markdown + JSON 索引）
 - :mod:`save_store` 跑团存档（角色卡副本 + 进度 + 事件日志）
+- :mod:`billing` 跑团用量统计（按存档累计 token 与花费）
 - :mod:`judge` 规则判断器
 - :mod:`creation` 建卡流程状态机
 """
@@ -34,6 +35,7 @@ from .attributes import (
     proficiency_bonus,
 )
 from .background import BACKGROUNDS, Background, background_choices, get_background
+from .billing import BillingReport, format_report, record_usages, report
 from .card import DEATH_CONDITIONS, DeathSaveOutcome, DndCharacter, ability_roll_pool
 from .combat import (
     COMBAT_FILENAME,
@@ -281,6 +283,7 @@ __all__ = [
     "Armor",
     "ArmorCategory",
     "Background",
+    "BillingReport",
     "CombatState",
     "Combatant",
     "CreationError",
@@ -347,6 +350,7 @@ __all__ = [
     "find_combatant",
     "find_npc",
     "format_ability_block",
+    "format_report",
     "format_spell_lines",
     "format_spell_list",
     "get_ability",
@@ -405,8 +409,10 @@ __all__ = [
     "read_doc",
     "read_scene",
     "recent_events",
+    "record_usages",
     "remove_npc",
     "remove_player",
+    "report",
     "resolve_monster",
     "resource_of",
     "resources_text",

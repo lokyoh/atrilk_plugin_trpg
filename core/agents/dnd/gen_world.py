@@ -210,6 +210,7 @@ class WorldAgent(TrpgAgent):
             content=result.content,
             model_type=result.model_type,
             usage=result.usage,
+            usages=list(result.usages),
             regions=regions,
             adjacency=adjacency,
         )

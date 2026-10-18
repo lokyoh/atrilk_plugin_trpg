@@ -37,6 +37,7 @@ __all__ = [
     "AgentInput",
     "AgentResult",
     "TrpgAgent",
+    "UsageEntry",
 ]
 
 
@@ -54,6 +55,16 @@ class AgentInput:
     description: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class UsageEntry:
+    """一次模型调用的用量记录（模型名 + token 数），供计费统计使用。"""
+
+    #: 实际应答的模型名（``llm_manager`` 里注册的名字）
+    model: str = ""
+    #: 本次调用的 token 用量
+    usage: Any = field(default=None)
+
+
 @dataclass(slots=True)
 class AgentResult:
     """agent 一次运行的结果。"""
@@ -63,6 +74,8 @@ class AgentResult:
     content: str
     model_type: ModelType = ModelType.WORK
     usage: Any = field(default=None)
+    #: 本次运行里**每一次**模型调用的用量（思考循环可能调用多次）
+    usages: list[UsageEntry] = field(default_factory=list)
 
     def __str__(self) -> str:
         return self.content
@@ -154,12 +167,18 @@ class TrpgAgent:
         content = resp.content
         if not isinstance(content, str):
             content = str(content)
+        usage = getattr(resp, "usage", None)
         return AgentResult(
             agent=self.name,
             title=self.title,
             content=content,
             model_type=self.model_type,
-            usage=getattr(resp, "usage", None),
+            usage=usage,
+            usages=[
+                UsageEntry(model=getattr(resp, "model", None) or "", usage=usage)
+            ]
+            if usage
+            else [],
         )
 
     def describe(self) -> str:

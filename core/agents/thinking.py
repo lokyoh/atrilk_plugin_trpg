@@ -8,7 +8,7 @@
 解析层做了两处兼容（对应 ``.agents/trpg_issues.md``）：
 
 - **多个 ```text 代码块**：逐块解析并合并调用（约定仍是「一个文本区」，
-  提示词里会要求模型写在同一个块里），单个坏块只忽略该块；
+  提示词里会要求模型写在同一个块里），解析不了的块按正文保留而不是丢弃；
 - **DSML 原生工具调用**：部分模型不按约定输出
   ``<｜｜DSML｜｜ invoke name="...">`` 这类原生调用 DSL，这里转成同样的调用
   结构，并把它连同参数值从正文里剥除，避免原样泄漏成给玩家看的叙述。
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -34,7 +35,7 @@ from ATRI.system.agent.llm import (
     llm_manager,
 )
 
-from .base import AgentError, AgentResult, TrpgAgent
+from .base import AgentError, AgentResult, TrpgAgent, UsageEntry
 
 __all__ = [
     "AgentContext",
@@ -144,6 +145,26 @@ class ThinkingAgent(TrpgAgent):
     )
     #: 残留的 DSML 标签（如未配对的 calls 包裹），清理正文时直接剥除
     _DSML_TAG_RE: ClassVar[re.Pattern[str]] = re.compile(r"</?[｜|]+DSML[｜|]+[^>]*>")
+    #: 一次调用的起点：行首的 ``功能名(``（参数之前的部分）
+    _CALL_START_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"^[ \t]*(?P<name>[A-Za-z_]\w*)[ \t]*\(", re.MULTILINE
+    )
+    #: 完整调用片段：``功能名(参数…)``
+    _CALL_LINE_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"^(?P<name>[A-Za-z_]\w*)[ \t]*\((?P<args>[\s\S]*)\)$"
+    )
+    #: 参数名：``key=``
+    _KEYWORD_RE: ClassVar[re.Pattern[str]] = re.compile(r"([A-Za-z_]\w*)[ \t]*=[ \t]*")
+    #: 字符串参数里的转义符还原表
+    _ESCAPES: ClassVar[dict[str, str]] = {
+        "n": "\n",
+        "t": "\t",
+        "r": "\r",
+        '"': '"',
+        "'": "'",
+        "`": "`",
+        "\\": "\\",
+    }
 
     # ---- 功能与提示词 ----
 
@@ -185,38 +206,154 @@ class ThinkingAgent(TrpgAgent):
 
     # ---- 解析 ----
 
-    @staticmethod
-    def parse_dsl(text: str) -> list[dict[str, Any]]:
-        """把 DSL 文本解析成 ``[{"function": ..., "args": {...}}, ...]``。"""
+    @classmethod
+    def parse_dsl(cls, text: str) -> list[dict[str, Any]]:
+        """把 DSL 文本解析成 ``[{"function": ..., "args": {...}}, ...]``。
+
+        逐行严格解析（``ast``）时，模型一旦在字符串参数里直接写换行就会整块
+        报「unterminated string literal」而被丢弃；这里改成**按括号配平切出
+        调用**、再逐个参数取值，因此
+        ``narrate(text="第一段`` / ``第二段")`` 这种跨行写法也能正确解析。
+        既不是调用的行（如多余的说明文字）直接跳过。
+        """
         calls: list[dict[str, Any]] = []
-        for line_no, raw_line in enumerate(text.splitlines(), start=1):
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            try:
-                tree = ast.parse(line, mode="eval")
-            except SyntaxError as e:
-                raise AgentError(f"第 {line_no} 行：语法错误：{e}") from e
-            node = tree.body
-            if not isinstance(node, ast.Call):
-                raise AgentError(f"第 {line_no} 行：不是函数调用")
-            if not isinstance(node.func, ast.Name):
-                raise AgentError(f"第 {line_no} 行：功能名必须是简单标识符")
-            func_name = node.func.id
-            if node.args:
-                raise AgentError(f"第 {line_no} 行：`{func_name}` 只允许关键字参数")
-            args: dict[str, Any] = {}
-            for kw in node.keywords:
-                if kw.arg is None:
-                    raise AgentError(f"第 {line_no} 行：不允许 **kwargs")
-                try:
-                    args[kw.arg] = ast.literal_eval(kw.value)
-                except (ValueError, SyntaxError) as e:
-                    raise AgentError(
-                        f"第 {line_no} 行：参数 `{kw.arg}` 不是字面量：{e}"
-                    ) from e
-            calls.append({"function": func_name, "args": args, "line": line_no})
+        for line_no, segment in cls._iter_calls(text):
+            name, args = cls._parse_call(segment, line_no)
+            calls.append({"function": name, "args": args, "line": line_no})
         return calls
+
+    @classmethod
+    def _iter_calls(cls, text: str) -> Iterator[tuple[int, str]]:
+        """按括号配平切出 ``功能名(...)`` 片段，产出 ``(起始行号, 片段)``。"""
+        pos = 0
+        total = len(text)
+        while pos < total:
+            match = cls._CALL_START_RE.search(text, pos)
+            if not match:
+                return
+            line_no = text.count("\n", 0, match.start()) + 1
+            depth = 0
+            quote = ""
+            idx = match.end() - 1
+            while idx < total:
+                char = text[idx]
+                if quote:
+                    if char == "\\":
+                        idx += 2
+                        continue
+                    if text.startswith(quote, idx):
+                        idx += len(quote)
+                        quote = ""
+                        continue
+                elif text.startswith('"""', idx):
+                    quote = '"""'
+                    idx += 3
+                    continue
+                elif char in "\"'":
+                    quote = char
+                elif char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                    if depth == 0:
+                        idx += 1
+                        break
+                idx += 1
+            else:
+                raise AgentError(f"第 {line_no} 行：括号没有闭合")
+            yield line_no, text[match.start() : idx]
+            pos = idx
+
+    @classmethod
+    def _parse_call(cls, segment: str, line_no: int) -> tuple[str, dict[str, Any]]:
+        """解析一段 ``功能名(参数=值, ...)``，返回 ``(功能名, 参数字典)``。"""
+        match = cls._CALL_LINE_RE.match(segment.strip())
+        if not match:
+            raise AgentError(f"第 {line_no} 行：不是函数调用")
+        name = match.group("name")
+        return name, cls._parse_args(match.group("args"), line_no, name)
+
+    @classmethod
+    def _parse_args(cls, raw: str, line_no: int, name: str) -> dict[str, Any]:
+        """解析调用括号内的关键字参数；值可以是跨行 / 三引号字符串。"""
+        args: dict[str, Any] = {}
+        pos = 0
+        total = len(raw)
+        while pos < total:
+            while pos < total and (raw[pos].isspace() or raw[pos] == ","):
+                pos += 1
+            if pos >= total:
+                break
+            key_match = cls._KEYWORD_RE.match(raw, pos)
+            if not key_match:
+                raise AgentError(f"第 {line_no} 行：`{name}` 的参数格式错误")
+            key = key_match.group(1)
+            value, pos = cls._read_value(raw, key_match.end(), line_no, key)
+            args[key] = value
+        return args
+
+    @classmethod
+    def _read_value(
+        cls, raw: str, pos: int, line_no: int, key: str
+    ) -> tuple[Any, int]:
+        """从 ``pos`` 起读一个参数值，返回 ``(值, 新的位置)``。"""
+        total = len(raw)
+        while pos < total and raw[pos].isspace():
+            pos += 1
+        if pos >= total:
+            raise AgentError(f"第 {line_no} 行：参数 `{key}` 缺少值")
+        quote = '"""' if raw.startswith('"""', pos) else raw[pos]
+        if quote in ('"', "'", '"""'):
+            start = pos + len(quote)
+            idx = start
+            body: list[str] = []
+            while idx < total:
+                if raw[idx] == "\\" and idx + 1 < total:
+                    body.append(raw[idx : idx + 2])
+                    idx += 2
+                    continue
+                if raw.startswith(quote, idx):
+                    idx += len(quote)
+                    break
+                body.append(raw[idx])
+                idx += 1
+            else:
+                raise AgentError(f"第 {line_no} 行：参数 `{key}` 的引号没有闭合")
+            return cls._unescape("".join(body)), idx
+        # 裸值（数字 / 布尔 / 列表 / 字典等）
+        start = pos
+        depth = 0
+        while pos < total:
+            char = raw[pos]
+            if char in "[{(":
+                depth += 1
+            elif char in "]})":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif char == "," and depth == 0:
+                break
+            pos += 1
+        return cls._literal(raw[start:pos].strip()), pos
+
+    @staticmethod
+    def _unescape(text: str) -> str:
+        """还原转义符（``\\n`` → 换行），保留原文里的真实换行。"""
+        return re.sub(
+            r"\\(.)",
+            lambda m: ThinkingAgent._ESCAPES.get(m.group(1), m.group(0)),
+            text,
+            flags=re.DOTALL,
+        )
+
+    @staticmethod
+    def _literal(text: str) -> Any:
+        """裸值还原：能当字面量就转类型，否则按字符串保留。"""
+        try:
+            parsed = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            return text
+        return parsed
 
     @classmethod
     def split_response(cls, text: str) -> tuple[str, list[dict[str, Any]]]:
@@ -224,20 +361,28 @@ class ThinkingAgent(TrpgAgent):
 
         兼容三种写法：约定的单个 ```text 代码块、拆成多个的代码块（逐块解析、
         合并调用），以及模型自发的 DSML 原生工具调用 DSL（转成同样的调用结构，
-        并把它连同参数值从正文里剥除）。
+        并把它连同参数值从正文里剥除）。**解析不了的代码块按正文保留**，
+        避免整段叙述被静默丢掉。
         """
-        raw = text or ""
         calls: list[dict[str, Any]] = []
-        for block in cls._CALL_BLOCK_RE.findall(raw):
-            try:
-                calls.extend(cls.parse_dsl(cls._strip_lang_tag(block)))
-            except AgentError as e:
-                # 单个坏块只忽略该块，不影响同轮其它合法调用。
-                log.warning(f"功能调用解析失败，已忽略该代码块：{e}")
-
-        dsml_calls, cleaned = cls.extract_dsml(raw)
+        dsml_calls, raw = cls.extract_dsml(text or "")
         calls.extend(dsml_calls)
-        content = cls._CALL_BLOCK_RE.sub("", cleaned).strip()
+
+        parts: list[str] = []
+        last = 0
+        for match in cls._CALL_BLOCK_RE.finditer(raw):
+            parts.append(raw[last : match.start()])
+            block = cls._strip_lang_tag(match.group(1))
+            try:
+                calls.extend(cls.parse_dsl(block))
+            except AgentError as e:
+                # 坏块当正文保留：宁可多一段原文，也不要吞掉叙述。
+                log.warning(f"功能调用解析失败，已按正文保留：{e}")
+                parts.append(block)
+            last = match.end()
+        parts.append(raw[last:])
+
+        content = "\n\n".join(part.strip() for part in parts if part.strip())
         return content, calls
 
     @classmethod
@@ -311,6 +456,7 @@ class ThinkingAgent(TrpgAgent):
 
         messages = self.build_messages(values)
         last_content = ""
+        usages: list[UsageEntry] = []
 
         for _step in range(self.max_steps):
             try:
@@ -323,6 +469,7 @@ class ThinkingAgent(TrpgAgent):
                 log.warning(f"跑团 {self.title} 思考失败：{str_traceback(e)}")
                 raise AgentError(f"{self.title}思考失败：{e}") from e
 
+            self._collect_usage(usages, resp)
             raw = resp.content if isinstance(resp.content, str) else str(resp.content)
             content, calls = self.split_response(raw)
             if content:
@@ -330,7 +477,7 @@ class ThinkingAgent(TrpgAgent):
 
             # 没有功能调用：把当前内容当作最终叙述结束。
             if not calls:
-                return self._result(last_content, resp)
+                return self._result(last_content, resp, usages)
 
             messages.add_message(LLMMessage("assistant", LLMContents().text(raw)))
 
@@ -344,7 +491,7 @@ class ThinkingAgent(TrpgAgent):
                 try:
                     result = await tool.call(context, **call["args"])
                 except AgentFinish as finish:
-                    return self._result(finish.output, resp)
+                    return self._result(finish.output, resp, usages)
                 except Exception as e:
                     log.warning(f"跑团功能 {name} 执行失败：{str_traceback(e)}")
                     feedback.append(f"功能 {name} 执行失败，请勿再次调用")
@@ -361,11 +508,21 @@ class ThinkingAgent(TrpgAgent):
 
         raise AgentError(f"{self.title}超过最大思考轮数（{self.max_steps}）")
 
-    def _result(self, content: str, resp: Any) -> AgentResult:
+    @staticmethod
+    def _collect_usage(usages: list[UsageEntry], resp: Any) -> None:
+        """把一次模型调用的用量记进本轮清单（供计费统计）。"""
+        usage = getattr(resp, "usage", None)
+        if usage:
+            usages.append(UsageEntry(model=getattr(resp, "model", None) or "", usage=usage))
+
+    def _result(
+        self, content: str, resp: Any, usages: list[UsageEntry] | None = None
+    ) -> AgentResult:
         return AgentResult(
             agent=self.name,
             title=self.title,
             content=content or "",
             model_type=self.model_type,
             usage=getattr(resp, "usage", None),
+            usages=list(usages or []),
         )

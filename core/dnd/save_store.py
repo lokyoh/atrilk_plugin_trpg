@@ -173,6 +173,8 @@ class Save:
     progress: dict[str, Any] = field(default_factory=dict)
     #: 参与的玩家 user_id
     player_ids: list[str] = field(default_factory=list)
+    #: 开局者 user_id（同一群每人只能开一局，判断依据）
+    creator_id: str = ""
 
     def touch(self) -> None:
         self.updated_at = time.time()
@@ -186,6 +188,7 @@ class Save:
             "current_scene": self.current_scene,
             "progress": self.progress,
             "player_ids": self.player_ids,
+            "creator_id": self.creator_id,
         }
 
     @classmethod
@@ -198,6 +201,7 @@ class Save:
             current_scene=str(data.get("current_scene", "") or ""),
             progress=dict(data.get("progress") or {}),
             player_ids=[str(u) for u in (data.get("player_ids") or [])],
+            creator_id=str(data.get("creator_id", "") or ""),
         )
 
 

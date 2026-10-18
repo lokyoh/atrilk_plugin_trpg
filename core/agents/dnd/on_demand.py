@@ -18,6 +18,7 @@ import re
 from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
+from ...dnd.billing import record_result
 from ...dnd.world_store import (
     get_world_map,
     list_docs,
@@ -148,6 +149,7 @@ async def _run_agent(agent, label: str, **values) -> str | None:
     except Exception as e:
         log.warning(f"按需生成「{label}」失败：{str_traceback(e)}")
         return None
+    record_result(result)
     return result.content
 
 
