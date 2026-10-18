@@ -39,6 +39,7 @@ from .skills import get_skill
 from .spells import Spell, get_spell, spells_for_class
 
 __all__ = [
+    "ABILITY_SET_COUNT",
     "CHOICE_STEPS",
     "CREATION_STEPS",
     "STEPS",
@@ -117,6 +118,9 @@ _ROLL_WORDS = {
     "重来",
 }
 _ARRAY_WORDS = {"标准数组", "标准", "数组", "默认"}
+
+#: roll 属性一次掷出的候选组数（玩家从中挑一组直接使用）
+ABILITY_SET_COUNT = 5
 
 
 def _split_choices(text: str) -> list[str]:
@@ -220,18 +224,30 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
         return f"欢迎来到跑团！先选择要玩的规则模式：\n{options}\n回复序号即可（目前仅支持 DND 5e）。"
 
     if step is CreationStep.ABILITY:
-        lines = [
-            "第 1 步：roll 属性。",
-            "回复「roll」掷 6 组属性（DND 5e：4d6 取最高的三个），或回复「标准数组」使用 15/14/13/12/10/8。",
-        ]
-        if session and session.ability_pool:
-            lines.append("")
-            lines.append("已掷出：" + session.ability_pool_text())
-            lines.append(
-                "请把 6 个值按「"
+        array_text = "/".join(str(v) for v in STANDARD_ARRAY)
+        candidates = session.ability_candidates if session else []
+        if candidates:
+            lines = [
+                f"第 1 步：选择属性组。已掷出 {len(candidates)} 组"
+                "（每项 4d6 取最高的三个，按「"
                 + " ".join(a.cn for a in ABILITIES)
-                + "」的顺序回复给我（例如「15 14 13 12 10 8」），或回复「自动」由我分配。"
+                + "」顺序展示）："
+            ]
+            for i, scores in enumerate(candidates, 1):
+                shown = "  ".join(f"{v:>2}" for v in scores)
+                lines.append(f"{i}. {shown}（合计 {sum(scores)}）")
+            lines.append(
+                f"回复序号（1~{len(candidates)}）选一组直接使用；"
+                f"回复「重掷」再掷 {ABILITY_SET_COUNT} 组，"
+                f"或回复「标准数组」使用 {array_text}。"
             )
+        else:
+            lines = [
+                "第 1 步：roll 属性。",
+                f"回复「roll」掷 {ABILITY_SET_COUNT} 组完整属性"
+                "（DND 5e：每项 4d6 取最高的三个），挑一组直接使用；"
+                f"或回复「标准数组」使用 {array_text}。",
+            ]
         return "\n".join(lines)
 
     if step is CreationStep.RACE:
@@ -348,6 +364,10 @@ class CreationSession:
     ability_pool: list[int] = field(default_factory=list)
     #: 每组属性的原始 4d6 点数，按掷出顺序保存，用于回放展示
     ability_groups: list[list[int]] = field(default_factory=list)
+    #: roll 时掷出的候选属性组（每组 6 个值，按属性展示顺序），等玩家挑一组
+    ability_candidates: list[list[int]] = field(default_factory=list)
+    #: 候选属性组对应的 4d6 原始点数，与 ``ability_candidates`` 一一对应
+    ability_set_groups: list[list[list[int]]] = field(default_factory=list)
     #: 已分配属性：属性键 -> 值
     base_scores: dict[str, int] = field(default_factory=dict)
     race: str = ""
@@ -372,6 +392,10 @@ class CreationSession:
             "name": self.name,
             "ability_pool": list(self.ability_pool),
             "ability_groups": [list(g) for g in self.ability_groups],
+            "ability_candidates": [list(s) for s in self.ability_candidates],
+            "ability_set_groups": [
+                [list(g) for g in groups] for groups in self.ability_set_groups
+            ],
             "base_scores": dict(self.base_scores),
             "race": self.race,
             "subrace": self.subrace,
@@ -400,6 +424,13 @@ class CreationSession:
             ability_pool=[int(v) for v in data.get("ability_pool", [])],
             ability_groups=[
                 [int(v) for v in g] for g in data.get("ability_groups", [])
+            ],
+            ability_candidates=[
+                [int(v) for v in s] for s in data.get("ability_candidates", [])
+            ],
+            ability_set_groups=[
+                [[int(v) for v in g] for g in groups]
+                for groups in data.get("ability_set_groups", [])
             ],
             base_scores={k: int(v) for k, v in data.get("base_scores", {}).items()},
             race=data.get("race", ""),
@@ -507,8 +538,23 @@ class CreationSession:
             if lowered in _ROLL_WORDS:
                 return self.roll_abilities(rng=rng)
             if lowered in _ARRAY_WORDS:
-                self.use_standard_array()
-                return f"{self.ability_pool_text()}\n请把 6 个值按顺序回复给我，或回复「自动」。"
+                return self.use_standard_array()
+            if self.ability_candidates:
+                if lowered in _AUTO_WORDS:
+                    best = max(
+                        range(len(self.ability_candidates)),
+                        key=lambda i: sum(self.ability_candidates[i]),
+                    )
+                    return self.choose_ability_set(best)
+                parts = _split_choices(raw)
+                index = _to_index(parts[0]) if len(parts) == 1 else None
+                if index is None or not 0 <= index < len(self.ability_candidates):
+                    raise CreationError(
+                        f"请回复 1~{len(self.ability_candidates)} 选一组属性，"
+                        f"回复「重掷」再掷 {ABILITY_SET_COUNT} 组，"
+                        "或回复「标准数组」使用标准数组。"
+                    )
+                return self.choose_ability_set(index)
             return self.assign_scores(raw)
         if step is CreationStep.RACE:
             return self.choose_race(raw)
@@ -546,25 +592,66 @@ class CreationSession:
         return f"已选择「{self.system}」。\n\n{creation_prompt(self.step, self)}"
 
     def roll_abilities(self, rng: random.Random | None = None) -> str:
-        """掷 6 组属性值（4d6 取最高的三个）。"""
+        """掷 :data:`ABILITY_SET_COUNT` 组完整属性（每项 4d6 取最高的三个），等玩家挑一组。"""
         self._require(CreationStep.ABILITY)
-        groups: list[list[int]] = []
-        totals: list[int] = []
-        for _ in range(len(ABILITIES)):
-            rolls, _kept, total = roll_4d6_drop_lowest(rng=rng)
-            groups.append(rolls)
-            totals.append(total)
-        self.ability_groups = groups
-        self.ability_pool = sorted(totals, reverse=True)
-        self.record(f"掷属性：{self.ability_pool}")
-        return self.ability_pool_text()
+        sets: list[list[int]] = []
+        set_groups: list[list[list[int]]] = []
+        for _ in range(ABILITY_SET_COUNT):
+            groups: list[list[int]] = []
+            totals: list[int] = []
+            for _ability in ABILITIES:
+                rolls, _kept, total = roll_4d6_drop_lowest(rng=rng)
+                groups.append(rolls)
+                totals.append(total)
+            sets.append(totals)
+            set_groups.append(groups)
+        self.ability_candidates = sets
+        self.ability_set_groups = set_groups
+        self.ability_pool = []
+        self.ability_groups = []
+        self.record(f"掷属性：{len(sets)} 组候选（4d6 去最低）")
+        return creation_prompt(CreationStep.ABILITY, self)
 
-    def use_standard_array(self) -> None:
-        """使用标准数组（15/14/13/12/10/8）。"""
+    def choose_ability_set(self, index: int) -> str:
+        """选用第 ``index`` 组（0 基）候选属性，按展示顺序直接分配。"""
+        self._require(CreationStep.ABILITY)
+        if not self.ability_candidates:
+            raise CreationError("还没有掷出属性组，请先回复「roll」或「标准数组」。")
+        if index < 0 or index >= len(self.ability_candidates):
+            raise CreationError(
+                f"序号超出范围：可选 1~{len(self.ability_candidates)}。"
+            )
+        picked = list(self.ability_candidates[index])
+        self.ability_pool = picked
+        self.ability_groups = (
+            [list(g) for g in self.ability_set_groups[index]]
+            if index < len(self.ability_set_groups)
+            else []
+        )
+        self.ability_candidates = []
+        self.ability_set_groups = []
+        self.base_scores = {a.key: v for a, v in zip(ABILITIES, picked)}
+        self.record(f"属性：第 {index + 1} 组 {picked} → {self.assigned_scores_text()}")
+        self.advance()
+        return (
+            f"已选择第 {index + 1} 组属性：{self.assigned_scores_text()}"
+            f"\n\n{creation_prompt(self.step, self)}"
+        )
+
+    def use_standard_array(self) -> str:
+        """使用标准数组（15/14/13/12/10/8），按属性顺序直接分配。"""
         self._require(CreationStep.ABILITY)
         self.ability_pool = list(STANDARD_ARRAY)
         self.ability_groups = []
-        self.record("属性：标准数组")
+        self.ability_candidates = []
+        self.ability_set_groups = []
+        self.base_scores = {a.key: v for a, v in zip(ABILITIES, self.ability_pool)}
+        self.record(f"属性：标准数组 → {self.assigned_scores_text()}")
+        self.advance()
+        return (
+            f"已按标准数组分配属性：{self.assigned_scores_text()}"
+            f"\n\n{creation_prompt(self.step, self)}"
+        )
 
     def assign_scores(self, text: str) -> str:
         """按「力量 敏捷 体质 智力 感知 魅力」的顺序分配候选值。"""

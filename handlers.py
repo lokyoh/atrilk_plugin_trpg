@@ -201,9 +201,7 @@ async def _advance(
             character,
         )
 
-    # roll 属性后核心只回传候选值，这里补上「如何分配」的指引。
-    if session.step is CreationStep.ABILITY:
-        out = f"{out}\n\n{_reply(session)}"
+    # 各步骤的回复已由核心自带下一步指引，这里不再重复追加。
     return out, None
 
 
@@ -559,6 +557,24 @@ def _open_save(user_id: str, key: str) -> tuple[str, str]:
     return save.save_id, text
 
 
+async def _attach_opening(save_id: str, key: str, text: str) -> str:
+    """开局建好存档后立刻让 DM 给出开场白；开场失败不影响存档。"""
+    from .core.agents.dnd import run_opening
+
+    fallback = "\n\n（开场白没生成出来：@我 说出第一个行动即可继续。）"
+    try:
+        result = await run_opening(save_id=save_id, chat_id=key)
+    except Exception as e:
+        log.warning(f"生成开场白失败：{str_traceback(e)}")
+        return text + fallback
+
+    narration = (result.narration or "").strip()
+    if not narration:
+        log.warning(f"开场白为空：{result.message}")
+        return text + fallback
+    return f"{text}\n\n📖 开场白：\n{narration}"
+
+
 async def _generate_world(
     bot, event: MessageEvent, key: str, user_id: str, theme: str
 ) -> None:
@@ -583,8 +599,20 @@ async def _generate_world(
         await bot.send(event, f"⚠️ 世界生成失败：{e}")
         return
 
-    _save_id, text = _open_save(user_id, key)
-    await bot.send(event, f"{report.summary()}\n\n{text}")
+    if not report.ok:
+        # 世界生成失败：立刻停止，不建存档，避免开出一局空冒险。
+        await bot.send(
+            event,
+            "⚠️ 世界生成失败，已中止开局（未创建存档）。\n"
+            + report.summary()
+            + "\n请检查模型 / 工作配置后重新发送 /跑团.开局。",
+        )
+        return
+
+    save_id, text = _open_save(user_id, key)
+    await bot.send(
+        event, f"{report.summary()}\n\n" + await _attach_opening(save_id, key, text)
+    )
 
 
 @start_game.handle()
@@ -607,8 +635,8 @@ async def _start_game(
     theme, force = _split_theme(args.extract_plain_text())
     regions, _adjacency = get_world_map()
     if regions and not force:
-        _save_id, text = _open_save(user_id, key)
-        await start_game.finish(text)
+        save_id, text = _open_save(user_id, key)
+        await start_game.finish(await _attach_opening(save_id, key, text))
 
     await matcher.send(
         "开始生成世界……（需要一些时间，完成后我会汇报；期间可以先做别的）"

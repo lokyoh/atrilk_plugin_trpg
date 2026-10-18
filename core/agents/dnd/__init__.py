@@ -39,6 +39,7 @@ from .game import (
     build_scene_for_save,
     open_scene,
     run_dm_round,
+    run_opening,
     scene_text,
     submit_action,
 )
@@ -85,6 +86,7 @@ __all__ = [
     "place_agent",
     "run_dm_round",
     "run_entry_flow",
+    "run_opening",
     "scene_agent",
     "scene_builder_agent",
     "scene_text",

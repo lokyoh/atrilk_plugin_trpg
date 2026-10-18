@@ -16,10 +16,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ..trpg.check import roll_check
 from ..trpg.dice import Advantage, DiceError, roll
 from ..trpg.rule import JudgeResult, KeywordRule, KeywordRuleJudge, Verdict
-from .attributes import ABILITY_MAP, get_ability
+from .attributes import ABILITY_MAP
 from .card import DndCharacter
 from .skills import SKILL_MAP, get_skill
 
@@ -122,6 +121,10 @@ class DndRuleJudge(KeywordRuleJudge):
     reject_rules = REJECT_RULES
     need_info_rules = NEED_INFO_RULES
     accept_rules = ACCEPT_RULES
+    #: 未命中任何关键词的自由叙述直接放行，交给 DM 结合局面裁决；
+    #: 判断器只拦「明显违规」（REJECT_RULES）与「明显没说清」（NEED_INFO_RULES），
+    #: 不当自然语言的门卫——「我环顾四周」这类正常描述不该被拦下。
+    fallback = JudgeResult(Verdict.ACCEPT, reason="")
 
     async def judge_action(
         self,

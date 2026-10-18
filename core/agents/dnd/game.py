@@ -73,6 +73,7 @@ __all__ = [
     "open_scene",
     "resolve_players",
     "run_dm_round",
+    "run_opening",
     "scene_text",
     "submit_action",
 ]
@@ -439,16 +440,27 @@ async def submit_action(
     )
 
 
+#: 开场轮交给 DM 的「行动」文本：代替玩家提交，让 DM 直接给出开场白
+_OPENING_PROMPT = (
+    "【系统】本局冒险正式开始。这是开场轮，没有玩家行动："
+    "请做开场白——结合世界起点与故事设定开篇，点出在场角色的处境与眼前的机会；"
+    "然后用 move_scene 把玩家们带进第一个地点并交代入场；"
+    "最后用 await_players 声明第一轮要等待行动的玩家（默认全员）。"
+)
+
+
 async def run_dm_round(
     *,
     save_id: str,
     actions: dict[str, dict[str, str]],
     chat_id: str = "",
     history_limit: int = 10,
+    opening: bool = False,
 ) -> TurnResult:
     """把本轮的玩家行动一起交给 DM 主持、落事件日志，并记下 DM 决定的下一轮等待名单。
 
     :param actions: ``{user_id: {"action": ..., "resolution": ...}}``。
+    :param opening: ``True`` 时为开场轮：没有玩家行动，DM 直接给出开场白。
     """
     save = load_save(save_id)
     if save is None:
@@ -471,11 +483,16 @@ async def run_dm_round(
     for user_id in order:
         item = actions.get(user_id) or {}
         action = str(item.get("action", "") or "").strip()
-        if not action:
+        if not action and not opening:
             continue
         resolution = str(item.get("resolution", "") or "").strip()
         note = str(item.get("note", "") or "").strip()
         card = get_character(save, user_id)
+        if card is not None:
+            party.append(card.summary())
+        if opening:
+            # 开场轮没有玩家行动，DM 直接主持。
+            continue
         head = f"### {_player_label(save, user_id)}"
         if note:
             head += f"（⚠️ {note}）"
@@ -484,19 +501,20 @@ async def run_dm_round(
             entry += f"\n（规则判断器已结算：{resolution}）"
             resolved_any = True
         blocks.append(entry)
-        if card is not None:
-            party.append(card.summary())
 
         log_event(save, "action", action, actor=str(user_id))
         if resolution:
             log_event(save, "check", resolution, actor=str(user_id))
 
-    if not blocks:
-        return TurnResult(Verdict.NEED_INFO, message="这一轮还没有收到任何玩家的行动。")
+    if opening:
+        action_text = _OPENING_PROMPT
+    else:
+        if not blocks:
+            return TurnResult(Verdict.NEED_INFO, message="这一轮还没有收到任何玩家的行动。")
 
-    action_text = "\n\n".join(blocks)
-    if len(blocks) > 1:
-        action_text = "本轮有多名玩家同时行动，请一并处理：\n\n" + action_text
+        action_text = "\n\n".join(blocks)
+        if len(blocks) > 1:
+            action_text = "本轮有多名玩家同时行动，请一并处理：\n\n" + action_text
 
     scene = scene_text(save)
     history = events_text(save, history_limit, scene=save.current_scene or None)
@@ -588,13 +606,17 @@ async def run_dm_round(
             round_no=next_story_round(save),
             scene=scene_after or scene_before,
             combat=combat_label,
-            actions=[
-                (
-                    _player_label(save, uid),
-                    str((actions.get(uid) or {}).get("action", "")),
-                )
-                for uid in order
-            ],
+            actions=(
+                []
+                if opening
+                else [
+                    (
+                        _player_label(save, uid),
+                        str((actions.get(uid) or {}).get("action", "")),
+                    )
+                    for uid in order
+                ]
+            ),
             rulings=rulings,
             narration=narration,
             transition=transition,
@@ -618,4 +640,18 @@ async def run_dm_round(
 
     return TurnResult(
         Verdict.ACCEPT, narration=narration, resolved=resolved_any, ended=ended
+    )
+
+
+async def run_opening(*, save_id: str, chat_id: str = "") -> TurnResult:
+    """开局后的开场轮：不等玩家行动，直接由 DM 给出开场白并把玩家带进第一个场景。"""
+    save = load_save(save_id)
+    if save is None:
+        return TurnResult(
+            Verdict.NEED_INFO,
+            message="这局冒险的存档不见了，发送 /跑团.开局 重新开启。",
+        )
+    actions = {str(uid): {"action": "", "resolution": ""} for uid in save.player_ids}
+    return await run_dm_round(
+        save_id=save.save_id, actions=actions, chat_id=chat_id, opening=True
     )
