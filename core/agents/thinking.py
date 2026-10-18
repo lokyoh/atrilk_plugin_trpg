@@ -5,6 +5,14 @@
 ``功能名(参数名=参数值, ...)``）。解析后逐个执行，把结果回填给模型继续思考，
 直到某个功能结束循环（:class:`AgentFinish`）或模型不再给出功能调用。
 
+解析层做了两处兼容（对应 ``.agents/trpg_issues.md``）：
+
+- **多个 ```text 代码块**：逐块解析并合并调用（约定仍是「一个文本区」，
+  提示词里会要求模型写在同一个块里），单个坏块只忽略该块；
+- **DSML 原生工具调用**：部分模型不按约定输出
+  ``<｜｜DSML｜｜ invoke name="...">`` 这类原生调用 DSL，这里转成同样的调用
+  结构，并把它连同参数值从正文里剥除，避免原样泄漏成给玩家看的叙述。
+
 与框架的区别：这里的功能（工具）注册表完全由本插件维护，不接触主 Agent 的
 ``FunctionCallingManager``，避免跑团工具污染主 Agent。DSL 格式与框架保持一致。
 """
@@ -23,7 +31,6 @@ from ATRI.system.agent.llm import (
     LLMMessage,
     LLMMessages,
     ModelRequestError,
-    ModelType,
     llm_manager,
 )
 
@@ -121,6 +128,22 @@ class ThinkingAgent(TrpgAgent):
     _CALL_BLOCK_RE: ClassVar[re.Pattern[str]] = re.compile(
         r"```(?:text)?\s*\n?([\s\S]*?)\n?```"
     )
+    #: ``` 代码块首行的语言标注（如 ```python），解析调用前应跳过
+    _LANG_TAG_RE: ClassVar[re.Pattern[str]] = re.compile(r"[A-Za-z][\w+-]*")
+    #: 模型自发的 DSML 原生工具调用：invoke 块（功能名 + 参数体）
+    _DSML_INVOKE_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"<[｜|]+DSML[｜|]+\s*invoke\s+name=\"(?P<name>[^\"]+)\"[^>]*>"
+        r"(?P<body>[\s\S]*?)"
+        r"</[｜|]+DSML[｜|]+\s*invoke\s*>"
+    )
+    #: DSML 参数：属性里带 ``string="true"`` 时表示该值按字符串原样保留
+    _DSML_PARAM_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"<[｜|]+DSML[｜|]+\s*parameter\s+name=\"(?P<name>[^\"]+)\""
+        r"(?P<attrs>[^>]*)>(?P<value>[\s\S]*?)"
+        r"</[｜|]+DSML[｜|]+\s*parameter\s*>"
+    )
+    #: 残留的 DSML 标签（如未配对的 calls 包裹），清理正文时直接剥除
+    _DSML_TAG_RE: ClassVar[re.Pattern[str]] = re.compile(r"</?[｜|]+DSML[｜|]+[^>]*>")
 
     # ---- 功能与提示词 ----
 
@@ -141,7 +164,9 @@ class ThinkingAgent(TrpgAgent):
             "调用要求：\n"
             "- 每行一个调用，无参数写成 功能名()\n"
             "- 字符串用双引号，内容需要换行时写 \\n，禁止在引号内直接换行\n"
-            "- 只使用上面列出的参数名，不要虚构参数"
+            "- 只使用上面列出的参数名，不要虚构参数\n"
+            "- 所有调用写在**同一个** ```text 代码块里，不要拆成多个代码块\n"
+            "- 只用 ```text 代码块输出调用，禁止使用 XML / DSML 等其它调用格式"
         )
 
     def build_messages(self, values) -> LLMMessages:
@@ -195,18 +220,83 @@ class ThinkingAgent(TrpgAgent):
 
     @classmethod
     def split_response(cls, text: str) -> tuple[str, list[dict[str, Any]]]:
-        """把模型输出拆成 ``(思考 / 叙述内容, 功能调用列表)``。"""
+        """把模型输出拆成 ``(思考 / 叙述内容, 功能调用列表)``。
+
+        兼容三种写法：约定的单个 ```text 代码块、拆成多个的代码块（逐块解析、
+        合并调用），以及模型自发的 DSML 原生工具调用 DSL（转成同样的调用结构，
+        并把它连同参数值从正文里剥除）。
+        """
         raw = text or ""
-        matches = cls._CALL_BLOCK_RE.findall(raw)
-        if not matches:
-            return raw.strip(), []
-        content = cls._CALL_BLOCK_RE.sub("", raw).strip()
-        try:
-            calls = cls.parse_dsl(matches[0])
-        except AgentError as e:
-            log.warning(f"功能调用解析失败，已忽略本次调用：{e}")
-            return content, []
+        calls: list[dict[str, Any]] = []
+        for block in cls._CALL_BLOCK_RE.findall(raw):
+            try:
+                calls.extend(cls.parse_dsl(cls._strip_lang_tag(block)))
+            except AgentError as e:
+                # 单个坏块只忽略该块，不影响同轮其它合法调用。
+                log.warning(f"功能调用解析失败，已忽略该代码块：{e}")
+
+        dsml_calls, cleaned = cls.extract_dsml(raw)
+        calls.extend(dsml_calls)
+        content = cls._CALL_BLOCK_RE.sub("", cleaned).strip()
         return content, calls
+
+    @classmethod
+    def _strip_lang_tag(cls, block: str) -> str:
+        """去掉 ``` 代码块首行的语言标注（如 ``python``），只留调用正文。"""
+        lines = block.splitlines()
+        if lines and cls._LANG_TAG_RE.fullmatch(lines[0].strip()):
+            return "\n".join(lines[1:])
+        return block
+
+    @classmethod
+    def extract_dsml(cls, text: str) -> tuple[list[dict[str, Any]], str]:
+        """解析模型输出里的 DSML 原生工具调用，并把这段 DSL 从正文里剥除。
+
+        部分模型不按约定写 ```text 代码块，而是输出形如
+        ``<｜｜DSML｜｜ invoke name="功能名">…</｜｜DSML｜｜ invoke>`` 的原生调用
+        DSL；这里转成与 :meth:`parse_dsl` 相同的结构并返回，同时把 invoke 块
+        （连同参数值）与残留标签从文本里移除，避免原样泄漏成给玩家看的叙述。
+        返回 ``(调用列表, 清理后的文本)``。
+        """
+        calls: list[dict[str, Any]] = []
+        for match in cls._DSML_INVOKE_RE.finditer(text):
+            func_name = match.group("name").strip()
+            if not func_name:
+                continue
+            args: dict[str, Any] = {}
+            for param in cls._DSML_PARAM_RE.finditer(match.group("body")):
+                key = param.group("name").strip()
+                if not key:
+                    continue
+                attrs = param.group("attrs")
+                is_string = 'string="true"' in attrs
+                args[key] = (
+                    param.group("value").strip()
+                    if is_string
+                    else cls._dsml_value(param.group("value"))
+                )
+            calls.append({"function": func_name, "args": args, "line": 0})
+
+        cleaned = cls._DSML_INVOKE_RE.sub("", text)
+        cleaned = cls._DSML_TAG_RE.sub("", cleaned)
+        if calls:
+            log.debug(
+                "识别到 DSML 原生工具调用 "
+                + "、".join(call["function"] for call in calls)
+            )
+        return calls, cleaned
+
+    @staticmethod
+    def _dsml_value(raw: str) -> Any:
+        """DSML 参数值还原：数字 / 布尔等字面量转回原类型，其余按字符串保留。"""
+        value = (raw or "").strip()
+        try:
+            parsed = ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            return value
+        if isinstance(parsed, (bool, int, float, list, tuple, dict)):
+            return parsed
+        return value
 
     # ---- 循环 ----
 
