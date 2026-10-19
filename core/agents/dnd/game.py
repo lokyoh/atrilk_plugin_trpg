@@ -568,6 +568,12 @@ async def run_dm_round(
             Verdict.ACCEPT, message=f"⚠️ DM 一时语塞：{e}\n请稍后再 @我 试试。"
         )
 
+    # DM 的功能调用（切场景 / 改进度）与计费都是各自读写存档副本的：重新读一份最新的，
+    # 免得下面用跑团开始前的旧对象落盘，把切好的场景、进度和刚记上的用量写回旧值。
+    latest = load_save(save.save_id)
+    if latest is not None:
+        save = latest
+
     narration = (result.content or "").strip() or "……（DM 沉默了片刻）"
     log_event(save, "narration", narration, actor="dm")
 

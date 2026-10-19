@@ -225,8 +225,19 @@ def new_save_id() -> str:
 
 
 def save_save(save: Save) -> Path:
-    """写入 ``save.json``。"""
+    """写入 ``save.json``。
+
+    落盘前先把计费统计的最新累计并回对象：用量是在模型调用过程中边跑边记的，
+    而 DM 的功能调用（改卡 / 切场景 / 按需生成）各有自己的存档副本、之后还会
+    整份写回；用旧对象直接落盘会把刚记上的用量写回旧值（表现为「DM 的调用没记上」）。
+    """
     save.touch()
+    try:
+        from .billing import sync_billing
+
+        sync_billing(save)
+    except Exception as e:  # 计费是附加功能，出问题也不能影响存档本身
+        log.warning(f"跑团计费合并失败：{str_traceback(e)}")
     path = save_path(save.save_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
@@ -286,6 +297,12 @@ def delete_save(save_id: str) -> bool:
     if not directory.is_dir():
         return False
     shutil.rmtree(directory, ignore_errors=True)
+    try:
+        from .billing import forget
+
+        forget(save_id)
+    except Exception:  # 存档已经删了，快照清不掉也不影响
+        pass
     return True
 
 
