@@ -68,6 +68,7 @@ from .core.dnd import (
     npcs_text,
     parse_item_stack,
     parse_skill_request,
+    player_name,
     purge_expired,
     record_usages,
     report,
@@ -90,6 +91,7 @@ from .matchers import (
     show_card,
     show_save,
     start_game,
+    start_round,
 )
 
 #: 改卡（重做建卡某一步）会话在 ``matcher.state`` 里的键
@@ -651,6 +653,26 @@ def _save_chat_key(save: Save) -> str:
     return str(save.progress.get("chat_key") or "")
 
 
+def _save_player_names(save: Save) -> list[str]:
+    """存档里玩家的显示名（优先 lk 绑定名），给「谁加入了」这类文案用。"""
+    names: list[str] = []
+    for user_id in save.player_ids:
+        card = get_character(save, user_id)
+        name = player_name(user_id, card.name if card is not None else "")
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _clear_start_flag(save_id: str) -> None:
+    """清掉「正在开局」标记：开场失败时让玩家可以再发一次 /跑团.开始。"""
+    latest = load_save(save_id)
+    if latest is None:
+        return
+    latest.progress.pop("starting", None)
+    save_save(latest)
+
+
 def _created_save(key: str, user_id: str) -> Save | None:
     """本会话里该玩家创建、还没结档的那一局（每人每群只能开一局）。"""
     for save in _chat_saves(key):
@@ -675,13 +697,18 @@ def _paused_save(key: str) -> Save | None:
 def _open_save(
     user_id: str, key: str, world_key: str, story_key: str
 ) -> tuple[str, str]:
-    """建立存档、复制角色卡并绑定本会话，返回 ``(存档 ID, 给玩家的文案)``。"""
+    """建立存档、复制角色卡并绑定本会话，返回 ``(存档 ID, 给玩家的文案)``。
+
+    建好存档只是「准备就绪」：**不跑开场白**，等玩家陆续 ``/跑团.加入`` 之后，
+    再由任意已加入的玩家发 ``/跑团.开始`` 正式开局（见 :func:`_start_round`）。
+    """
     card = load_card(user_id)
     save = create_save(player_cards=[card] if card is not None else [])
     save.creator_id = str(user_id)
     save.world_key = world_key or "main"
     save.story_key = story_key
     save.progress["chat_key"] = key
+    save.progress["started"] = False  # 等人齐 + /跑团.开始 之后才开局
     save_save(save)
     set_binding(key, save.save_id)
 
@@ -696,32 +723,13 @@ def _open_save(
         f"🎲 冒险已就绪：存档 {save.save_id}\n"
         f"世界「{world_name}」· 故事「{story_name}」\n"
         "区域 / 城镇 / 自然地点 / 地下城 / 场景会在**用到时按需生成**。\n\n"
-        "接下来这样玩：\n"
-        "· @我 描述角色要做什么（例如「我环顾四周」「我想去最近的城镇」）；"
-        "同群玩家各自描述后，DM 会把这一轮一起主持\n"
-        f"· /跑团.加入 {save.save_id} 让同群的朋友加入，/跑团.存档 查看进度与用量\n"
-        "· /跑团.结档 让 DM 把结局写出来；/跑团.结束 暂停（存档保留，"
-        "/跑团.继续 可接着玩）"
+        "先等大家加入，人齐了再开局：\n"
+        f"· 加入：/跑团.加入 {save.save_id}（本群直接发 /跑团.加入 也行）\n"
+        f"· 还没有角色卡的先 /跑团.建卡\n"
+        "· 人齐后由**任意已加入的玩家**发 /跑团.开始 正式开局\n"
+        "· /跑团.存档 查看谁已经加入、进度与用量"
     )
     return save.save_id, text
-
-
-async def _attach_opening(save_id: str, key: str, text: str) -> str:
-    """开局建好存档后立刻让 DM 给出开场白；开场失败不影响存档。"""
-    from .core.agents.dnd import run_opening
-
-    fallback = "\n\n（开场白没生成出来：@我 说出第一个行动即可继续。）"
-    try:
-        result = await run_opening(save_id=save_id, chat_id=key)
-    except Exception as e:
-        log.warning(f"生成开场白失败：{str_traceback(e)}")
-        return text + fallback
-
-    narration = (result.narration or "").strip()
-    if not narration:
-        log.warning(f"开场白为空：{result.message}")
-        return text + fallback
-    return f"{text}\n\n📖 开场白：\n{narration}"
 
 
 async def _generate_world(
@@ -775,7 +783,8 @@ async def _generate_world(
     headline = report_.summary()
     if report_.story_intro:
         headline += f"\n📖 {report_.story_intro}"
-    await bot.send(event, f"{headline}\n\n" + await _attach_opening(save_id, key, text))
+    # 不在这里跑开场白：等玩家陆续加入，由 /跑团.开始 正式开局
+    await bot.send(event, f"{headline}\n\n{text}")
 
 
 async def _generate_story(
@@ -814,7 +823,8 @@ async def _generate_story(
     headline = f"🌍 世界「{world_name}」里的新故事「{report_.story_title}」已生成。"
     if report_.story_intro:
         headline += f"\n📖 {report_.story_intro}"
-    await bot.send(event, f"{headline}\n\n" + await _attach_opening(save_id, key, text))
+    # 不在这里跑开场白：等玩家陆续加入，由 /跑团.开始 正式开局
+    await bot.send(event, f"{headline}\n\n{text}")
 
 
 def _spawn(task: asyncio.Task) -> None:
@@ -882,7 +892,7 @@ async def _start_game(
             return
         await matcher.send(
             "🎲 开始准备这一局（需要一些时间，完成后我会汇报）：\n"
-            "① 生成世界地图　② 生成世界起点与推力　③ 建立存档、撰写开场白\n"
+            "① 生成世界地图　② 生成世界起点与推力　③ 建立存档、等人加入\n"
             "期间可以先做别的，不必等在这里。"
         )
         _spawn(
@@ -923,10 +933,10 @@ async def _start_game(
             _START_PENDING.pop(key, None)
             await matcher.send(
                 f"🌍 使用世界「{world_name}」与故事「{story.title}」，"
-                "正在建立存档并撰写开场白……"
+                "正在建立存档（之后等大家加入再 /跑团.开始 开局）……"
             )
             save_id, text = _open_save(user_id, key, pending.world_key, story.key)
-            await start_game.finish(await _attach_opening(save_id, key, text))
+            await start_game.finish(text)
 
         # 世界阶段：按序号 / 名称选世界
         if target.isdigit():
@@ -973,7 +983,7 @@ async def _start_game(
     if not worlds:
         await matcher.send(
             "🎲 开始准备这一局（需要一些时间，完成后我会汇报）：\n"
-            "① 生成世界地图　② 生成世界起点与推力　③ 建立存档、撰写开场白\n"
+            "① 生成世界地图　② 生成世界起点与推力　③ 建立存档、等人加入\n"
             "期间可以先做别的，不必等在这里。"
         )
         _spawn(asyncio.create_task(_generate_world(get_bot(), event, key, user_id, "")))
@@ -982,9 +992,77 @@ async def _start_game(
     await start_game.finish(_world_chooser(worlds))
 
 
+@start_round.handle()
+async def _start_round(event: MessageEvent):
+    """开始：开局建好存档后，等玩家都加入，再由任意已加入的玩家发它以正式开局。"""
+    from .core.agents.dnd import is_started, run_opening
+
+    key = _chat_key(event)
+    save = _bound_save(key)
+    if save is None:
+        await start_round.finish(
+            "本会话还没有进行中的冒险。\n"
+            "· /跑团.开局 开一局新的\n"
+            "· /跑团.继续 回到暂停中的那一局"
+        )
+    if save.progress.get("ended"):
+        await start_round.finish(
+            f"存档 {save.save_id} 已经结档，不能再开局了。想开新的一局用 /跑团.开局。"
+        )
+    if save.progress.get("paused"):
+        await start_round.finish(
+            f"这一局还在暂停中（存档 {save.save_id}）："
+            "先 /跑团.继续 回到这一局，再发 /跑团.开始。"
+        )
+    if save.progress.get("starting"):
+        await start_round.finish("⏳ 正在开局，开场白马上就来……")
+    if is_started(save):
+        await start_round.finish(
+            "这一局已经开局了，直接 @我 描述行动就行；想看进度用 /跑团.存档。"
+        )
+    if get_character(save, event.get_user_id()) is None:
+        await start_round.finish(
+            f"你还没加入这一局，先发 /跑团.加入 {save.save_id}"
+            "（本群直接发 /跑团.加入 也行）。"
+        )
+
+    names = _save_player_names(save)
+    save.progress["starting"] = True
+    save_save(save)
+    try:
+        result = await run_opening(save_id=save.save_id, chat_id=key)
+    except Exception as e:
+        log.warning(f"开场白生成失败：{str_traceback(e)}")
+        _clear_start_flag(save.save_id)
+        await start_round.finish(
+            f"⚠️ 开场白没生成出来：{e}\n存档与加入状态都还在，稍后再发 /跑团.开始 试试。"
+        )
+
+    narration = (result.narration or "").strip()
+    if not narration:
+        # 没拿到开场白（例如 DM 调用失败）：不标记「已开局」，让玩家可以重试
+        _clear_start_flag(save.save_id)
+        await start_round.finish(
+            "⚠️ 开场白没有生成出来："
+            + (result.message or "请稍后再发 /跑团.开始 试试。")
+        )
+
+    latest = load_save(save.save_id) or save
+    latest.progress["started"] = True
+    latest.progress.pop("starting", None)
+    save_save(latest)
+    await start_round.finish(
+        "🎬 开局！本局玩家："
+        + ("、".join(names) or "（只有你）")
+        + f"\n\n📖 {narration}"
+    )
+
+
 @resume_game.handle()
 async def _resume_game(event: MessageEvent, args: Message = CommandArg()):
     """继续：把一局暂停中的冒险重新绑到本会话，接着玩。"""
+    from .core.agents.dnd import is_started
+
     key = _chat_key(event)
     user_id = event.get_user_id()
     raw = args.extract_plain_text().strip()
@@ -1014,8 +1092,14 @@ async def _resume_game(event: MessageEvent, args: Message = CommandArg()):
         and bound.save_id == save.save_id
         and not save.progress.get("paused")
     ):
+        if is_started(save):
+            await resume_game.finish(
+                f"本会话已经绑定了存档 {bound.save_id}，直接 @我 描述行动就能接着玩。"
+            )
         await resume_game.finish(
-            f"本会话已经绑定了存档 {bound.save_id}，直接 @我 描述行动就能接着玩。"
+            f"本会话已经绑定了存档 {bound.save_id}，这一局还在等人加入：\n"
+            "· 大家 /跑团.加入 加入这一局\n"
+            "· 人齐后由任意已加入的玩家发 /跑团.开始 开局"
         )
 
     # 换到别的存档：原来那一局按「暂停」处理，之后还能用 /跑团.继续 找回
@@ -1057,41 +1141,80 @@ async def _resume_game(event: MessageEvent, args: Message = CommandArg()):
     if save.progress.get("wrapping_up"):
         lines.append("（这一局已标记「准备结档」，DM 会继续把剧情推向收束。）")
     lines.append("")
-    lines.append(
-        "直接 @我 描述角色的行动就能接着玩；DM 会在每段叙述结尾提示可以做什么。"
-    )
+    if is_started(save):
+        lines.append(
+            "直接 @我 描述角色的行动就能接着玩；DM 会在每段叙述结尾提示可以做什么。"
+        )
+    else:
+        lines.append(
+            "这一局还没开局：等大家 /跑团.加入 之后，"
+            "由任意已加入的玩家发 /跑团.开始 开局。"
+        )
     lines.append(format_report(save.save_id))
     await resume_game.finish("\n".join(lines))
 
 
 @join_save.handle()
 async def _join_save(event: MessageEvent, args: Message = CommandArg()):
+    from .core.agents.dnd import is_started
+
     key = _chat_key(event)
     raw = args.extract_plain_text().strip()
-    save_id = raw.split()[0] if raw else ""
+    # 不带存档 ID 就加入本会话当前绑定的那一局（开局后大家直接 /跑团.加入 就行）
+    save_id = (raw.split()[0] if raw else "") or get_binding(key)
     if not save_id:
         await join_save.finish(
-            "用法：/跑团.加入 <存档ID>（用 /跑团.存档 查看现有存档）"
+            "本会话还没有进行中的冒险。\n"
+            "· 用 /跑团.加入 <存档ID> 加入指定的某一局（/跑团.存档 可查看）\n"
+            "· 或先 /跑团.开局 开一局"
         )
 
     save = load_save(save_id)
     if save is None:
         await join_save.finish(f"没有找到存档 {save_id}。")
+    if save.progress.get("ended"):
+        await join_save.finish(f"存档 {save.save_id} 已经结档，不能再加入了。")
+    if save.progress.get("paused"):
+        await join_save.finish(
+            f"存档 {save.save_id} 正在暂停中：先 /跑团.继续 {save.save_id} 回到这一局。"
+        )
 
     card = load_card(event.get_user_id())
     if card is None:
-        await join_save.finish("你还没有角色卡，先发送 /跑团.建卡 创建一张吧。")
+        await join_save.finish(
+            f"你还没有角色卡，先发送 /跑团.建卡 创建一张，再发 /跑团.加入 {save.save_id}。"
+        )
+
+    started = is_started(save)
+    me = player_name(event.get_user_id(), card.name)
+    if started and get_character(save, event.get_user_id()) is not None:
+        # 已经开局了就别再复制卡：那会把存档里的当前血量 / 状态覆盖回原卡
+        set_binding(key, save.save_id)
+        await join_save.finish(
+            f"「{me}」已经在存档 {save.save_id} 里了，直接 @我 描述行动就行。"
+        )
 
     add_player(save, card)
     set_binding(key, save.save_id)
-    await join_save.finish(
-        f"已加入存档 {save.save_id}，本会话的冒险已绑定到它"
-        f"（当前 {len(save.player_ids)} 名玩家）。\n直接 @我 描述行动即可。"
-    )
+    lines = [
+        f"✅「{me}」加入了冒险（存档 {save.save_id}，当前 {len(save.player_ids)} 人："
+        + "、".join(_save_player_names(save))
+        + "）。"
+    ]
+    if started:
+        lines.append("这一局已经开局了，直接 @我 描述行动即可。")
+    else:
+        lines.append(
+            "等人齐了，由**任意已加入的玩家**发 /跑团.开始 正式开局"
+            "（在那之前 @我 不会开场）。"
+        )
+    await join_save.finish("\n".join(lines))
 
 
 @show_save.handle()
 async def _show_save(event: MessageEvent, args: Message = CommandArg()):
+    from .core.agents.dnd import is_started
+
     raw = args.extract_plain_text().strip()
     save_id = raw or get_binding(_chat_key(event))
 
@@ -1118,15 +1241,21 @@ async def _show_save(event: MessageEvent, args: Message = CommandArg()):
         iter(list_stories(save.world_key)), None
     )
     story_name = story.title if story else (save.story_key or "（未指定）")
+
+    started = is_started(save)
+    names = _save_player_names(save)
     lines = [
         f"存档 {save.save_id}",
-        f"玩家 {len(save.player_ids)} 人",
+        f"玩家 {len(save.player_ids)} 人" + (f"：{'、'.join(names)}" if names else ""),
         f"世界：{world_name}    故事：{story_name}    "
-        f"当前场景：{save.current_scene or '（未设置）'}",
+        f"当前场景：{save.current_scene or ('（还没开局）' if not started else '（未设置）')}",
         "",
     ]
     if save.progress.get("ended"):
         lines.append("🏁 这一局已经结档。想开新的一局用 /跑团.开局。")
+        lines.append("")
+    elif not started and not save.progress.get("paused"):
+        lines.append("⏳ 正在等人加入：/跑团.加入（人齐后发 /跑团.开始 才开局）")
         lines.append("")
     elif save.progress.get("wrapping_up"):
         lines.append("🏁 已收到结档要求：DM 会在接下来的叙述里推进结局。")
@@ -1164,6 +1293,8 @@ async def _show_save(event: MessageEvent, args: Message = CommandArg()):
 @finish_game.handle()
 async def _finish_game(event: MessageEvent):
     """结档：把本局标记为「准备结档」，由 DM 在剧情里写出结局。"""
+    from .core.agents.dnd import is_started
+
     key = _chat_key(event)
     save_id = get_binding(key)
     if not save_id:
@@ -1174,6 +1305,11 @@ async def _finish_game(event: MessageEvent):
         await finish_game.finish("这局冒险的存档不见了，发送 /跑团.开局 重新开启。")
     if save.progress.get("ended"):
         await finish_game.finish("这一局已经结档了。想开新的一局用 /跑团.开局。")
+    if not is_started(save):
+        await finish_game.finish(
+            f"这一局还没开局（存档 {save.save_id}）：先等大家 /跑团.加入，"
+            "再由任意已加入的玩家发 /跑团.开始。"
+        )
     if save.progress.get("wrapping_up"):
         await finish_game.finish(
             "已经收到你的结档要求了：DM 会在接下来的叙述里把剧情推向收束。\n"

@@ -37,6 +37,7 @@ from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
 from .card import DndCharacter
+from .names import lk_name
 
 __all__ = [
     "BINDINGS_FILENAME",
@@ -805,7 +806,7 @@ def clear_round(save: Save) -> bool:
 
 
 def find_character(save: Save, target: str) -> DndCharacter | None:
-    """按 user_id 或角色名（精确 / 包含）在存档里找角色卡。"""
+    """按 user_id、角色名或 lk 绑定名（精确 / 包含）在存档里找角色卡。"""
     target = str(target or "").strip()
     if not target:
         return None
@@ -816,9 +817,11 @@ def find_character(save: Save, target: str) -> DndCharacter | None:
         item = get_character(save, user_id)
         if item is None:
             continue
-        name = (item.name or "").strip()
-        if name and (name == target or target in name or name in target):
-            return item
+        # DM 在提示词里看到的是显示名（优先 lk 名），它可能既不是 user_id 也不是
+        # 角色名；这里一并认，免得 DM 照提示词复述的玩家名找不到人。
+        for name in ((item.name or "").strip(), lk_name(user_id)):
+            if name and (name == target or target in name or name in target):
+                return item
     return None
 
 

@@ -40,6 +40,7 @@ from ...dnd.combat import (
     use_resource,
 )
 from ...dnd.judge import dnd_judge
+from ...dnd.names import player_name
 from ...dnd.npcs import list_npcs, npcs_text
 from ...dnd.save_store import (
     append_scene_change,
@@ -71,6 +72,7 @@ from .on_demand import ensure_scene
 __all__ = [
     "TurnResult",
     "build_scene_for_save",
+    "is_started",
     "open_scene",
     "resolve_players",
     "run_dm_round",
@@ -281,11 +283,22 @@ def _downed_note(card) -> str:
 
 
 def _player_label(save, user_id: str) -> str:
-    """玩家在提示词 / 文案里的显示名：优先角色名，退回 user_id。"""
+    """玩家在提示词 / 文案里的显示名：优先 lk 绑定名，其次角色名，最后 QQ 号。"""
     card = get_character(save, user_id)
-    if card is not None and card.name:
-        return card.name
-    return str(user_id)
+    return player_name(user_id, card.name if card is not None else "")
+
+
+def is_started(save) -> bool:
+    """这一局是否已经开过场（``/跑团.开始`` 之后才允许行动）。
+
+    新存档由 ``_open_save`` 显式写 ``started=False``；没有这个标记的老存档按
+    「已经跑过场」处理（有剧情轮次或当前场景），免得升级后老局卡在等待开局。
+    """
+    if save.progress.get("started") or save.progress.get("starting"):
+        return True
+    if "started" in save.progress:
+        return False
+    return bool(save.progress.get("_story_round") or (save.current_scene or "").strip())
 
 
 #: DM 写「等待全员」时可用的词
@@ -369,6 +382,15 @@ async def submit_action(
         return TurnResult(
             Verdict.NEED_INFO,
             message=f"你还没有加入这局冒险，发送 /跑团.加入 {save.save_id} 加入。",
+        )
+    if not is_started(save):
+        return TurnResult(
+            Verdict.NEED_INFO,
+            message=(
+                "🎲 这一局还在等人加入，开局之前不能行动：\n"
+                f"· 加入：/跑团.加入 {save.save_id}\n"
+                "· 人齐后由任意已加入的玩家发 /跑团.开始 正式开局"
+            ),
         )
     if not text:
         return TurnResult(Verdict.NEED_INFO, message="请描述你想让角色做什么。")
@@ -660,7 +682,11 @@ async def run_dm_round(
 
 
 async def run_opening(*, save_id: str, chat_id: str = "") -> TurnResult:
-    """开局后的开场轮：不等玩家行动，直接由 DM 给出开场白并把玩家带进第一个场景。"""
+    """开场轮：不等玩家行动，直接由 DM 给出开场白并把玩家带进第一个场景。
+
+    ``/跑团.开局`` 只建存档、不跑开场；等玩家陆续 ``/跑团.加入`` 之后，由任意
+    已加入的玩家发 ``/跑团.开始`` 调到这里正式开局。
+    """
     save = load_save(save_id)
     if save is None:
         return TurnResult(

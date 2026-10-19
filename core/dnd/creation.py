@@ -33,6 +33,7 @@ from .attributes import (
 from .background import Background, background_choices, get_background
 from .card import DndCharacter
 from .equipment import parse_item_stack
+from .names import lk_name
 from .profession import DndClass, class_choices, get_class
 from .race import Race, get_race, race_choices
 from .skills import get_skill
@@ -905,7 +906,11 @@ def build_character(session: CreationSession) -> DndCharacter:
 
     return DndCharacter.create(
         session.user_id,
-        name=session.name or f"冒险者{str(session.user_id)[-4:]}",
+        # 没填名字就用玩家在 lk 插件里绑定的名称（跑团里显示的就是这个名字），
+        # 连 lk 都没绑定时退回「冒险者 + QQ 尾号」。
+        name=session.name
+        or lk_name(session.user_id)
+        or f"冒险者{str(session.user_id)[-4:]}",
         race=session.race,
         subrace=session.subrace or None,
         profession=session.profession,

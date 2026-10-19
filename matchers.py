@@ -35,6 +35,11 @@ join_save = plugin.cmd_as_group(
     "加入", "加入一个已有存档，例如 /跑团.加入 save_20261017_ab12"
 )
 
+#: 开始：玩家都加入之后正式开局（跑开场白）
+start_round = plugin.cmd_as_group(
+    "开始", "人都到齐后正式开局，任意已加入的玩家都可以发"
+)
+
 #: 存档：查看当前存档 / 列出全部存档
 show_save = plugin.cmd_as_group("存档", "查看当前存档，或列出全部存档")
 

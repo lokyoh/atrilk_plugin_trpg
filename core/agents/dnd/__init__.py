@@ -44,6 +44,7 @@ from .entry import (
 from .game import (
     TurnResult,
     build_scene_for_save,
+    is_started,
     open_scene,
     run_dm_round,
     run_opening,
@@ -98,6 +99,7 @@ __all__ = [
     "dungeon_agent",
     "ensure_scene",
     "get_agent",
+    "is_started",
     "normalize_kind",
     "open_scene",
     "parse_area",

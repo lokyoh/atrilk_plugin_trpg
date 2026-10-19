@@ -19,6 +19,7 @@
 - :mod:`world_store` 全局共享世界文档库（多世界，world / 剧情 / 地点等，markdown + JSON 索引 + 世界注册表）
 - :mod:`save_store` 跑团存档（角色卡副本 + 进度 + 事件日志）
 - :mod:`billing` 跑团用量统计（按存档累计 token 与花费）
+- :mod:`names` 玩家显示名（优先用 lk 插件绑定的名称）
 - :mod:`judge` 规则判断器
 - :mod:`creation` 建卡流程状态机
 """
@@ -114,6 +115,7 @@ from .monsters import (
     monster_names,
     proficiency_for_cr,
 )
+from .names import lk_name, player_name
 from .npcs import (
     NPC_FILENAME,
     NPC_TIER_MAP,
@@ -401,6 +403,7 @@ __all__ = [
     "list_sessions",
     "list_stories",
     "list_worlds",
+    "lk_name",
     "load_bindings",
     "load_card",
     "load_combat",
@@ -428,6 +431,7 @@ __all__ = [
     "parse_skill_request",
     "party_level",
     "peek_following",
+    "player_name",
     "player_status",
     "proficiency_bonus",
     "proficiency_for_cr",
