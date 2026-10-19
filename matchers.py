@@ -24,11 +24,16 @@ make_check = plugin.cmd_as_group("检定", "进行检定，例如 /跑团.检定
 #: 改卡：重做建卡流程中的一步
 edit_card = plugin.cmd_as_group("改卡", "重做建卡中的一步，例如 /跑团.改卡 种族")
 
-#: 开局：生成世界（若还没有）并开一局冒险
-start_game = plugin.cmd_as_group("开局", "开启一局冒险：生成世界、建立存档并绑定本会话")
+#: 开局：选择 / 生成世界与故事，开一局冒险
+start_game = plugin.cmd_as_group(
+    "开局",
+    "开启一局冒险：选择世界与故事（或用「生成」新建），建立存档并绑定本会话",
+)
 
 #: 加入：加入一个已有存档
-join_save = plugin.cmd_as_group("加入", "加入一个已有存档，例如 /跑团.加入 save_20261017_ab12")
+join_save = plugin.cmd_as_group(
+    "加入", "加入一个已有存档，例如 /跑团.加入 save_20261017_ab12"
+)
 
 #: 存档：查看当前存档 / 列出全部存档
 show_save = plugin.cmd_as_group("存档", "查看当前存档，或列出全部存档")
@@ -39,7 +44,9 @@ resume_game = plugin.cmd_as_group(
 )
 
 #: 结档：告诉 DM 本局可以收尾了（由 DM 在剧情里写出结局）
-finish_game = plugin.cmd_as_group("结档", "告诉 DM 可以收尾了：他会顺势推进结局并为本局写下收官")
+finish_game = plugin.cmd_as_group(
+    "结档", "告诉 DM 可以收尾了：他会顺势推进结局并为本局写下收官"
+)
 
 #: 结束：暂停本会话的冒险（加「删除」则一并删除存档）
 end_game = plugin.cmd_as_group(

@@ -25,6 +25,7 @@ from ...dnd.world_store import (
     load_doc,
     read_doc,
     save_doc,
+    story_text,
 )
 from .gen_area import area_agent, parse_area
 from .gen_city import city_agent
@@ -103,17 +104,17 @@ def slice_block(text: str, label: str, name: str) -> str:
     return ""
 
 
-def _area_keys() -> list[str]:
-    return list_docs("area").get("area", [])
+def _area_keys(world_key: str) -> list[str]:
+    return list_docs(world_key, "area").get("area", [])
 
 
-def _find_in_areas(name: str, kind: str) -> tuple[str, str, str] | None:
+def _find_in_areas(world_key: str, name: str, kind: str) -> tuple[str, str, str] | None:
     """在已生成的区域文档里找某地点的基础数据。
 
     :return: ``(种类, 基础数据, 所在区域正文)``；找不到返回 ``None``。
     """
-    for area_key in _area_keys():
-        doc = read_doc("area", area_key)
+    for area_key in _area_keys(world_key):
+        doc = read_doc(world_key, "area", area_key)
         if doc is None:
             continue
         for kind_key in ("city", "place", "dungeon"):
@@ -153,19 +154,21 @@ async def _run_agent(agent, label: str, **values) -> str | None:
     return result.content
 
 
-async def ensure_area(region: str, world_text: str = "") -> str | None:
-    """确保世界库里存在某区域的区域文档，返回其正文；失败返回 ``None``。"""
+async def ensure_area(
+    world_key: str, story_key: str, region: str, world_text: str = ""
+) -> str | None:
+    """确保世界里存在某区域的区域文档，返回其正文；失败返回 ``None``。"""
     region = str(region or "").strip()
     if not region:
         return None
-    existing = read_doc("area", region)
+    existing = read_doc(world_key, "area", region)
     if existing is not None:
         return existing.content
 
-    world = world_text or load_doc("world", "main") or ""
-    story = load_doc("story", "main") or ""
+    world = world_text or load_doc(world_key, "world", "main") or ""
+    story = story_text(world_key, story_key)
     region_text = slice_block(world, "地区", region) or world
-    neighbors = "、".join(get_world_map()[1].get(region, []))
+    neighbors = "、".join(get_world_map(world_key)[1].get(region, []))
     content = await _run_agent(
         area_agent,
         f"区域「{region}」",
@@ -175,15 +178,15 @@ async def ensure_area(region: str, world_text: str = "") -> str | None:
     )
     if content is None:
         return None
-    save_doc("area", region, content, title=region)
+    save_doc(world_key, "area", region, content, title=region)
     return content
 
 
 async def _ensure_detailed(
-    kind: str, name: str, base_text: str, context: str
+    world_key: str, kind: str, name: str, base_text: str, context: str
 ) -> str | None:
-    """确保世界库里存在某地点的详细文档（城镇 / 自然地点 / 地下城）。"""
-    existing = read_doc(kind, name)
+    """确保世界里存在某地点的详细文档（城镇 / 自然地点 / 地下城）。"""
+    existing = read_doc(world_key, kind, name)
     if existing is not None:
         return existing.content
 
@@ -199,15 +202,15 @@ async def _ensure_detailed(
     )
     if content is None:
         return None
-    save_doc(kind, name, content, title=name)
+    save_doc(world_key, kind, name, content, title=name)
     return content
 
 
 async def _make_scene(
-    name: str, kind: str, detailed: str, context: str
+    world_key: str, name: str, kind: str, detailed: str, context: str
 ) -> tuple[str, str, str] | None:
     """用某地点的详细文档生成场景，返回 ``(种类, 场景键, 场景正文)``。"""
-    existing = read_doc("scene", name)
+    existing = read_doc(world_key, "scene", name)
     if existing is not None:
         return kind, existing.key, existing.content
 
@@ -220,14 +223,19 @@ async def _make_scene(
     )
     if content is None:
         return None
-    key = save_doc("scene", name, content, title=name).stem
+    key = save_doc(world_key, "scene", name, content, title=name).stem
     return kind, key, content
 
 
 async def ensure_scene(
-    location: str, *, kind: str = "", region: str = ""
+    world_key: str,
+    story_key: str,
+    location: str,
+    *,
+    kind: str = "",
+    region: str = "",
 ) -> tuple[str, str, str] | None:
-    """确保世界库里存在某地点的场景，返回 ``(种类, 场景键, 场景正文)``。
+    """确保世界里存在某地点的场景，返回 ``(种类, 场景键, 场景正文)``。
 
     逐级补齐：场景 → 详细文档（城镇 / 自然地点 / 地下城）→ 区域。
     无法定位时返回 ``None``。
@@ -238,7 +246,7 @@ async def ensure_scene(
     kind_key = normalize_kind(kind)
 
     # 1. 已经是场景
-    scene_doc = read_doc("scene", name)
+    scene_doc = read_doc(world_key, "scene", name)
     if scene_doc is not None:
         return "scene", scene_doc.key, scene_doc.content
 
@@ -246,24 +254,26 @@ async def ensure_scene(
     for candidate in ("city", "place", "dungeon"):
         if kind_key and candidate != kind_key:
             continue
-        detailed = read_doc(candidate, name)
+        detailed = read_doc(world_key, candidate, name)
         if detailed is not None:
             return await _make_scene(
-                name, candidate, detailed.content, detailed.content
+                world_key, name, candidate, detailed.content, detailed.content
             )
 
     # 3. 在已生成的区域文档里找到该地点的基础数据
-    found = _find_in_areas(name, kind_key)
+    found = _find_in_areas(world_key, name, kind_key)
     if found is not None:
         found_kind, base_text, area_text = found
-        detailed = await _ensure_detailed(found_kind, name, base_text, area_text)
+        detailed = await _ensure_detailed(
+            world_key, found_kind, name, base_text, area_text
+        )
         if detailed is None:
             return None
-        return await _make_scene(name, found_kind, detailed, area_text)
+        return await _make_scene(world_key, name, found_kind, detailed, area_text)
 
     # 4. location 本身是某个区域 → 生成该区域，取其中一个地点
-    regions, _adjacency = get_world_map()
-    world_text = load_doc("world", "main") or ""
+    regions, _adjacency = get_world_map(world_key)
+    world_text = load_doc(world_key, "world", "main") or ""
     region_name = str(region or "").strip()
     if name in regions or slice_block(world_text, "地区", name):
         region_name = name
@@ -271,24 +281,28 @@ async def ensure_scene(
         # 谁都不知道玩家要去哪：先把第一个区域铺开，从中挑一个地点
         region_name = regions[0]
     if region_name:
-        area_text = await ensure_area(region_name, world_text)
+        area_text = await ensure_area(world_key, story_key, region_name, world_text)
         if area_text:
             picked = _first_location(area_text, kind_key)
             if picked is not None:
                 picked_kind, picked_name, base_text = picked
                 detailed = await _ensure_detailed(
-                    picked_kind, picked_name, base_text, area_text
+                    world_key, picked_kind, picked_name, base_text, area_text
                 )
                 if detailed is not None:
                     return await _make_scene(
-                        picked_name, picked_kind, detailed, area_text
+                        world_key, picked_name, picked_kind, detailed, area_text
                     )
 
     # 5. 兜底：给了种类，就用所在区域上下文直接把这个名字当新地点生成
     if kind_key and region_name:
-        area_doc = read_doc("area", region_name)
+        area_doc = read_doc(world_key, "area", region_name)
         if area_doc is not None:
-            detailed = await _ensure_detailed(kind_key, name, "", area_doc.content)
+            detailed = await _ensure_detailed(
+                world_key, kind_key, name, "", area_doc.content
+            )
             if detailed is not None:
-                return await _make_scene(name, kind_key, detailed, area_doc.content)
+                return await _make_scene(
+                    world_key, name, kind_key, detailed, area_doc.content
+                )
     return None

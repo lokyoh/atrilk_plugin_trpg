@@ -165,8 +165,10 @@ class Save:
     save_id: str
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
-    #: 引用的世界库键（全局共享）
+    #: 引用的世界库键（全局共享，多世界之一）
     world_key: str = "main"
+    #: 引用的故事键（该世界世界库内的 story 文档键；旧存档为空）
+    story_key: str = ""
     #: 当前场景（世界库中 scene 文档的键）
     current_scene: str = ""
     #: 自由进度（当前时间、任务、线索等）
@@ -185,6 +187,7 @@ class Save:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "world_key": self.world_key,
+            "story_key": self.story_key,
             "current_scene": self.current_scene,
             "progress": self.progress,
             "player_ids": self.player_ids,
@@ -198,6 +201,7 @@ class Save:
             created_at=float(data.get("created_at", 0.0) or 0.0),
             updated_at=float(data.get("updated_at", 0.0) or 0.0),
             world_key=str(data.get("world_key", "main") or "main"),
+            story_key=str(data.get("story_key", "") or ""),
             current_scene=str(data.get("current_scene", "") or ""),
             progress=dict(data.get("progress") or {}),
             player_ids=[str(u) for u in (data.get("player_ids") or [])],

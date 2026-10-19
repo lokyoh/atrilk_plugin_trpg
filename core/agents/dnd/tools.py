@@ -74,7 +74,15 @@ from ...dnd.spells import (
     spells_of_level,
 )
 from ...dnd.storage import load_card, save_card
-from ...dnd.world_store import DOC_KIND_LABELS, DOC_KINDS, list_docs, read_doc
+from ...dnd.world_store import (
+    DOC_KIND_LABELS,
+    DOC_KINDS,
+    get_story,
+    list_docs,
+    list_stories,
+    load_doc,
+    read_doc,
+)
 from ...trpg.check import roll_check
 from ...trpg.dice import Advantage, DiceError, roll
 from ..thinking import AgentContext, AgentFinish, AgentTool, ToolArg
@@ -486,15 +494,35 @@ _DATA_ALIASES = {
 }
 
 
-def _query_world_doc(kind: str, name: str) -> str:
-    """读全局世界库里的文档：给定名字返回正文，留空则列出该类文档。"""
+def _query_world_doc(context: AgentContext, kind: str, name: str) -> str:
+    """读当前存档所属世界里的文档：给定名字返回正文，留空则列出该类文档。"""
     label = DOC_KIND_LABELS.get(kind, kind)
-    keys = list_docs(kind).get(kind, [])
+    save = load_save(context.save_id) if context.save_id else None
+    world_key = save.world_key if save is not None else "main"
+
+    if kind == "story":
+        # 故事的键是自动生成的 ID，按「键或标题」展示与查找更友好。
+        stories = list_stories(world_key)
+        if not name:
+            if not stories:
+                return "这个世界里还没有故事文档"
+            return "故事文档：" + "；".join(
+                f"{s.title}" + (f"（{s.intro}）" if s.intro else "") for s in stories
+            )
+        story = get_story(world_key, name)
+        if story is None:
+            return f"没有找到故事「{name}」。现有：" + (
+                "、".join(s.title for s in stories) or "（空）"
+            )
+        text = load_doc(world_key, "story", story.key)
+        return text or f"故事「{story.title}」的文档是空的"
+
+    keys = list_docs(world_key, kind).get(kind, [])
     if not name:
         if not keys:
             return f"世界库里还没有{label}文档"
         return f"{label}文档：" + "、".join(keys)
-    doc = read_doc(kind, name)
+    doc = read_doc(world_key, kind, name)
     if doc is None:
         return f"没有找到{label}「{name}」。现有：" + ("、".join(keys) or "（空）")
     return doc.content
@@ -525,7 +553,7 @@ class QueryDataTool(AgentTool):
         key = _DATA_ALIASES.get(str(table or "").strip().lower())
         text = str(name or "").strip()
         if key in DOC_KINDS:
-            return _query_world_doc(key, text)
+            return _query_world_doc(context, key, text)
 
         if key == "npc":
             save = load_save(context.save_id) if context.save_id else None
@@ -770,7 +798,12 @@ class NarrateTool(AgentTool):
     """输出主持叙述并结束本次思考。"""
 
     function_name = "narrate"
-    description = "把主持叙述发给玩家并结束本次思考；必须调用且放在最后"
+    description = (
+        "把主持叙述发给玩家并结束本次思考；必须调用且放在最后。"
+        "**必须单独一轮调用**：叙述里要用到检定 / 掷骰 / 攻击等功能的结果时，"
+        "先调那些功能、等返回后再单独调用本功能；与其它功能同批调用时叙述不会发送，"
+        "你会被要求结合结果重写"
+    )
     args = (ToolArg("text", "str", "要发给玩家的主持叙述正文"),)
 
     @staticmethod
@@ -1648,7 +1681,9 @@ class WrapUpTool(AgentTool):
     function_name = "wrap_up"
     description = (
         "为本次跑团写下结局并结档（保留存档与复盘）。**只有玩家先发送 /跑团.结档** 之后"
-        "才允许调用，否则会被系统打回；没收到结档状态时你只能提醒玩家可以结档"
+        "才允许调用，否则会被系统打回；没收到结档状态时你只能提醒玩家可以结档。"
+        "调用后本轮思考即告结束，**不要与 narrate 写在同一批**：先 wrap_up，"
+        "下一轮再 narrate 结局"
     )
     args = (ToolArg("note", "str", "结局一句话（可选），如「众人带着宝藏回到白港」"),)
 

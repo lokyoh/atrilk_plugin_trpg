@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from dataclasses import dataclass, field
 
 from nonebot import get_bot, get_driver
 from nonebot.adapters import Event
@@ -39,6 +40,7 @@ from .core.dnd import (
     DndCharacter,
     Save,
     add_player,
+    clean_name,
     clear_binding,
     clear_combat,
     clear_round,
@@ -51,10 +53,14 @@ from .core.dnd import (
     get_binding,
     get_character,
     get_skill,
+    get_story,
+    get_world,
     get_world_map,
     list_npcs,
     list_saves,
     list_sessions,
+    list_stories,
+    list_worlds,
     load_card,
     load_combat,
     load_save,
@@ -509,24 +515,44 @@ async def _continue_edit(
 
 
 # --------------------------------------------------------------------------- #
-# 冒险：开局 / 加入 / 存档 / 结束
+# 冒险：开局（多世界 + 世界内多故事）/ 加入 / 存档 / 结束
 # --------------------------------------------------------------------------- #
 #
 # 一局冒险 = 一份存档（``core.dnd.save_store``）。本会话（群 / 私聊）与存档的绑定
 # 记在 ``saves/bindings.json``；绑定之后，玩家 @ 机器人描述行动就进入 DM 主持。
+#
+# 开局分两步选择：先选**世界**（或用 /跑团.开局 生成 [主题] 生成新世界），
+# 再选这个世界里的**故事**（或生成新故事）。选择状态只保留在内存里，
+# 超时后重新发送 /跑团.开局 即可重来。
 #
 # 场景切换不在玩家指令里：完全由 DM 通过 ``move_scene`` 决定，并由 DM 叙述离场 / 入场。
 
 #: 生成世界时进度汇报的最小间隔（秒），避免刷屏
 _PROGRESS_INTERVAL = 4.0
 
-#: 「沿用现有世界开局」的确认有效期（秒）：在这段时间内再发一次「开局」即确认
-_START_CONFIRM_TTL = 600.0
+#: 「选择世界 / 故事」的有效期（秒）：在这段时间内 /跑团.开局 <序号> 即为确认
+_START_PICK_TTL = 600.0
 
-#: 等待确认「是否沿用现有世界」的会话：聊天键 -> (时间戳, 发起人)
-_START_CONFIRM: dict[str, tuple[float, str]] = {}
+#: 「生成新世界 / 新故事」的触发词
+_GEN_WORDS = {"生成", "重生成", "generate", "regenerate", "new"}
 
-#: 后台任务（生成世界等），持有引用防止被垃圾回收
+
+@dataclass
+class _StartPending:
+    """本会话正在进行的开局选择状态。"""
+
+    user_id: str
+    #: 当前阶段："world"（选世界）| "story"（选故事）
+    stage: str
+    #: 已选中的世界键（story 阶段用）
+    world_key: str = ""
+    at: float = field(default_factory=time.monotonic)
+
+
+#: 等待选择世界 / 故事的会话：聊天键 -> 选择状态
+_START_PENDING: dict[str, _StartPending] = {}
+
+#: 后台任务（生成世界 / 故事等），持有引用防止被垃圾回收
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
@@ -536,18 +562,77 @@ def _chat_key(event: MessageEvent) -> str:
     return f"group_{group_id}" if group_id else f"user_{event.get_user_id()}"
 
 
-def _split_theme(raw: str) -> tuple[str, bool]:
-    """解析「开局」参数：返回 ``(主题, 是否强制重生成世界)``。"""
-    force = False
-    kept: list[str] = []
-    for part in re.split(r"\s+", raw.strip()):
-        if not part:
-            continue
-        if part in {"重生成", "regenerate", "--force"}:
-            force = True
-            continue
-        kept.append(part)
-    return " ".join(kept), force
+def _pending_pick(key: str, user_id: str) -> _StartPending | None:
+    """取本会话有效的开局选择状态；过期或换人时返回 ``None``。"""
+    pending = _START_PENDING.get(key)
+    if pending is None or pending.user_id != str(user_id):
+        return None
+    if time.monotonic() - pending.at > _START_PICK_TTL:
+        _START_PENDING.pop(key, None)
+        return None
+    return pending
+
+
+def _set_pending_pick(key: str, user_id: str, stage: str, world_key: str = "") -> None:
+    """记录 / 重置本会话的开局选择状态。"""
+    _START_PENDING[key] = _StartPending(
+        user_id=str(user_id), stage=stage, world_key=world_key
+    )
+
+
+def _world_intro(world) -> str:
+    """世界的展示简介：优先一句话简介，缺省回退到地区列表。"""
+    if world.intro:
+        return world.intro
+    regions, _adjacency = get_world_map(world.key)
+    if regions:
+        preview = "、".join(regions[:3]) + ("…" if len(regions) > 3 else "")
+        return f"地区 {len(regions)} 个：{preview}"
+    return "（还没有世界地图）"
+
+
+def _world_chooser(worlds, note: str = "") -> str:
+    """「选世界」的提示文案。"""
+    lines: list[str] = []
+    if note:
+        lines.append(f"⚠️ {note}")
+        lines.append("")
+    lines.append(f"🌍 可用的世界（{len(worlds)} 个）：")
+    for index, world in enumerate(worlds, 1):
+        lines.append(f"· {index}. {world.title}——{_world_intro(world)}")
+    lines += [
+        "",
+        "接下来：",
+        "· 选一个世界开局 → /跑团.开局 <序号>（"
+        f"{int(_START_PICK_TTL // 60)} 分钟内有效）",
+        "· 生成一个新世界 → /跑团.开局 生成 [主题]（不给主题就随机）",
+        "",
+        "世界是所有存档共享的；同一个世界里可以开多个故事。",
+    ]
+    return "\n".join(lines)
+
+
+def _story_chooser(world, stories, note: str = "") -> str:
+    """「选故事」的提示文案。"""
+    lines: list[str] = []
+    if note:
+        lines.append(f"⚠️ {note}")
+        lines.append("")
+    lines.append(
+        f"🌍 已选择世界「{world.title}」，这个世界里的故事（{len(stories)} 个）："
+    )
+    for index, story in enumerate(stories, 1):
+        intro = f"——{story.intro}" if story.intro else ""
+        lines.append(f"· {index}. {story.title}{intro}")
+    lines += [
+        "",
+        "接下来：",
+        "· 选一个已有故事开局 → /跑团.开局 <序号>（"
+        f"{int(_START_PICK_TTL // 60)} 分钟内有效）",
+        "· 在这个世界里生成新故事 → /跑团.开局 生成 [主题]（不给主题就随机）",
+        "· 重选世界 → /跑团.开局",
+    ]
+    return "\n".join(lines)
 
 
 def _bound_save(key: str) -> Save | None:
@@ -587,18 +672,29 @@ def _paused_save(key: str) -> Save | None:
     return None
 
 
-def _open_save(user_id: str, key: str) -> tuple[str, str]:
+def _open_save(
+    user_id: str, key: str, world_key: str, story_key: str
+) -> tuple[str, str]:
     """建立存档、复制角色卡并绑定本会话，返回 ``(存档 ID, 给玩家的文案)``。"""
     card = load_card(user_id)
     save = create_save(player_cards=[card] if card is not None else [])
     save.creator_id = str(user_id)
+    save.world_key = world_key or "main"
+    save.story_key = story_key
     save.progress["chat_key"] = key
     save_save(save)
     set_binding(key, save.save_id)
 
+    world = get_world(save.world_key)
+    world_name = world.title if world else save.world_key
+    story = get_story(save.world_key, save.story_key) or next(
+        iter(list_stories(save.world_key)), None
+    )
+    story_name = story.title if story else (save.story_key or "（未指定）")
+
     text = (
         f"🎲 冒险已就绪：存档 {save.save_id}\n"
-        "世界地图与故事已生成；\n"
+        f"世界「{world_name}」· 故事「{story_name}」\n"
         "区域 / 城镇 / 自然地点 / 地下城 / 场景会在**用到时按需生成**。\n\n"
         "接下来这样玩：\n"
         "· @我 描述角色要做什么（例如「我环顾四周」「我想去最近的城镇」）；"
@@ -631,7 +727,7 @@ async def _attach_opening(save_id: str, key: str, text: str) -> str:
 async def _generate_world(
     bot, event: MessageEvent, key: str, user_id: str, theme: str
 ) -> None:
-    """后台生成世界（入场流程），完成后建立存档并汇报。"""
+    """后台生成**新世界**（含第一个故事），完成后建立存档并汇报。"""
     from .core.agents.dnd import EntryOptions, run_entry_flow
 
     last: list[tuple[float, str]] = []
@@ -654,21 +750,77 @@ async def _generate_world(
         return
 
     if not report_.ok:
-        # 世界生成失败：立刻停止，不建存档，避免开出一局空冒险。
+        # 生成失败：立刻停止，不建存档，避免开出一局空冒险。
+        # 已生成的世界保留在世界列表里，可以选中后重试故事生成。
+        if report_.world_saved:
+            await bot.send(
+                event,
+                f"⚠️ 世界「{report_.world_title}」已生成，但故事生成失败，"
+                "已中止开局（未创建存档）。\n"
+                + report_.summary()
+                + "\n可以 /跑团.开局 选中这个世界后重试（会自动生成故事）。",
+            )
+        else:
+            await bot.send(
+                event,
+                "⚠️ 世界生成失败，已中止开局（未创建存档）。\n"
+                + report_.summary()
+                + "\n请检查模型 / 工作配置后重新发送 /跑团.开局 生成 [主题]。",
+            )
+        return
+
+    save_id, text = _open_save(user_id, key, report_.world_key, report_.story_key)
+    # 世界是开局前生成的，用量补记到这一局的存档上
+    record_usages(save_id, list(report_.usages))
+    headline = report_.summary()
+    if report_.story_intro:
+        headline += f"\n📖 {report_.story_intro}"
+    await bot.send(event, f"{headline}\n\n" + await _attach_opening(save_id, key, text))
+
+
+async def _generate_story(
+    bot, event: MessageEvent, key: str, user_id: str, world_key: str, theme: str
+) -> None:
+    """后台在已有世界里生成**新故事**，完成后建立存档并汇报。"""
+    from .core.agents.dnd import run_story_flow
+
+    world = get_world(world_key)
+    world_name = world.title if world else world_key
+
+    async def progress(message: str) -> None:
+        await bot.send(event, message)
+
+    try:
+        report_ = await run_story_flow(
+            world_key=world_key, theme=theme, on_progress=progress
+        )
+    except Exception as e:
+        log.warning(f"生成故事失败：{str_traceback(e)}")
+        await bot.send(event, f"⚠️ 故事生成失败：{e}")
+        return
+
+    if not report_.ok or not report_.story_saved:
         await bot.send(
             event,
-            "⚠️ 世界生成失败，已中止开局（未创建存档）。\n"
+            f"⚠️ 在世界「{world_name}」里生成故事失败，已中止开局（未创建存档）。\n"
             + report_.summary()
-            + "\n请检查模型 / 工作配置后重新发送 /跑团.开局。",
+            + "\n可以重新发送 /跑团.开局 生成 [主题] 再试。",
         )
         return
 
-    save_id, text = _open_save(user_id, key)
-    # 世界是开局前生成的，用量补记到这一局的存档上
+    save_id, text = _open_save(user_id, key, world_key, report_.story_key)
+    # 故事是开局前生成的，用量补记到这一局的存档上
     record_usages(save_id, list(report_.usages))
-    await bot.send(
-        event, f"{report_.summary()}\n\n" + await _attach_opening(save_id, key, text)
-    )
+    headline = f"🌍 世界「{world_name}」里的新故事「{report_.story_title}」已生成。"
+    if report_.story_intro:
+        headline += f"\n📖 {report_.story_intro}"
+    await bot.send(event, f"{headline}\n\n" + await _attach_opening(save_id, key, text))
+
+
+def _spawn(task: asyncio.Task) -> None:
+    """登记后台任务，完成后自动注销。"""
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
 
 
 @start_game.handle()
@@ -696,53 +848,138 @@ async def _start_game(
 
     own = _created_save(key, user_id)
     if own is not None:
-        _START_CONFIRM.pop(key, None)
+        _START_PENDING.pop(key, None)
         await start_game.finish(
             f"你在本群已经开过一局（存档 {own.save_id}），每人每群同时只能开一局。\n"
             f"· 接着那一局：/跑团.继续 {own.save_id}\n"
             f"· 想换新的一局：先 /跑团.继续 {own.save_id}，再 /跑团.结束 删除"
         )
 
-    theme, force = _split_theme(args.extract_plain_text())
-    regions, _adjacency = get_world_map()
+    raw = args.extract_plain_text().strip()
+    parts = raw.split(maxsplit=1)
+    head = parts[0] if parts else ""
+    rest = parts[1].strip() if len(parts) > 1 else ""
+    worlds = list_worlds()
+    pending = _pending_pick(key, user_id)
 
-    # 已有世界、又没指定主题 / 重生成：先让玩家确认用哪个世界，不闷声沿用
-    if regions and not force and not theme:
-        now = time.monotonic()
-        for stale in [
-            k for k, v in _START_CONFIRM.items() if now - v[0] > _START_CONFIRM_TTL
-        ]:
-            _START_CONFIRM.pop(stale, None)
-        pending = _START_CONFIRM.get(key)
-        confirmed = (
-            pending is not None
-            and pending[1] == str(user_id)
-            and now - pending[0] <= _START_CONFIRM_TTL
+    # ·「生成」：在当前阶段生成新东西（故事阶段=新故事，否则=新世界）
+    if head in _GEN_WORDS:
+        if pending is not None and pending.stage == "story":
+            world = get_world(pending.world_key)
+            world_name = world.title if world else pending.world_key
+            _START_PENDING.pop(key, None)
+            await matcher.send(
+                f"🎲 正在为世界「{world_name}」生成新故事"
+                "（需要一些时间，完成后我会汇报）……"
+            )
+            _spawn(
+                asyncio.create_task(
+                    _generate_story(
+                        get_bot(), event, key, user_id, pending.world_key, rest
+                    )
+                )
+            )
+            return
+        await matcher.send(
+            "🎲 开始准备这一局（需要一些时间，完成后我会汇报）：\n"
+            "① 生成世界地图　② 生成世界起点与推力　③ 建立存档、撰写开场白\n"
+            "期间可以先做别的，不必等在这里。"
         )
-        if confirmed:
-            _START_CONFIRM.pop(key, None)
-            await matcher.send("🌍 使用现有世界，正在建立存档并撰写开场白……")
-            save_id, text = _open_save(user_id, key)
+        _spawn(
+            asyncio.create_task(_generate_world(get_bot(), event, key, user_id, rest))
+        )
+        return
+
+    # · 序号 / 名称：按当前阶段做选择
+    if head:
+        target = clean_name(head)
+        if pending is not None and pending.stage == "story":
+            world = get_world(pending.world_key)
+            stories = list_stories(pending.world_key)
+            world_name = world.title if world else pending.world_key
+            story = None
+            if target.isdigit():
+                index = int(target)
+                if 1 <= index <= len(stories):
+                    story = stories[index - 1]
+                else:
+                    _set_pending_pick(key, user_id, "story", pending.world_key)
+                    await start_game.finish(
+                        _story_chooser(
+                            world, stories, note=f"没有第 {index} 个故事，请重新选择。"
+                        )
+                    )
+            else:
+                story = next(
+                    (s for s in stories if target == s.title or target == s.key), None
+                )
+                if story is None:
+                    _set_pending_pick(key, user_id, "story", pending.world_key)
+                    await start_game.finish(
+                        _story_chooser(
+                            world, stories, note=f"这个世界里没有故事「{target}」。"
+                        )
+                    )
+            _START_PENDING.pop(key, None)
+            await matcher.send(
+                f"🌍 使用世界「{world_name}」与故事「{story.title}」，"
+                "正在建立存档并撰写开场白……"
+            )
+            save_id, text = _open_save(user_id, key, pending.world_key, story.key)
             await start_game.finish(await _attach_opening(save_id, key, text))
-        _START_CONFIRM[key] = (now, str(user_id))
-        world = "、".join(regions[:6]) + ("…" if len(regions) > 6 else "")
-        await start_game.finish(
-            f"🌍 现有的世界已经就绪（地区 {len(regions)} 个：{world}）。\n\n"
-            "开这一局之前先确认用哪个世界：\n"
-            "· 就用这个世界开局 → 再发一次 /跑团.开局"
-            f"（{int(_START_CONFIRM_TTL // 60)} 分钟内有效）\n"
-            "· 换一个世界重生成 → /跑团.开局 重生成 [主题]（不给主题就随机）\n\n"
-            "世界是所有存档共享的，重生成会**覆盖**现有世界。"
-        )
 
-    await matcher.send(
-        "🎲 开始准备这一局（需要一些时间，完成后我会汇报）：\n"
-        "① 生成世界地图　② 生成世界起点与冒险推力　③ 建立存档、撰写开场白\n"
-        "期间可以先做别的，不必等在这里。"
-    )
-    task = asyncio.create_task(_generate_world(get_bot(), event, key, user_id, theme))
-    _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_BACKGROUND_TASKS.discard)
+        # 世界阶段：按序号 / 名称选世界
+        if target.isdigit():
+            index = int(target)
+            if not (1 <= index <= len(worlds)):
+                _set_pending_pick(key, user_id, "world")
+                await start_game.finish(
+                    _world_chooser(worlds, note=f"没有第 {index} 个世界，请重新选择。")
+                )
+            world = worlds[index - 1]
+        else:
+            world = next(
+                (w for w in worlds if target == w.title or target == w.key), None
+            )
+            if world is None:
+                if not worlds:
+                    await start_game.finish(
+                        "🌍 还没有任何世界。发送 /跑团.开局 生成 [主题] 创建一个"
+                        "（不给主题就随机）。"
+                    )
+                _set_pending_pick(key, user_id, "world")
+                await start_game.finish(
+                    _world_chooser(worlds, note=f"没有找到世界「{target}」。")
+                )
+
+        # 选中世界：有故事就进入故事选择；没有故事就自动生成第一个
+        stories = list_stories(world.key)
+        if not stories:
+            _START_PENDING.pop(key, None)
+            await matcher.send(
+                f"🎲 世界「{world.title}」还没有故事，正在生成第一个故事"
+                "并开局（需要一些时间）……"
+            )
+            _spawn(
+                asyncio.create_task(
+                    _generate_story(get_bot(), event, key, user_id, world.key, rest)
+                )
+            )
+            return
+        _set_pending_pick(key, user_id, "story", world.key)
+        await start_game.finish(_story_chooser(world, stories))
+
+    # · 裸 /跑团.开局：还没有世界就直接生成；有世界则展示世界选择
+    if not worlds:
+        await matcher.send(
+            "🎲 开始准备这一局（需要一些时间，完成后我会汇报）：\n"
+            "① 生成世界地图　② 生成世界起点与推力　③ 建立存档、撰写开场白\n"
+            "期间可以先做别的，不必等在这里。"
+        )
+        _spawn(asyncio.create_task(_generate_world(get_bot(), event, key, user_id, "")))
+        return
+    _set_pending_pick(key, user_id, "world")
+    await start_game.finish(_world_chooser(worlds))
 
 
 @resume_game.handle()
@@ -820,7 +1057,9 @@ async def _resume_game(event: MessageEvent, args: Message = CommandArg()):
     if save.progress.get("wrapping_up"):
         lines.append("（这一局已标记「准备结档」，DM 会继续把剧情推向收束。）")
     lines.append("")
-    lines.append("直接 @我 描述角色的行动就能接着玩；DM 会在每段叙述结尾提示可以做什么。")
+    lines.append(
+        "直接 @我 描述角色的行动就能接着玩；DM 会在每段叙述结尾提示可以做什么。"
+    )
     lines.append(format_report(save.save_id))
     await resume_game.finish("\n".join(lines))
 
@@ -873,10 +1112,17 @@ async def _show_save(event: MessageEvent, args: Message = CommandArg()):
     if save is None:
         await show_save.finish(f"没有找到存档 {save_id}。")
 
+    world = get_world(save.world_key)
+    world_name = world.title if world else save.world_key
+    story = get_story(save.world_key, save.story_key) or next(
+        iter(list_stories(save.world_key)), None
+    )
+    story_name = story.title if story else (save.story_key or "（未指定）")
     lines = [
         f"存档 {save.save_id}",
         f"玩家 {len(save.player_ids)} 人",
-        f"世界：{save.world_key}    当前场景：{save.current_scene or '（未设置）'}",
+        f"世界：{world_name}    故事：{story_name}    "
+        f"当前场景：{save.current_scene or '（未设置）'}",
         "",
     ]
     if save.progress.get("ended"):

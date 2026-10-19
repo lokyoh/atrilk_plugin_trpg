@@ -3,12 +3,14 @@
 对应 ``.agents/new_plusin_lktrpg.md`` 的「DM Agent 入场流程」中的「生成地图」环节，
 提示词精简自 ``.agents/trpg/generate_world.md``。
 
-产出两份内容：
+产出三份内容：
 
+- **世界档案**：世界名称与一句话简介（供开局选择列表展示）；
 - **地区描述文档**：依次介绍各个地区，供后续「生成故事 / 生成区域」使用；
 - **相邻数据文档**：地区之间陆地相邻关系的 JSON，置于描述文档底部。
 
-除模型原文外，本 agent 还解析出结构化的地区列表与相邻关系（:class:`WorldMapResult`）。
+除模型原文外，本 agent 还解析出结构化的地区列表、相邻关系与世界档案
+（:class:`WorldMapResult`）。
 """
 
 from __future__ import annotations
@@ -19,17 +21,29 @@ from dataclasses import dataclass
 
 from ATRI.log import log
 
+from ...dnd.world_store import clean_name
 from ..base import AgentInput, AgentResult, TrpgAgent
 
-__all__ = ["WorldAgent", "WorldMapResult", "parse_world_map", "world_agent"]
+__all__ = [
+    "WorldAgent",
+    "WorldMapResult",
+    "parse_world_map",
+    "parse_world_profile",
+    "world_agent",
+]
 
 
 _SYSTEM_PROMPT = """# 任务
-为跑团生成一张世界地图，输出两个部分：
-1. 地区描述文档：依次描述每个地区，供后续生成国家 / 区域数据使用。
-2. 相邻数据文档：以 JSON 记录地区之间的陆地相邻关系，置于描述文档底部。
+为跑团生成一张世界地图，输出三个部分：
+1. 世界档案：世界名称与一句话简介。
+2. 地区描述文档：依次描述每个地区，供后续生成国家 / 区域数据使用。
+3. 相邻数据文档：以 JSON 记录地区之间的陆地相邻关系，置于描述文档底部。
 
-# 文档一：地区描述文档
+# 文档一：世界档案
+- 世界名称：给这个世界起一个名字（可为地名、王国名或意象化的称呼）。
+- 一句话简介：不超过 30 字，概括这个世界的风格、基调或最大看点。
+
+# 文档二：地区描述文档
 对每个地区，按以下顺序依次描述：
 1. 地区名称。
 2. 大致形状：在地图上的轮廓形状（如狭长半岛、不规则多边形、环形、楔形等）。
@@ -49,11 +63,15 @@ _SYSTEM_PROMPT = """# 任务
 - 地区描述顺序与 JSON 中键名顺序一致。
 
 # 输出格式
-- 两个文档合在一起输出：描述文档在前，相邻数据 JSON 在后。
+- 三个部分合在一起输出：世界档案在最前，描述文档居中，相邻数据 JSON 在最后。
 - JSON 使用 Markdown 代码块包裹。
 
 # 输出模板
 ```markdown
+# 世界档案
+- 世界名称：<名称>
+- 一句话简介：<一句话>
+
 # 地图地区描述文档
 
 ## 地区一：<地区名称>
@@ -150,12 +168,16 @@ def _parse_regions(text: str, adjacency: dict[str, list[str]]) -> list[str]:
 
 @dataclass(slots=True)
 class WorldMapResult(AgentResult):
-    """世界地图生成结果：模型原文 + 解析出的地区与相邻关系。"""
+    """世界地图生成结果：模型原文 + 解析出的地区、相邻关系与世界档案。"""
 
     #: 地区名列表（按文档顺序）
     regions: list[str] = None  # type: ignore[assignment]
     #: 陆地相邻关系：地区名 -> 相邻地区名列表
     adjacency: dict[str, list[str]] = None  # type: ignore[assignment]
+    #: 世界名称（世界档案；解析失败为空串）
+    world_title: str = ""
+    #: 一句话简介（世界档案；解析失败为空串）
+    world_intro: str = ""
 
     def __post_init__(self) -> None:
         if self.regions is None:
@@ -169,6 +191,29 @@ def parse_world_map(text: str) -> tuple[list[str], dict[str, list[str]]]:
     adjacency = _parse_adjacency(text)
     regions = _parse_regions(text, adjacency)
     return regions, adjacency
+
+
+#: 世界档案里的名称 / 简介行
+_WORLD_TITLE_RE = re.compile(
+    r"^[>\-\s]*世界名称[：:]\s*(?P<value>.+?)\s*$", re.MULTILINE
+)
+_WORLD_INTRO_RE = re.compile(
+    r"^[>\-\s]*一句话简介[：:]\s*(?P<value>.+?)\s*$", re.MULTILINE
+)
+
+
+def parse_world_profile(text: str) -> tuple[str, str]:
+    """解析世界档案，返回 ``(世界名称, 一句话简介)``；缺失的部分为空串。
+
+    名称 / 简介会剥掉首尾的包裹符号（如 ``**名称**``、``「名称」``），
+    与世界库的 :func:`~...dnd.world_store.clean_name` 归一规则一致。
+    """
+    title_match = _WORLD_TITLE_RE.search(text or "")
+    intro_match = _WORLD_INTRO_RE.search(text or "")
+    return (
+        clean_name(title_match.group("value")) if title_match else "",
+        clean_name(intro_match.group("value")) if intro_match else "",
+    )
 
 
 class WorldAgent(TrpgAgent):
@@ -204,6 +249,7 @@ class WorldAgent(TrpgAgent):
         regions, adjacency = parse_world_map(result.content)
         if not regions and not adjacency:
             log.warning("世界地图生成结果未能解析出地区与相邻关系")
+        world_title, world_intro = parse_world_profile(result.content)
         return WorldMapResult(
             agent=result.agent,
             title=result.title,
@@ -213,6 +259,8 @@ class WorldAgent(TrpgAgent):
             usages=list(result.usages),
             regions=regions,
             adjacency=adjacency,
+            world_title=world_title,
+            world_intro=world_intro,
         )
 
 

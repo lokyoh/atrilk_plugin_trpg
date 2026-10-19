@@ -3,15 +3,21 @@
 对应 ``.agents/new_plusin_lktrpg.md`` 的「DM Agent 入场流程」中的「生成故事」环节，
 提示词精简自 ``.agents/trpg/generate_story.md``。
 
-产出「世界起点与推力设定」文档：明确世界的初始状态与持续推动故事的压力来源，
-但不预设玩家选择、剧情顺序与唯一结局。落库由调用方负责（世界库 ``story`` / ``main``）。
+产出「故事档案 + 世界起点与推力设定」文档：档案给出故事名称与一句话简介
+（供开局选择列表展示），正文明确世界的初始状态与持续推动故事的压力来源，
+但不预设玩家选择、剧情顺序与唯一结局。一个世界里可以有多个故事（各自一份
+``story`` 文档）；落库由调用方负责（世界库 ``story`` / 自动生成的故事键）。
 """
 
 from __future__ import annotations
 
-from ..base import AgentInput, TrpgAgent
+import re
+from dataclasses import dataclass
 
-__all__ = ["StoryAgent", "story_agent"]
+from ...dnd.world_store import clean_name
+from ..base import AgentInput, AgentResult, TrpgAgent
+
+__all__ = ["StoryAgent", "StoryResult", "parse_story_profile", "story_agent"]
 
 
 _SYSTEM_PROMPT = """# 任务
@@ -21,10 +27,14 @@ _SYSTEM_PROMPT = """# 任务
 世界地区描述文档：各地区的大致形状、主要地形、标志地标、国都、特殊地区、人文特点、政治局势、与周边区域的分隔方式。
 
 # 输出
-一份 Markdown 文档，含七节：世界起点、世界推力、势力动机、事件触发条件、关键节点、结局倾向、Agent 使用原则。
+一份 Markdown 文档：先是一节「故事档案」，再是七节设定——世界起点、世界推力、势力动机、事件触发条件、关键节点、结局倾向、Agent 使用原则。
 
 # 输出模板
 ```markdown
+# 故事档案
+- 故事名称：<给这个故事起一个名字>
+- 一句话简介：<不超过 30 字，点出核心冲突或悬念>
+
 # 世界起点与推力设定
 
 ## 一、世界起点
@@ -92,11 +102,45 @@ _SYSTEM_PROMPT = """# 任务
 ```
 
 # 生成要求
+- 故事档案放最前面：故事名称与一句话简介各一行，简介点出这一局的核心冲突或悬念。
 - 只描述「现在是什么样」，不描述「接下来必须怎样」；起点要足够具体、又留白供玩家行动。
 - 推力是「压力」不是「剧本」；写清威胁进度、影响范围与紧迫程度。
 - 所有内容必须基于已有世界信息，不新增未提及的地区或势力；缺少的细节可合理推断，但须保持一致。
 - 不预设玩家选择、剧情顺序与唯一结局。
 - 语言简洁、结构化，可直接用于 DM 主持。"""
+
+
+#: 故事档案里的名称 / 简介行
+_STORY_TITLE_RE = re.compile(
+    r"^[>\-\s]*故事名称[：:]\s*(?P<value>.+?)\s*$", re.MULTILINE
+)
+_STORY_INTRO_RE = re.compile(
+    r"^[>\-\s]*一句话简介[：:]\s*(?P<value>.+?)\s*$", re.MULTILINE
+)
+
+
+def parse_story_profile(text: str) -> tuple[str, str]:
+    """解析故事档案，返回 ``(故事名称, 一句话简介)``；缺失的部分为空串。
+
+    名称 / 简介会剥掉首尾的包裹符号（如 ``**名称**``、``「名称」``），
+    与世界库的 :func:`~...dnd.world_store.clean_name` 归一规则一致。
+    """
+    title_match = _STORY_TITLE_RE.search(text or "")
+    intro_match = _STORY_INTRO_RE.search(text or "")
+    return (
+        clean_name(title_match.group("value")) if title_match else "",
+        clean_name(intro_match.group("value")) if intro_match else "",
+    )
+
+
+@dataclass(slots=True)
+class StoryResult(AgentResult):
+    """故事生成结果：模型原文 + 故事档案解析出的名称与简介。"""
+
+    #: 故事名称（故事档案；解析失败为空串）
+    story_title: str = ""
+    #: 一句话简介（故事档案；解析失败为空串）
+    story_intro: str = ""
 
 
 class StoryAgent(TrpgAgent):
@@ -117,6 +161,20 @@ class StoryAgent(TrpgAgent):
             description="希望强调的基调 / 风格，可留空",
         ),
     )
+
+    async def run(self, **values: object) -> StoryResult:
+        result = await super().run(**values)
+        story_title, story_intro = parse_story_profile(result.content)
+        return StoryResult(
+            agent=result.agent,
+            title=result.title,
+            content=result.content,
+            model_type=result.model_type,
+            usage=result.usage,
+            usages=list(result.usages),
+            story_title=story_title,
+            story_intro=story_intro,
+        )
 
 
 #: 全局默认实例

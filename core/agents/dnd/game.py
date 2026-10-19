@@ -60,7 +60,7 @@ from ...dnd.save_store import (
     save_round,
     save_save,
 )
-from ...dnd.world_store import load_doc, read_doc
+from ...dnd.world_store import read_doc, story_text
 from ...trpg.rule import Verdict
 from ..base import AgentError
 from ..thinking import AgentContext
@@ -121,7 +121,7 @@ def scene_text(save) -> str:
     body = read_scene(save, key)
     if body is not None:
         return body
-    doc = read_doc("scene", key)
+    doc = read_doc(save.world_key, "scene", key)
     return doc.content if doc is not None else ""
 
 
@@ -203,7 +203,7 @@ async def build_scene_for_save(save, generic: str) -> str | None:
         with bind_save(save.save_id):
             result = await scene_builder_agent.run(
                 scene=generic,
-                story=load_doc("story", "main") or "",
+                story=story_text(save.world_key, save.story_key),
                 party=_party_text(save),
                 progress=_progress_text(save),
                 history=events_text(save, 10),
@@ -226,7 +226,9 @@ async def open_scene(
 
     :return: ``(场景键, 场景正文)``；无法定位地点时返回 ``None``。
     """
-    resolved = await ensure_scene(location, kind=kind, region=region)
+    resolved = await ensure_scene(
+        save.world_key, save.story_key, location, kind=kind, region=region
+    )
     if resolved is None:
         return None
     _kind, key, generic = resolved
@@ -514,7 +516,9 @@ async def run_dm_round(
         action_text = _OPENING_PROMPT
     else:
         if not blocks:
-            return TurnResult(Verdict.NEED_INFO, message="这一轮还没有收到任何玩家的行动。")
+            return TurnResult(
+                Verdict.NEED_INFO, message="这一轮还没有收到任何玩家的行动。"
+            )
 
         action_text = "\n\n".join(blocks)
         if len(blocks) > 1:

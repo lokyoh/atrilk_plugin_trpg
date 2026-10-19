@@ -16,8 +16,9 @@
 
 流程类：
 
-- :mod:`.entry`：入场编排（只生成世界地图 + 故事）
-- :mod:`.on_demand`：按需补齐区域 / 地点 / 场景（缺什么生成什么）
+- :mod:`.entry`：入场编排（``run_entry_flow`` 生成新世界 + 第一个故事；``run_story_flow``
+  往已有世界追加新故事）
+- :mod:`.on_demand`：按需补齐区域 / 地点 / 场景（缺什么生成什么，按存档的世界作用域）
 - :mod:`.game`：本轮行动编排（``submit_action`` / ``run_dm_round``）与场景切换（``open_scene``）
 
 主持类（走聊天模型 ``CHAT``）：
@@ -33,7 +34,13 @@ from __future__ import annotations
 
 from .build_scene import SceneBuilderAgent, scene_builder_agent
 from .dm import DMAgent, DungeonMasterAgent, dm_agent
-from .entry import DEFAULT_OPTIONS, EntryOptions, EntryReport, run_entry_flow
+from .entry import (
+    DEFAULT_OPTIONS,
+    EntryOptions,
+    EntryReport,
+    run_entry_flow,
+    run_story_flow,
+)
 from .game import (
     TurnResult,
     build_scene_for_save,
@@ -48,8 +55,19 @@ from .gen_city import CityAgent, city_agent
 from .gen_dungeon import DungeonAgent, dungeon_agent
 from .gen_place import PlaceAgent, place_agent
 from .gen_scene import SceneAgent, scene_agent
-from .gen_story import StoryAgent, story_agent
-from .gen_world import WorldAgent, WorldMapResult, parse_world_map, world_agent
+from .gen_story import (
+    StoryAgent,
+    StoryResult,
+    parse_story_profile,
+    story_agent,
+)
+from .gen_world import (
+    WorldAgent,
+    WorldMapResult,
+    parse_world_map,
+    parse_world_profile,
+    world_agent,
+)
 from .on_demand import ensure_scene, normalize_kind, slice_block
 from .tools import DM_TOOLS
 
@@ -69,6 +87,7 @@ __all__ = [
     "SceneAgent",
     "SceneBuilderAgent",
     "StoryAgent",
+    "StoryResult",
     "TurnResult",
     "WorldAgent",
     "WorldMapResult",
@@ -82,11 +101,14 @@ __all__ = [
     "normalize_kind",
     "open_scene",
     "parse_area",
+    "parse_story_profile",
     "parse_world_map",
+    "parse_world_profile",
     "place_agent",
     "run_dm_round",
     "run_entry_flow",
     "run_opening",
+    "run_story_flow",
     "scene_agent",
     "scene_builder_agent",
     "scene_text",
