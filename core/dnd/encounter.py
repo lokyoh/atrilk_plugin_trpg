@@ -142,19 +142,26 @@ def calibrate_specs(
 ) -> tuple[list, list[str]]:
     """把一批 :class:`~.combat.EnemySpec` 按遭遇规则整体校准。
 
-    **具名 NPC**（``spec.npc``）不在这里缩放：档位 NPC 的数值本就按队伍等级现算，
-    而 ``名字:怪物模板`` 是 DM 有意安排的角色。
+    **NPC 不在这里缩放**，两种都跳过：
+
+    - **具名 NPC**（``spec.npc``）：``名字:怪物模板`` 是 DM 有意安排的角色；
+    - **档位 NPC**（key 以 ``npc/`` 开头）：数值本就按队伍等级现算，
+      而且缩放后key 会变成 ``npc/veteran/3@cr1``——这种 key 再拿
+      :func:`~.monsters.get_monster` 还原时会解析成 ``npc/veteran/1``，
+      数值全错档，因此这里必须原样放过。
 
     :return: ``(新的敌人清单, 校准说明)``；说明是给 DM 看的开战提示，空列表表示无需调整。
     """
     from dataclasses import replace  # 局部导入：encounter 被 combat 之外的模块依赖
+
+    from .npcs import is_npc_key  # 局部导入：避免 npcs ←encounter 的模块级环
 
     result: list = []
     notes: list[str] = []
     for spec in specs:
         monster = getattr(spec, "monster", None)
         count = max(1, int(getattr(spec, "count", 1) or 1))
-        if monster is None or getattr(spec, "npc", False):
+        if monster is None or getattr(spec, "npc", False) or is_npc_key(monster.key):
             result.append(spec)
             continue
         calibrated, note = calibrate_monster(
@@ -162,6 +169,8 @@ def calibrate_specs(
         )
         if calibrated is not None and calibrated is not monster:
             spec = replace(spec, monster=calibrated)
+        # 说明一律收下：哪怕「与目标一致」「高于目标未缩放」也是 DM 该知道的信息
+        if note:
             notes.append(note)
         result.append(spec)
     return result, notes

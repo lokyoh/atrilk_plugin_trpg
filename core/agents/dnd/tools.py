@@ -644,18 +644,20 @@ class UpdateCharacterTool(AgentTool):
     """修改（存档里的）角色卡字段并落盘。"""
 
     function_name = "update_character"
-    description = "改玩家角色卡并落盘（生命 / 状态 / 死亡豁免 / 经验 / 等级 / 姓名 / 备注 / 特性 / 标签 / 法术）"
+    description = (
+        "改玩家角色卡并落盘（生命 / 状态 / 死亡豁免 / 经验 / 等级 / 姓名 / 备注 / 特性 / 标签 / 法术 / 装备）"
+    )
     args = (
         ToolArg(
             "field",
             "str",
             "hp / temp_hp / conditions / 死亡豁免 / exhaustion / exp / level / name / "
-            "notes / features / tags / spells",
+            "notes / features / tags / spells / equipment",
         ),
         ToolArg(
             "value",
             "str",
-            "新值；hp 可写「满血」；conditions/spells 用、分隔（可写「清空」）；"
+            "新值；hp 可写「满血」；conditions/spells/equipment 用、分隔（可写「清空」）；"
             "features/tags 追加；死亡豁免可写 清空/复活/稳定/死亡/成功N/失败N",
         ),
         ToolArg("player", "str", "改谁：角色名或 user_id；单人可留空"),
@@ -757,8 +759,13 @@ class UpdateCharacterTool(AgentTool):
             before = card.level
             target = max(1, _parse_int(text, card.level))
             card.level = min(MAX_LEVEL, target)
-            # 直接改等级时把经验抬到该级的下限，避免「等级 5 但经验 0」的自相矛盾
-            card.exp = max(card.exp, LEVEL_XP_THRESHOLDS[min(card.level, MAX_LEVEL) - 1])
+            floor = LEVEL_XP_THRESHOLDS[min(card.level, MAX_LEVEL) - 1]
+            if card.level < before:
+                # 降级时把经验一起下调，否则会出现「3 级但 50000 经验」的自相矛盾
+                card.exp = min(card.exp, floor)
+            else:
+                # 升级时把经验抬到该级的下限，避免「等级 5 但经验 0」
+                card.exp = max(card.exp, floor)
             message = (
                 f"等级 Lv.{before} → Lv.{card.level}"
                 f"（生命上限 {card.max_hp}，熟练加值 +{card.proficiency}）"
@@ -804,10 +811,32 @@ class UpdateCharacterTool(AgentTool):
                     message += f"；没认出这些写法：{'、'.join(unknown)}"
                 if not card.is_caster:
                     message += "（注意：该职业没有施法能力）"
+        elif field in {"equipment", "equip", "装备"}:
+            # 战利品里的装备走这里；认得的直接换成规范名，认不出的照原样收下
+            if text.lower() in _CONDITION_CLEAR_WORDS:
+                card.equipment = []
+                message = "装备栏已清空"
+            else:
+                wanted = _split_conditions(text)
+                known: list[str] = []
+                unknown: list[str] = []
+                for item in wanted:
+                    armor = get_armor(item) or get_weapon(item)
+                    if armor is None:
+                        unknown.append(item)
+                    else:
+                        known.append(armor.cn)
+                card.equipment = list(
+                    dict.fromkeys([*card.equipment, *known, *unknown])
+                )
+                card.has_shield = any("盾" in str(x) for x in card.equipment)
+                message = "装备已设为：" + "、".join(card.equipment)
+                if unknown:
+                    message += f"；没认出这些写法（已按原名收下）：{'、'.join(unknown)}"
         else:
             return (
                 "不支持的字段，可用：hp / temp_hp / conditions / 死亡豁免 / exhaustion / "
-                "exp / level / name / notes / features / tags / spells"
+                "exp / level / name / notes / features / tags / spells / equipment"
             )
 
         if save is not None:
@@ -1300,6 +1329,8 @@ class EndCombatTool(AgentTool):
         "清掉先攻顺序并回到普通推进"
     )
     args = (ToolArg("result", "str", "战斗结果（可选），如「敌人溃散」「双方议和」"),)
+    #: 结算文本含每人经验 / 升级明细 / 战利品清单，别用默认的 600 字把它截掉
+    max_result_chars = 2500
 
     @staticmethod
     async def call(context: AgentContext, result: Any = "", **kwargs: Any) -> str:

@@ -27,23 +27,26 @@ from pathlib import Path
 from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
-from .monsters import Monster, MonsterAttack, get_monster
+from .monsters import SCALE_SUFFIX, Monster, MonsterAttack, get_monster
 from .save_store import Save, save_dir
 
 __all__ = [
     "NPC_FILENAME",
     "NPC_TIERS",
     "NPC_TIER_MAP",
+    "NPC_TIER_XP",
     "NpcRecord",
     "NpcTier",
     "build_npc",
     "find_npc",
     "get_tier",
+    "is_npc_key",
     "level_of_tier",
     "list_npcs",
     "load_npcs",
     "npc_monster",
     "npc_names",
+    "npc_xp",
     "npcs_path",
     "npcs_text",
     "register_encounter",
@@ -64,6 +67,43 @@ NPC_FILENAME = "npcs.json"
 NPC_KEY_PREFIX = "npc"
 #: 档位随等级成长时的等级上限（再高的队伍就按这个等级给数值）
 MAX_NPC_LEVEL = 12
+
+#: 档位 NPC 的独立经验表（下标 0 = 1 级）。
+#:
+#: 档位 NPC 的 ``cr`` 字段是**队伍等级**（数值现算用的），不是真实 CR，
+#: 因此不能拿 :func:`~.progression.xp_for_cr` 换算——否则3 级队打一只「老兵」
+#: 就会白送 700 XP（相当于 CR3 的正式怪物），一只打平升级、几只直接跳级。
+#: 这里按「打一只档位 NPC 大约值多少」单独给一份温和的表。
+NPC_TIER_XP: tuple[int, ...] = (
+    50,  # 1
+    100,  # 2
+    200,  # 3
+    300,  # 4
+    500,  # 5
+    750,  # 6
+    1_000,  # 7
+    1_500,  # 8
+    2_000,  # 9
+    3_000,  # 10
+    4_000,  # 11
+    5_000,  # 12
+)
+
+
+def is_npc_key(key: str) -> bool:
+    """某个怪物 key 是不是档位 NPC（``npc/<档位>/<等级>``，可带 ``@cr`` 缩放后缀）。"""
+    return str(key or "").strip().startswith(f"{NPC_KEY_PREFIX}/")
+
+
+def npc_xp(key: str) -> int:
+    """按档位 NPC 的 key 取它值多少经验；取不到等级时按 1 级兜底。
+
+    走 :data:`NPC_TIER_XP` 这张独立表，**不**参与 CR → XP 换算。
+    """
+    parsed = tier_from_key(str(key or "").split(SCALE_SUFFIX, 1)[0])
+    level = parsed[1] if parsed is not None else 1
+    index = max(1, min(int(level), len(NPC_TIER_XP))) - 1
+    return NPC_TIER_XP[index]
 
 
 # --------------------------------------------------------------------------- #

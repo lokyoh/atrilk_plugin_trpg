@@ -38,7 +38,6 @@ from .world_store import (
     StoryInfo,
     get_story,
     get_world,
-    get_world_map,
     load_doc,
 )
 
@@ -231,14 +230,20 @@ def _story_section(save: Save) -> list[str]:
 
 
 def _bible_section(save: Save) -> list[str]:
-    """世界圣经：实体登记与不易变的事实。"""
+    """世界圣经：实体登记与不易变的事实（**只取可公开的部分**）。
+
+    故事文档的「关键节点」这类剧情秘密登记为 ``public=False``（见
+    :class:`~.world_bible.Entity`），这里直接跳过——手册是发给玩家的，
+    不能把藏宝点、伏击处这类东西剧透出去。
+    """
     bible = load_bible(save.world_key)
-    if not bible.entities and not bible.facts:
+    public = [entity for entity in bible.entities if entity.public]
+    if not public and not bible.facts:
         return []
 
     lines = ["## 人物与势力"]
     if bible.world_name:
-        lines.append(f"（下列名字均为定稿，DM 不会另起新名）")
+        lines.append("（下列名字均为定稿，DM 不会另起新名）")
     if bible.intro:
         lines.append(bible.intro)
     if bible.facts:
@@ -247,6 +252,8 @@ def _bible_section(save: Save) -> list[str]:
 
     by_kind: dict[str, list[Any]] = {}
     for entity in bible.sorted_entities():
+        if not entity.public:
+            continue
         by_kind.setdefault(entity.kind, []).append(entity)
     for kind, entities in by_kind.items():
         lines.append("")
@@ -315,18 +322,19 @@ def world_brief_text(save: Save) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def save_world_brief(save: Save) -> Path | None:
+def save_world_brief(save: Save, text: str = "") -> Path | None:
     """生成并写入存档目录里的世界背景手册。
 
+    :param text: 已经生成好的正文；留空则现场生成一次。
     :return: 写入的路径；没有可写内容或写失败时返回 ``None``。
     """
-    text = world_brief_text(save)
-    if not text:
+    body = text or world_brief_text(save)
+    if not body:
         return None
     path = brief_path(save.save_id)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_text(body, encoding="utf-8")
     except OSError as e:
         log.warning(f"写世界背景手册失败：{path}（{e}）")
         return None
@@ -341,7 +349,7 @@ def build_world_brief(save: Save) -> tuple[Path | None, str]:
     text = world_brief_text(save)
     if not text:
         return None, "这个世界还没有可整理的背景设定。"
-    path = save_world_brief(save)
+    path = save_world_brief(save, text)
     if path is None:
         return None, "世界背景手册写不进存档目录，请稍后再试。"
     return path, text

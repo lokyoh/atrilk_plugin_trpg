@@ -61,6 +61,8 @@ from .monsters import Monster
 from .progression import xp_for_cr
 from .npcs import (
     build_npc,
+    is_npc_key,
+    npc_xp,
     register_encounter,
     resolve_monster,
     roster_hp,
@@ -90,6 +92,7 @@ __all__ = [
     "effective_hp",
     "enemy_attack",
     "find_combatant",
+    "forget_defeat",
     "heal_combatant",
     "is_dead",
     "is_dying",
@@ -935,28 +938,45 @@ def roll_damage(expr: str, *, crit: bool = False, rng: Any = None) -> tuple[int,
 def record_defeat(state: CombatState, enemy: Combatant, reason: str = "倒下") -> None:
     """把被击败的敌人记进 :attr:`CombatState.defeated`，供战斗结算算经验 / 战利品。
 
-    同名同模板只记一次（同名 NPC 的旧档已在场时不算新的战果），经验按
-    :func:`~.progression.xp_for_cr` 由怪物的挑战等级推出；模板已查不到时按 CR0 兜底。
+    去重按**敌人 cid**：同模板的多个个体（``地精1`` / ``地精2``）各记一次，
+    而同一只被打到 0 血、又被 DM 标记退场时不会重复记账。
+
+    经验按来源分两路：
+
+    - **档位 NPC**（``npc/<档位>/<等级>``）：走 :func:`~.npcs.npc_xp` 的独立表——
+      它的 ``cr`` 字段是队伍等级而非真实 CR，拿去换算会白送一大截经验；
+    - **普通怪物**：按 :func:`~.progression.xp_for_cr` 由挑战等级推出；模板已查不到时按 CR0 兜底。
     """
     if not enemy.is_enemy or not enemy.monster:
         return
     key = enemy.monster
-    if any(item.get("monster") == key and item.get("name") == enemy.name
-           for item in state.defeated):
+    if any(item.get("cid") == enemy.cid for item in state.defeated):
         return
     monster = resolve_monster(key)
     cr = float(monster.cr) if monster is not None else 0.0
+    xp = npc_xp(key) if is_npc_key(key) else xp_for_cr(cr)
     state.defeated.append(
         {
+            "cid": enemy.cid,
             "name": enemy.name,
             "monster": key,
             "cr": cr,
             "cr_text": monster.cr_text if monster is not None else "0",
-            "xp": xp_for_cr(cr),
+            "xp": xp,
             "npc": enemy.npc,
             "reason": reason,
         }
     )
+
+
+def forget_defeat(state: CombatState, enemy: Combatant) -> None:
+    """把某个敌人从战果清单里撤掉（它被治回来了 / 撤销了退场标记）。
+
+    没有这条的话，被治疗救活的敌人仍然会照常计经验与战利品。
+    """
+    state.defeated = [
+        item for item in state.defeated if item.get("cid") != enemy.cid
+    ]
 
 
 def apply_damage(
@@ -1045,7 +1065,11 @@ def heal_combatant(
 
     target.hp = min(target.max_hp, target.hp + amount)
     if target.hp > 0:
+        was_out = target.out
         target.out = False
+        if was_out:
+            # 治回来了就不能再算战果——否则经验与战利品照发
+            forget_defeat(state, target)
     save_combat(save, state)
     sync_combatant(save, target)
     return f"{target.name} 剩余 {target.hp}/{target.max_hp}。"

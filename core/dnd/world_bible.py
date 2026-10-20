@@ -120,6 +120,9 @@ class Entity:
     aliases: list[str] = field(default_factory=list)
     #: 出处（world / story-1 / scene:盐仓码头 ……）
     source: str = ""
+    #: 是否可以给玩家看。剧情秘密（故事的「关键节点」等）登记为 ``False``，
+    #: 不进玩家向的世界背景手册（见 :mod:`.world_brief`），只留在 DM 的提示词里。
+    public: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -129,6 +132,7 @@ class Entity:
             "note": self.note,
             "aliases": list(self.aliases),
             "source": self.source,
+            "public": self.public,
         }
 
     @classmethod
@@ -144,6 +148,8 @@ class Entity:
                 if clean_name(str(alias))
             ],
             source=str(data.get("source", "") or ""),
+            # 老存档没有这个字段，一律当公开（保持既有行为不变）
+            public=bool(data.get("public", True)),
         )
 
     def line(self) -> str:
@@ -263,6 +269,8 @@ def _merge(bible: WorldBible, entities: list[Entity], source: str) -> int:
         # 已登记：补空字段、合并别名，不覆盖已有备注（先来者是正史）
         found.region = found.region or item.region
         found.note = found.note or item.note
+        # 公开性取「更保守」的一侧：任一来源登记为秘密，就不再进玩家手册
+        found.public = found.public and item.public
         for alias in item.aliases:
             if alias not in found.aliases:
                 found.aliases.append(alias)

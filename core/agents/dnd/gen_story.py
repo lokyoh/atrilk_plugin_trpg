@@ -185,6 +185,9 @@ def parse_story_entities(text: str) -> list[Entity]:
         flush()
         name = ""
         kind = ""
+        # 「关键节点」是剧情秘密（藏宝点、伏击处、密室……），只给 DM 看，
+        # 不进玩家向的世界背景手册；势力名则是玩家迟早会知道的世界常识。
+        public = True
         if "势力动机" in section:
             match = re.match(r"^势力[^\n：:]{0,8}[：:]\s*(?P<name>.+?)$", title)
             if match is not None:
@@ -192,9 +195,11 @@ def parse_story_entities(text: str) -> list[Entity]:
         elif "关键节点" in section:
             match = re.match(r"^节点[^\n：:]{0,8}[：:]\s*(?P<name>.+?)$", title)
             if match is not None:
-                name, kind = clean_name(match.group("name")), "place"
+                name, kind, public = clean_name(match.group("name")), "place", False
         if name:
-            current = Entity(name=name, kind=kind, source="story")
+            current = Entity(
+                name=name, kind=kind, source="story", public=public
+            )
     flush()
     return entities
 
