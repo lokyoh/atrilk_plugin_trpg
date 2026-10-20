@@ -1087,7 +1087,7 @@ async def _start_round(event: MessageEvent):
 
     # 世界背景手册：存进存档了，再发一份到群文件方便玩家随时翻。
     # 必须在 finish() 之前发——finish 会抛异常终止，后面代码不会再跑。
-    brief_note = await _send_world_brief(event, result)
+    brief_note = await _send_world_brief(event, result, latest.save_id)
 
     extra = f"\n\n{result.rulings_text}" if result.rulings_text else ""
     await start_round.finish(
@@ -1099,9 +1099,13 @@ async def _start_round(event: MessageEvent):
     )
 
 
-async def _send_world_brief(event: MessageEvent, result) -> str:
+async def _send_world_brief(event: MessageEvent, result, save_id: str) -> str:
     """把开局整理出的世界背景手册发到群文件。
 
+    文件名带上存档 ID（``世界背景手册_<存档ID>.md``）：一个群可能同时有好几局，
+    同名文件互相覆盖后玩家就分不清哪份是哪局的。
+
+    :param save_id: 本局存档 ID，用于拼文件名。
     :return: 给玩家的一句话说明；没生成或发不出去时返回空串（**不影响已经开好的局**）。
     """
     from ATRI.message import file_msg
@@ -1116,13 +1120,20 @@ async def _send_world_brief(event: MessageEvent, result) -> str:
     except OSError as e:
         log.warning(f"读世界背景手册失败：{path}（{str_traceback(e)}）")
         return ""
+    name = f"世界背景手册_{_safe_file_name(save_id)}.md"
     try:
-        await event.bot.send(event.get_session(), file_msg("世界背景手册.md", data))
+        await event.bot.send(event.get_session(), file_msg(name, data))
     except Exception as e:
         # 群文件不是所有会话都支持（私聊、权限、实现差异），失败就跳过
         log.warning(f"世界背景手册发不出去：{str_traceback(e)}")
         return ""
-    return "\n\n📁 世界背景手册已发到群文件（世界背景手册.md），随时可翻。"
+    return f"\n\n📁 世界背景手册已发到群文件（{name}），随时可翻。"
+
+
+def _safe_file_name(text: str) -> str:
+    """把存档 ID 收拾成能当文件名的一段（去掉路径分隔符等危险字符）。"""
+    cleaned = re.sub(r'[\\/:*?"<>|\s]+', "_", str(text or "").strip())
+    return cleaned.strip("._") or "save"
 
 
 @resume_game.handle()
