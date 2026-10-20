@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -410,6 +411,15 @@ def build_npc(template: str, level: int = 1) -> tuple[Monster, str] | None:
 # --------------------------------------------------------------------------- #
 
 
+#: note 里出现这些词，说明这一句在讲「这个人怎么说话」而不是他的身份或旧账。
+#: 只用来摘取，识别不出就不显示——宁可少给也不要在名单里塞错东西。
+_VOICE_HINT_RE = re.compile(
+    r"(口头禅|说话|语气|口吻|腔调|口音|称呼|爱叫|管.*叫|自称|讲话|"
+    r"话多|话少|嘴碎|毒舌|阴阳|结巴|沉默寡言|不苟言笑|笑面虎|"
+    r"喜欢说|爱说|常说|总是说|老说)"
+)
+
+
 @dataclass(slots=True)
 class NpcRecord:
     """名单上的一名 NPC。"""
@@ -476,6 +486,26 @@ class NpcRecord:
     @property
     def hp_text(self) -> str:
         return f"{self.hp}/{self.max_hp}" if self.max_hp else "—"
+
+    @property
+    def voice(self) -> str:
+        """从 note 里挑出「这个人怎么说话」的部分（挑不出就空串）。
+
+        不新增字段：``note`` 本来就是 DM 写身份与关系的地方，让他顺手把口头禅、
+        语气也写进去即可。这里只做**摘取**——认得的线索整段带出来，让 DM 再次
+        遇到这个人时不用重读整条note。识别不到就什么都不显示，宁缺勿滥。
+        """
+        note = str(self.note or "")
+        if not note:
+            return ""
+        parts: list[str] = []
+        for chunk in re.split(r"[；;，,。\n]", note):
+            chunk = chunk.strip()
+            if not chunk or len(chunk) > 40:
+                continue
+            if _VOICE_HINT_RE.search(chunk):
+                parts.append(chunk)
+        return "；".join(parts[:3])
 
     def brief(self) -> str:
         """一行摘要（查询 / 提示用）。"""
@@ -624,6 +654,16 @@ def npc_names(save: Save) -> list[str]:
     return [r.name for r in list_npcs(save)]
 
 
+#: 名单里**一个**人的说话风格都没记过时，在末尾挂的引导句。
+#:
+#: 只在缺这个信息时说一次；DM 一旦给某人记上了（``record.voice`` 非空），
+#: 这句自动消失，之后再不给任何开销——风格本身已经在 note 里跟着他一辈子。
+_VOICE_HINT_LINE = (
+    "  提示：update_npc 的 note 里顺带记一句他的说话风格（口头禅 / 语气 / 称呼习惯），"
+    "下次遇到时照着写，他就不会换了个人。"
+)
+
+
 def npcs_text(save: Save, limit: int = 20) -> str:
     """名单文本（DM 查询 / 玩家看到的熟人）。"""
     records = list_npcs(save)
@@ -634,6 +674,8 @@ def npcs_text(save: Save, limit: int = 20) -> str:
         lines.append("  " + record.brief())
     if len(records) > limit:
         lines.append(f"  ……还有 {len(records) - limit} 名")
+    if not any(record.voice for record in records):
+        lines.append(_VOICE_HINT_LINE)
     return "\n".join(lines)
 
 

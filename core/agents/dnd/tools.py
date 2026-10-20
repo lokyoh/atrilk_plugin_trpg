@@ -2231,7 +2231,12 @@ class UpdateNpcTool(AgentTool):
         ToolArg("template", "str", "平民/士兵/老兵/首领 或怪物模板（可选）"),
         ToolArg("hp", "str", "当前生命（可选）"),
         ToolArg("status", "str", "存活/受伤/倒下/逃跑/被俘/失踪（可选）"),
-        ToolArg("note", "str", "关系、身份、欠的账（可选）"),
+        ToolArg(
+            "note",
+            "str",
+            "身份、关系、欠的账，**以及他的说话风格**（口头禅、语气、称呼习惯）——"
+            "下次遇到时照着写就不会换了个人（可选）",
+        ),
         ToolArg("place", "str", "最后出现的地点（可选）"),
     )
 
@@ -2298,7 +2303,11 @@ class UpdateNpcTool(AgentTool):
                 {"name": npc_name, "status": status, "note": note},
                 round=current_round(save),
             )
-            return f"已把 {npc_name} 记进 NPC 名单。\n  {record.brief()}"
+            return (
+                f"已把 {npc_name} 记进 NPC 名单。\n  {record.brief()}\n"
+                "（首次登记：顺便用 note 记下他的说话风格——口头禅、语气、"
+                "他怎么称呼玩家。下次遇到时系统会提醒你照着写。）"
+            )
 
         changes: dict[str, Any] = {}
         if template_text:
