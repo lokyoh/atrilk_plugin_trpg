@@ -61,6 +61,7 @@ from .conditions import (
     combine_advantage,
     condition_text,
     is_incapacitated,
+    merge_effects,
     normalize_conditions,
     resolve_damage,
 )
@@ -399,12 +400,15 @@ def effective_hp(save: Save, combatant: Combatant) -> tuple[int, int]:
 def effective_ac(
     save: Save, combatant: Combatant, state: CombatState | None = None
 ) -> int:
-    """取参战者的 AC；玩家的以角色卡为准，站在掩体后按地形加值。"""
+    """取参战者的 AC；玩家的以角色卡为准，守护之灵等加值与掩体加值一并算上。"""
     if combatant.kind == "player":
         card = get_character(save, combatant.cid)
         base = card.armor_class if card is not None else combatant.ac
     else:
         base = combatant.ac
+    # 增益类状态给的 AC 加值（防护之灵 +2 等）——走状态表，不另开字段
+    effect = merge_effects(normalize_conditions(combatant_conditions(save, combatant)))
+    base += effect.ac_bonus
     if state is not None:
         base += cover_bonus(state, combatant)
     return base

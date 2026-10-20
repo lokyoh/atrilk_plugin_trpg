@@ -25,7 +25,12 @@ from dataclasses import dataclass, replace
 
 from ..trpg.dice import Advantage
 
+#: 六项属性的内部键。写死而不从 attributes 导入——本模块是纯规则数据层，
+#: 不该为了几个字符串反向依赖另一层（``attributes`` 才是依赖方）。
+ABILITY_KEYS: tuple[str, ...] = ("str", "dex", "con", "int", "wis", "cha")
+
 __all__ = [
+    "ABILITY_KEYS",
     "CONDITIONS",
     "CONDITION_ALIASES",
     "CONDITION_MAP",
@@ -105,6 +110,12 @@ class ConditionEffect:
     resistances: tuple[str, ...] = ()
     #: 中断当前专注（进入失能时）
     breaks_concentration: bool = False
+    #: 这些属性的检定获得加值（祝福 / 元素亲和等）；``+2`` 这类增益走这里
+    check_bonus_abilities: tuple[tuple[str, int], ...] = ()
+    #: 这些属性的豁免获得加值
+    save_bonus_abilities: tuple[tuple[str, int], ...] = ()
+    #: AC 加值（守护之灵、护盾术等「给自己加一层甲」的效果）
+    ac_bonus: int = 0
     #: 软效果说明（给 DM 看的文字，不参与数值结算）
     notes: tuple[str, ...] = ()
 
@@ -131,8 +142,29 @@ class ConditionEffect:
             resistances=tuple(dict.fromkeys(self.resistances + other.resistances)),
             breaks_concentration=self.breaks_concentration
             or other.breaks_concentration,
+            check_bonus_abilities=_merge_bonus(
+                self.check_bonus_abilities, other.check_bonus_abilities
+            ),
+            save_bonus_abilities=_merge_bonus(
+                self.save_bonus_abilities, other.save_bonus_abilities
+            ),
+            ac_bonus=self.ac_bonus + other.ac_bonus,
             notes=tuple(dict.fromkeys(self.notes + other.notes)),
         )
+
+
+def _merge_bonus(
+    left: tuple[tuple[str, int], ...], right: tuple[tuple[str, int], ...]
+) -> tuple[tuple[str, int], ...]:
+    """属性加值按来源累加（祝福 +2 叠上元素亲和 +2 就是 +4）。
+
+    注意与优势劣势相反——**优势不叠加但加值叠加**（5e 规则：数值加值可叠加，
+    只有优势 / 劣势是「不叠加、相遇抵消」）。
+    """
+    total: dict[str, int] = {}
+    for ability, value in (*left, *right):
+        total[ability] = total.get(ability, 0) + int(value)
+    return tuple((ability, value) for ability, value in total.items() if value)
 
 
 def _combine(left: Advantage, right: Advantage) -> Advantage:
@@ -329,6 +361,56 @@ CONDITIONS: tuple[Condition, ...] = (
         ),
         "野蛮人狂暴：力量检定与豁免有优势，对钝击 / 穿刺 / 挥砍有抗性。",
     ),
+    # —— 增益类（PHB 里 DM 最常用的一批，全部走系统自动结算）——
+    Condition(
+        "blessed",
+        "祝福",
+        "Blessed",
+        ConditionEffect(
+            own_attack=Advantage.ADVANTAGE,
+            own_check=Advantage.ADVANTAGE,
+            own_save=Advantage.ADVANTAGE,
+            check_bonus_abilities=tuple((key, 1) for key in ABILITY_KEYS),
+            save_bonus_abilities=tuple((key, 1) for key in ABILITY_KEYS),
+            notes=("1~3 环祝福术：全属性 +1d4；5 环起额外 +1d4 攻击骰",),
+        ),
+        "祝福术：所有属性检定与豁免有优势，1~3 环时属性加值 +1。",
+    ),
+    Condition(
+        "inspired",
+        "激励",
+        "Inspired",
+        ConditionEffect(
+            own_attack=Advantage.ADVANTAGE,
+            check_bonus_abilities=(("all", 1),),
+            notes=(" Bard 的激励：一次攻击或豁免掷骰加 1d6",),
+        ),
+        "激励（吟游诗人）：下一次攻击或豁免检定获得优势与 +1d6。",
+    ),
+    Condition(
+        "shield",
+        "守护之灵",
+        "Shield of Faith",
+        ConditionEffect(
+            ac_bonus=2,
+            notes=("1 环防护之灵：+2 AC，需专注",),
+        ),
+        "防护之灵：AC +2（需专注）。",
+    ),
+    Condition(
+        "haste",
+        "加速",
+        "Haste",
+        ConditionEffect(
+            ac_bonus=2,
+            own_check=Advantage.ADVANTAGE,
+            notes=(
+                "3 环加速术：AC +2，特性检定加值 +2；速度翻倍由 move 按倍速处理"
+                "（speed_scale 是「减慢」用的，倍率走 move）",
+            ),
+        ),
+        "加速术：AC +2、特性与豁免加值 +2。",
+    ),
 )
 
 CONDITION_MAP: dict[str, Condition] = {c.key: c for c in CONDITIONS}
@@ -371,6 +453,22 @@ CONDITION_ALIASES: dict[str, str] = {
     "擒抱状态": "擒抱",
     "狂暴状态": "狂暴",
     "愤怒": "狂暴",
+    # —— 增益类：模型很自然会写带「术」字的法术名，不归一效果就全失效——
+    "祝福术": "祝福",
+    "受祝福": "祝福",
+    "祝福状态": "祝福",
+    "激励术": "激励",
+    "受激励": "激励",
+    "受到激励": "激励",
+    "守护之灵术": "守护之灵",
+    "防护之灵": "守护之灵",
+    "守护": "守护之灵",
+    "圣盾": "守护之灵",
+    "隐匿术": "隐形",
+    "隐形中": "隐形",
+    "加速术": "加速",
+    "加速状态": "加速",
+    "急速": "加速",
 }
 
 

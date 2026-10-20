@@ -312,22 +312,33 @@ class DndCharacter(TrpgCharacter):
         """取某项属性的调整值。"""
         return self.abilities.modifier(ability)
 
+    def condition_bonus(self, ability: Ability | str, *, save: bool = False) -> int:
+        """增益类状态给的属性加值（祝福的 +1、元素亲和等）。
+
+        与优势 / 劣势不同：**数值加值可叠加**（5e 规则），所以这里返回的是
+        所有来源的总和，不是「有 / 没有」。
+        """
+        effect = merge_effects(self.conditions, exhaustion=self.exhaustion)
+        pairs = effect.save_bonus_abilities if save else effect.check_bonus_abilities
+        key = get_ability(ability).key
+        return sum(int(value) for who, value in pairs if who in (key, "all"))
+
     def skill_bonus(self, skill: Skill | str) -> int:
-        """技能检定加值 = 属性调整值 +（熟练则加熟练加值）。"""
+        """技能检定加值 = 属性调整值 +（熟练则加熟练加值）+ 状态给的加值。"""
         skill_obj = get_skill(skill)
         bonus = self.abilities.modifier(skill_obj.ability)
         if skill_obj.key in self.skill_proficiencies:
             bonus += self.proficiency
-        return bonus
+        return bonus + self.condition_bonus(skill_obj.ability)
 
     def save_bonus(self, ability: Ability | str) -> int:
-        """豁免加值 = 属性调整值 +（职业豁免熟练则加熟练加值）。"""
+        """豁免加值 = 属性调整值 +（职业豁免熟练则加熟练加值）+ 状态给的加值。"""
         ability_obj = get_ability(ability)
         bonus = self.abilities.modifier(ability_obj)
         profession = self.profession_obj
         if profession and ability_obj.key in profession.saves:
             bonus += self.proficiency
-        return bonus
+        return bonus + self.condition_bonus(ability_obj, save=True)
 
     def passive_score(self, skill: Skill | str) -> int:
         """被动检定值（10 + 技能加值），常用于被动察觉。"""

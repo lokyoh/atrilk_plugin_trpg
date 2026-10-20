@@ -1548,7 +1548,11 @@ class HealTool(AgentTool):
     args = (
         ToolArg("target", "str", "被治疗者：玩家角色名 / user_id，或敌人名"),
         ToolArg("amount", "str", "治疗量点数，如 8；写「d8」按骰子掷；-3 表示扣血"),
-        ToolArg("reason", "str", "用了什么（可选），如「喝下治疗药水」；会写进回执供叙述引用"),
+        ToolArg(
+            "reason",
+            "str",
+            "用了什么（可选），如「喝下治疗药水」；会写进回执供叙述引用",
+        ),
     )
     #: 回执里带死亡豁免进度等明细，别用默认的600 字截掉
     max_result_chars = 900
