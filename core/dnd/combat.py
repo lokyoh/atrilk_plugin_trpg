@@ -1277,10 +1277,13 @@ def _pick_weapon(save, state, card, attacker, target) -> tuple[Any, str]:
     melee = [w for w in weapons if not w.is_ranged]
     ranged = [w for w in weapons if w.is_ranged]
 
-    if distance < 0 or distance <= 10:
-        # 不知道距离（没铺棋盘）或就在近处：优先近战
+    if distance < 0:
+        # 不知道距离（没铺棋盘 / 没落子）：保守地用近战——剧情模式常见，
+        # DM 说「我砍他」时多半就是近战。
         chosen = melee[0] if melee else ranged[0]
-    elif melee and distance <= _reach(card, melee[0]):
+    elif melee and distance <= _reach(melee[0]):
+        # 够得着才用近战。**触及按具体武器算**：长剑只有 5 尺，10 尺处
+        # 拿着它就伸不到——写死成 10 会让这段式子选错武器。
         chosen = melee[0]
     else:
         # 够不着：能远程就远程，否则仍用近战（马上会被射程校验打回，
@@ -1290,8 +1293,8 @@ def _pick_weapon(save, state, card, attacker, target) -> tuple[Any, str]:
     return chosen, f"自动选用的武器：{chosen.cn}（{_weapon_brief(chosen)}）"
 
 
-def _reach(card, weapon) -> int:
-    """近战触及范围（有「触及」属性的武器是 10 尺）。"""
+def _reach(weapon) -> int:
+    """近战触及范围（有「触及」属性的武器是 10 尺，其余 5 尺）。"""
     return 10 if "触及" in (getattr(weapon, "properties", "") or "") else 5
 
 
