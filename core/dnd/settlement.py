@@ -183,6 +183,34 @@ class SettlementResult:
             parts.append("物品 " + "、".join(self.items))
         return "；".join(parts) or "没有搜出任何东西。"
 
+    @property
+    def usable_items(self) -> list[str]:
+        """战利品里**认得出、能直接收进装备栏**的东西。
+
+        金币与杂物（箭 / 绳索 / 火把）不算——那些不用「装备」，只有装备类才值得
+        提醒玩家去收。
+        """
+        from .equipment import get_armor, get_weapon
+
+        out: list[str] = []
+        for item in self.items:
+            if get_weapon(item) is not None or get_armor(item) is not None:
+                out.append(item)
+        return out
+
+    def usage_hint(self) -> str:
+        """告诉玩家战利品怎么落到角色卡上（纯数据推导，不额外调模型）。
+
+        没有可用的装备时返回空串。措辞刻意简短——玩家侧每轮都要看这段。
+        """
+        usable = self.usable_items
+        if not usable:
+            return ""
+        return (
+            "要收进装备栏就说「把 X 收下」（可列多件），"
+            f"例如：把{'、'.join(usable[:2])}收下。"
+        )
+
     def text(self) -> str:
         """给 DM 与玩家看的结算说明。"""
         lines = ["【战斗结算】"]
@@ -195,6 +223,9 @@ class SettlementResult:
             lines.extend(chunks)
         if self.note:
             lines.append(self.note)
+        hint = self.usage_hint()
+        if hint:
+            lines.append(hint)
         return "\n".join(lines)
 
 

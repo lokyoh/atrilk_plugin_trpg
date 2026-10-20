@@ -44,6 +44,7 @@ __all__ = [
     "resolve_damage",
     "save_auto_fail",
     "speed_scale",
+    "split_text",
 ]
 
 #: 伤害类型（中文，与武器 / 法术表一致）
@@ -407,6 +408,11 @@ def _split_text(text: str) -> list[str]:
     import re
 
     return [part for part in re.split(r"[、,，;；/|\n]+", text) if part.strip()]
+
+
+#: :func:`_split_text` 的公开别名——拆「顿号 / 逗号 / 分号 / 斜杠 / 换行」这类
+#: 并列写法。装备收纳、法术列表、状态列表共用同一套切分，别处不必再写一遍正则。
+split_text = _split_text
 
 
 def merge_effects(

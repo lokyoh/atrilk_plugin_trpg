@@ -63,6 +63,7 @@ from ...dnd.save_store import (
     read_scene,
     save_round,
     save_save,
+    set_character,
 )
 from ...dnd.settlement import settle_combat
 from ...dnd.world_bible import bible_text
@@ -556,6 +557,54 @@ _SPLIT_RE = re.compile(r"[、,，;；/\s]+")
 #: 行动文本里的移动类关键词（战斗里用来记「本回合移动过」，只做软提示）
 _MOVE_RE = re.compile(r"(移动|跑|走|冲|跳|爬|潜行|躲藏|后退|上前|靠近|绕到|窜|扑过去)")
 
+#: 玩家明确表示「把东西收进装备栏」的说法。
+#:
+#: 这类句子不需要 DM 裁决（东西已经在战利品里了），走系统直接落盘就能完成，
+#: 省掉一次模型往返。判定刻意保守：必须同时出现「收纳动词 + 东西」，
+#: 且全文**只**在讲收纳时；带「问 / 看看 / 能不能」等试探语的一律不拦，
+#: 交回 DM 处理（可能是在打听能不能捡）。
+_EQUIP_TAKE_RE = re.compile(
+    r"(收下|收起|装备上|装备|捡起|捡走|拿走|收好|揣|带上|披上|穿上|换上|装上)"
+)
+#: 试探性说法：玩家在问，不是在下指令
+_EQUIP_HESITATE_RE = re.compile(
+    r"(能不能|可以吗|可否|要不要|是否|询问|问问|找找|看看|看下|搜|翻)"
+)
+#: 出现这些词说明玩家在打而不是在收纳（「砍了地精的斧子」≠ 收下斧子）
+_EQUIP_COMBAT_RE = re.compile(
+    r"(砍|劈|刺|攻击|打|杀|射|砍向|劈向|刺向|投掷|砸|踢|撞|砍死|杀死|击败)"
+)
+#: 前置壳：主语与礼貌用语，剥掉后剩下的才是东西名
+_EQUIP_SHELL_RE = re.compile(r"^(?:我要|我想|我|请|麻烦|帮我|给|把|将)+")
+#: 切碎后落单的无义词（「收下」「穿上」被切剩的残片）
+_EQUIP_NOISE_RE = re.compile(r"(?:下来|起来|上|走|了|吧|的|都|和|与|并)")
+
+
+def _equip_take_request(text: str) -> list[str]:
+    """玩家是不是在明确地「把东西收进装备栏」；是的话给出东西名列表。
+
+    只认「收纳动词 + 列举东西」这一种句式，且排除试探语气与战斗动词，
+    避免把「我想砍死拿斧子的地精」这类正常战斗行动误吞掉。
+
+    宾语在动词前（「把长剑收下」）还是在后（「捡起那把短剑」）都说得通，
+    所以不按位置切，而是把动词当分隔符通吃整句，再清掉壳词。
+    """
+    body = str(text or "").strip()
+    if not body or len(body) > 60:
+        return []
+    if not _EQUIP_TAKE_RE.search(body):
+        return []
+    if _EQUIP_HESITATE_RE.search(body) or _EQUIP_COMBAT_RE.search(body):
+        return []
+    # 只把**第一个**动词当分隔符：「收起战利品里的所有装备」里的「装备」
+    # 是被收纳的东西，不能再当一次动词，否则尾巴被吃空。
+    body = _EQUIP_TAKE_RE.sub("、", body, count=1)
+    # 去掉主语与前置壳，保留「那把」这类定语（装备表认得就行）
+    body = _EQUIP_SHELL_RE.sub("", body, count=1).strip("，,、 ")
+    names = [n.strip() for n in _SPLIT_RE.split(body) if n.strip()]
+    names = [n for n in names if not _EQUIP_NOISE_RE.fullmatch(n)]
+    return names[:6]
+
 
 def resolve_players(save, text: str) -> tuple[list[str], list[str]]:
     """把 DM 写的「等待名单」解析成 ``(user_id 列表, 没认出来的名字)``。
@@ -688,6 +737,22 @@ async def submit_action(
         )
     if not text:
         return TurnResult(Verdict.NEED_INFO, message="请描述你想让角色做什么。")
+
+    # 「把 X 收下」这类纯收纳动作：东西已经在战利品里，不需要 DM 裁决，
+    # 系统直接落盘并回执——省掉一整轮模型往返，也省玩家等。
+    take = _equip_take_request(text)
+    if take and card is not None:
+        known, unknown = card.equip(take)
+        set_character(save, card)
+        got = [*known, *unknown]
+        if got:
+            return TurnResult(
+                Verdict.ACCEPT,
+                message=(
+                    f"🎒 已收进【{card.name}】的装备栏：{'、'.join(got)}\n"
+                    f"当前装备：{'、'.join(card.equipment) or '（空）'}"
+                ),
+            )
 
     # 倒地 / 阵亡的玩家：不能真正行动，但**不硬挡**——他提交的内容会带上标注
     # 交给 DM（当作呓语 / 遗言），这样全队倒下时剧情也不会卡死。

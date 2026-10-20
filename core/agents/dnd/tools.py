@@ -1023,19 +1023,7 @@ class UpdateCharacterTool(AgentTool):
                 card.equipment = []
                 message = "装备栏已清空"
             else:
-                wanted = _split_conditions(text)
-                known: list[str] = []
-                unknown: list[str] = []
-                for item in wanted:
-                    armor = get_armor(item) or get_weapon(item)
-                    if armor is None:
-                        unknown.append(item)
-                    else:
-                        known.append(armor.cn)
-                card.equipment = list(
-                    dict.fromkeys([*card.equipment, *known, *unknown])
-                )
-                card.has_shield = any("盾" in str(x) for x in card.equipment)
+                known, unknown = card.equip(_split_conditions(text))
                 message = "装备已设为：" + "、".join(card.equipment)
                 if unknown:
                     message += f"；没认出这些写法（已按原名收下）：{'、'.join(unknown)}"

@@ -36,6 +36,7 @@ from .conditions import (
     resolve_damage,
     save_auto_fail,
     speed_scale,
+    split_text,
 )
 from .equipment import (
     Weapon,
@@ -662,6 +663,33 @@ class DndCharacter(TrpgCharacter):
         profession = self.profession_obj
         if profession and profession.caster_kind == "pact":
             self.spell_slots_used = {}
+
+    def equip(self, items: str | list[str]) -> tuple[list[str], list[str]]:
+        """把东西收进装备栏（追加，不覆盖）。
+
+        认得的（装备表里的武器 / 护甲）换成规范名再收；认不出的**照原样收下**——
+        战利品里有杂物（箭 / 绳索 / 干粮），它们不进 AC 计算但确实是玩家拿到的东西，
+        一律丢掉会让玩家觉得东西凭空消失。DM 工具与玩家侧快捷入口共用这一套。
+
+        :return: ``(已收下的规范名列表, 认不出的原样列表)``
+        """
+        wanted = (
+            [str(x).strip() for x in items if str(x).strip()]
+            if isinstance(items, list | tuple)
+            else split_text(str(items or ""))
+        )
+        known: list[str] = []
+        unknown: list[str] = []
+        for item in wanted:
+            armor = get_armor(item) or get_weapon(item)
+            if armor is None:
+                unknown.append(item)
+            else:
+                known.append(armor.cn)
+        self.equipment = list(dict.fromkeys([*self.equipment, *known, *unknown]))
+        # 盾牌影响 AC 结算，收下盾牌时顺手更新标记
+        self.has_shield = any("盾" in str(x) for x in self.equipment)
+        return known, unknown
 
     def known_spells(self) -> list[Spell]:
         """解析卡上的法术列表（按环阶、名字排序，未识别的条目跳过）。"""
