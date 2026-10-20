@@ -116,6 +116,9 @@ class ConditionEffect:
     save_bonus_abilities: tuple[tuple[str, int], ...] = ()
     #: AC 加值（守护之灵、护盾术等「给自己加一层甲」的效果）
     ac_bonus: int = 0
+    #: 回合开始时自动扣除的生命值（中毒的持续伤害等）。``("", 0)`` 形式保留伤害类型，
+    #: 第二项是固定点数；空元组表示没有持续伤害。
+    dot: tuple[str, int] = ()
     #: 软效果说明（给 DM 看的文字，不参与数值结算）
     notes: tuple[str, ...] = ()
 
@@ -149,6 +152,13 @@ class ConditionEffect:
                 self.save_bonus_abilities, other.save_bonus_abilities
             ),
             ac_bonus=self.ac_bonus + other.ac_bonus,
+            # 持续伤害取**最大**的那个：两次中毒叠加成双倍扣血会让低血量角色
+            # 无声暴毙，而5e 的中毒规则本就是「取最高伤害的那次」而非累加。
+            # 空元组表示「没有持续伤害」，用 -1 让它在max 里排最后。
+            dot=max(
+                (self.dot, other.dot),
+                key=lambda pair: pair[1] if pair else -1,
+            ),
             notes=tuple(dict.fromkeys(self.notes + other.notes)),
         )
 
@@ -301,8 +311,13 @@ CONDITIONS: tuple[Condition, ...] = (
         ConditionEffect(
             own_attack=Advantage.DISADVANTAGE,
             own_check=Advantage.DISADVANTAGE,
+            dot=("毒素", 1),
+            notes=(
+                "攻击与属性检定有劣势；**每个自己的回合开始时自动扣 1 生命**"
+                "（DM 用 spells 里的剧毒术可提到更高，见规则）",
+            ),
         ),
-        "中毒：攻击检定与属性检定有劣势。",
+        "中毒：攻击检定与属性检定有劣势，每回合开始失去 1 点生命。",
     ),
     Condition(
         "restrained",
@@ -672,8 +687,8 @@ def resolve_damage(
     if not notes:
         return amount, ""
     final = int(amount * factor)
-    if final == 0 and amount > 0:
-        final = 0 if factor == 0.0 else 1
+    # PHB 口径就是「减半」，1 点减半后是 0——**不要**兜底成1：
+    # 那样矮人对毒素的抗性就形同虚设（中毒正好只扣 1 点）。
     return final, "；".join(notes)
 
 

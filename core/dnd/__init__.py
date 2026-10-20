@@ -70,6 +70,7 @@ from .combat import (
     resources_text,
     save_combat,
     start_combat,
+    tick_dot,
     update_enemy,
     use_resource,
 )
@@ -637,6 +638,7 @@ __all__ = [
     "sync_combatant",
     "target_cr_for",
     "target_cr_text",
+    "tick_dot",
     "tier_names",
     "total_xp",
     "update_enemy",

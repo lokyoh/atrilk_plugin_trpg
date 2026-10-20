@@ -123,6 +123,7 @@ __all__ = [
     "roll_damage",
     "save_combat",
     "start_combat",
+    "tick_dot",
     "update_enemy",
     "use_resource",
 ]
@@ -592,6 +593,49 @@ def resources_text(combatant: Combatant) -> str:
     return "、".join(used) if used else "无"
 
 
+def tick_dot(save: Save, state: CombatState, combatant: Combatant) -> str:
+    """回合开始时结算持续伤害（中毒等），返回给 DM 的一句话。
+
+    5e 里中毒是「**每个自己的回合开始时**失去等于中毒等级的生命」，本该自动
+    结算。从前只能靠 DM 每轮手动调一次 ``update_enemy``——漏一轮就少扣血，
+    多扣一次就误伤。现在挂在回合推进里，按时点自动扣。
+
+    扣到 0 血按规则走倒地濒死（并掷死亡豁免），不是简单地少一格血。
+    """
+    effect = merge_effects(combatant_conditions(save, combatant))
+    if not effect.dot or effect.dot[1] <= 0:
+        return ""
+    damage_type, amount = effect.dot
+    # 抗性要**在这里**算，不能交给 apply_damage：那里的「抗性后至少 1 点」
+    # 是 PHB 对武器伤害的兜底，而中毒抗性应当直接免掉那 1 点。
+    # 矮人对毒素有抗性时不该每回合照掉 1 血。
+    resist_note = ""
+    if combatant.kind == "player":
+        card = get_character(save, combatant.cid)
+        if card is not None:
+            amount, resist_note = card.apply_resistance(amount, damage_type)
+    else:
+        from .monsters import get_monster
+
+        monster = get_monster(combatant.monster) if combatant.monster else None
+        if monster is not None:
+            amount, resist_note = resolve_damage(
+                amount, damage_type, monster.damage_resistances
+            )
+    if amount <= 0:
+        return f"🔥 {combatant.name} 的持续伤害被抗性完全免掉（{damage_type}）"
+    note = apply_damage(save, state, combatant, amount, damage_type=damage_type)
+    if resist_note:
+        note += f"（{resist_note}）"
+    # 扣到 0 血：按 5e 走倒地濒死，接着掷死亡豁免（否则玩家会一直停在 0 血）
+    card = get_character(save, combatant.cid) if combatant.kind == "player" else None
+    if card is not None and card.is_dying:
+        outcome = card.death_save(rng=None)
+        set_character(save, card)
+        note += f"；随即{outcome.describe()}"
+    return f"🔥 {combatant.name} 受到持续伤害（{damage_type}）：{note}"
+
+
 def current_actor(state: CombatState) -> Combatant | None:
     """当前回合的参战者（正常总是指向玩家）。"""
     if not state.order:
@@ -682,7 +726,11 @@ def _walk(
                 continue
             enemies.append(combatant)
             continue
-        # —— 玩家：倒地濒死的先自动掷死亡豁免，然后跳过 ——
+        # —— 玩家：回合开始先结算持续伤害（中毒等），再走倒地濒死 / 跳过 ——
+        if commit and can_act(save, combatant):
+            dot = tick_dot(save, state, combatant)
+            if dot:
+                state.pending.append(dot)
         card = get_character(save, combatant.cid)
         if card is not None and card.is_dying:
             if commit:
