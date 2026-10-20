@@ -1251,6 +1251,65 @@ def heal_combatant(
 # --------------------------------------------------------------------------- #
 
 
+def _pick_weapon(save, state, card, attacker, target) -> tuple[Any, str]:
+    """DM 没指定武器时替他挑一件，**并说明挑了哪件**。
+
+    判据是到目标的距离：够得着就用近战，够不着就换远程，实在没有才徒手。
+    从前一律取 ``primary_weapons()[0]``，于是背上弓的战士说「我射他」时，
+    系统在用他的长剑——DM 也不知道出了岔子。
+
+    :return: ``(武器或 None, 给 DM 的说明；无需说明时为空串)``。
+    """
+    weapons = card.primary_weapons()
+    if not weapons:
+        return None, ""
+    if len(weapons) == 1:
+        # 只有一件就不用解释了，但也要写清楚是哪件（DM 未必记得角色卡内容）
+        return weapons[0], f"使用 {weapons[0].cn}"
+
+    distance = -1
+    if attacker is not None and state is not None:
+        from .battlemap import distance_feet
+
+        # 没铺棋盘 / 没落子时返回 -1，走下面的保守分支
+        distance = distance_feet(attacker, target)
+
+    melee = [w for w in weapons if not w.is_ranged]
+    ranged = [w for w in weapons if w.is_ranged]
+
+    if distance < 0 or distance <= 10:
+        # 不知道距离（没铺棋盘）或就在近处：优先近战
+        chosen = melee[0] if melee else ranged[0]
+    elif melee and distance <= _reach(card, melee[0]):
+        chosen = melee[0]
+    else:
+        # 够不着：能远程就远程，否则仍用近战（马上会被射程校验打回，
+        # 那时 DM 会知道应该移动过去）
+        chosen = ranged[0] if ranged else melee[0] if melee else weapons[0]
+
+    return chosen, f"自动选用的武器：{chosen.cn}（{_weapon_brief(chosen)}）"
+
+
+def _reach(card, weapon) -> int:
+    """近战触及范围（有「触及」属性的武器是 10 尺）。"""
+    return 10 if "触及" in (getattr(weapon, "properties", "") or "") else 5
+
+
+def _weapon_brief(weapon) -> str:
+    """武器的一句简介（远程带射程），给 DM 判断这次判断得对不对。"""
+    if getattr(weapon, "is_ranged", False):
+        return (
+            f"远程，常规射程 {weapon.ranged_normal} 尺"
+            f"{f'，极限 {weapon.ranged_max} 尺' if weapon.ranged_max else ''}"
+        )
+    parts = ["近战"]
+    if "触及" in (getattr(weapon, "properties", "") or ""):
+        parts.append("触及 10 尺")
+    if getattr(weapon, "is_finesse", False):
+        parts.append("灵巧")
+    return "，".join(parts)
+
+
 def attack(
     save: Save,
     card: DndCharacter,
@@ -1277,23 +1336,26 @@ def attack(
         return f"{target.name} 已经阵亡或退场了，换个目标吧。", False
 
     target_ac = effective_ac(save, target, state)
-    weapon = get_weapon(weapon_ref) if weapon_ref else None
-    if weapon is None and not weapon_ref:
-        weapons = card.primary_weapons()
-        weapon = weapons[0] if weapons else None
-
-    # 指定了武器却不在角色卡装备里：照算，但提醒 DM（临时拾取 / 借用要有说法）
-    warn = ""
-    if weapon is not None and weapon_ref:
-        owned = {item.key for item in card.primary_weapons()}
-        if weapon.key not in owned:
-            warn = f"（注意：{weapon.cn} 不在 {card.name} 的装备里）\n"
-
-    # 距离 / 射程 / 视线：有棋盘时硬校验（够不着就直接打回，不掷骰）。
     attacker = next(
         (c for c in state.order if c.kind == "player" and c.cid == str(card.user_id)),
         None,
     )
+
+    weapon = get_weapon(weapon_ref) if weapon_ref else None
+    pick_note = ""
+    if weapon is None and not weapon_ref:
+        # DM 没说用哪件：**按目标距离挑**——近了用近战、够不着就用远程，
+        # 永远不会拿着长剑去够 30 尺外的敌人（从前一律取 weapons[0]）。
+        weapon, pick_note = _pick_weapon(save, state, card, attacker, target)
+
+    # 指定了武器却不在角色卡装备里：照算，但提醒 DM（临时拾取 / 借用要有说法）
+    warn = ""
+    if pick_note:
+        warn = f"（{pick_note}）\n"
+    if weapon is not None and weapon_ref:
+        owned = {item.key for item in card.primary_weapons()}
+        if weapon.key not in owned:
+            warn += f"（注意：{weapon.cn} 不在 {card.name} 的装备里）\n"
     gate = range_check(
         state,
         attacker,

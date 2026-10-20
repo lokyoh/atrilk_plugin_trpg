@@ -399,10 +399,21 @@ def _player_rulings(
                 continue
             if str(item.get("function", "")) not in _PLAYER_RULING_TOOLS:
                 continue
-            text = _one_line(str(item.get("result", "")))
+            text = _strip_dm_noise(_one_line(str(item.get("result", ""))))
             if text:
                 lines.append(text)
     return list(dict.fromkeys(lines))
+
+
+#: 判定明细里混着的「给 DM / 给系统」的话，玩家不需要也不该看到。
+#: 「自动选用的武器：xx」尤其要剥掉——玩家自己拿了什么武器他是知道的，
+#: 这句只是让**DM** 核对系统有没有猜错。
+_DM_NOISE_RE = re.compile(r"（自动选用的武器：[^）]*）")
+
+
+def _strip_dm_noise(text: str) -> str:
+    """判定明细发出去之前，先剥掉 DM 专有的说明。"""
+    return _DM_NOISE_RE.sub("", text).strip()
 
 
 def _party_wiped(save) -> bool:
