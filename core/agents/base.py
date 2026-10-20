@@ -174,9 +174,7 @@ class TrpgAgent:
             content=content,
             model_type=self.model_type,
             usage=usage,
-            usages=[
-                UsageEntry(model=getattr(resp, "model", None) or "", usage=usage)
-            ]
+            usages=[UsageEntry(model=getattr(resp, "model", None) or "", usage=usage)]
             if usage
             else [],
         )

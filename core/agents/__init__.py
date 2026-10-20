@@ -12,7 +12,7 @@ from __future__ import annotations
 from .base import AgentError, AgentInput, AgentResult, TrpgAgent
 from .thinking import (
     AgentContext,
-    AgentFinish,
+    AgentFinishError,
     AgentTool,
     ThinkingAgent,
     ToolArg,
@@ -21,7 +21,7 @@ from .thinking import (
 __all__ = [
     "AgentContext",
     "AgentError",
-    "AgentFinish",
+    "AgentFinishError",
     "AgentInput",
     "AgentResult",
     "AgentTool",

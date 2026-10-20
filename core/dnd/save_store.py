@@ -93,6 +93,7 @@ __all__ = [
     "set_character",
     "story_files",
     "story_path",
+    "strip_auto_changes",
     "update_progress",
 ]
 
@@ -105,6 +106,12 @@ ROUND_FILENAME = "round.json"
 
 #: 场景副本里「变化记录」小节的小标题
 SCENE_CHANGE_HEADER = "## 变化记录"
+
+#: 系统自动记的「进出场景」流水：不影响下次读取，读场景时直接滤掉
+#: （旧存档里已经写进去的行也靠这条正则清理）
+_AUTO_CHANGE_RE = re.compile(
+    r"^-\s*\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\s*(?:进入|离开)：玩家(?:进入|离开)该场景\s*$"
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -436,8 +443,13 @@ def recent_events(
     return events
 
 
-def events_text(save: Save, limit: int = 10, *, scene: str | None = None) -> str:
-    """把最近事件排版成可直接内联进提示词的文本。"""
+def events_text(
+    save: Save, limit: int = 10, *, scene: str | None = None, max_len: int = 0
+) -> str:
+    """把最近事件排版成可直接内联进提示词的文本。
+
+    :param max_len: 单条事件的最大字符数（0 = 不截）；提示词每步都会重发，长叙述截断更省。
+    """
     labels = {"action": "行动", "narration": "叙述", "check": "判定", "note": "记录"}
     lines: list[str] = []
     for event in recent_events(save, limit, scene=scene):
@@ -446,7 +458,10 @@ def events_text(save: Save, limit: int = 10, *, scene: str | None = None) -> str
         prefix = f"[{label}]"
         if actor:
             prefix += f"{actor} "
-        lines.append(f"{prefix}{event.get('content', '')}")
+        content = str(event.get("content", ""))
+        if max_len and len(content) > max_len:
+            content = content[: max_len - 1].rstrip() + "…"
+        lines.append(f"{prefix}{content}")
     return "\n".join(lines)
 
 
@@ -488,13 +503,32 @@ def has_scene(save: Save, key: str) -> bool:
     return scene_path(save.save_id, key).is_file()
 
 
+def strip_auto_changes(text: str) -> str:
+    """去掉系统自动记的「进入 / 离开该场景」流水（不影响下次读取，不必留档）。"""
+    lines = [
+        line
+        for line in str(text or "").splitlines()
+        if not _AUTO_CHANGE_RE.match(line.strip())
+    ]
+    kept: list[str] = []
+    for index, line in enumerate(lines):
+        if line.strip() == SCENE_CHANGE_HEADER:
+            rest = [item for item in lines[index + 1 :] if item.strip()]
+            # 小节里只剩空行 / 直接接上下一个标题：连小标题一起去掉
+            if not rest or rest[0].lstrip().startswith("#"):
+                continue
+        kept.append(line)
+    body = "\n".join(kept).strip()
+    return body + "\n" if body else ""
+
+
 def read_scene(save: Save, key: str) -> str | None:
-    """读取存档里的场景副本；没有返回 ``None``。"""
+    """读取存档里的场景副本；没有返回 ``None``（自动进出流水会被滤掉）。"""
     path = scene_path(save.save_id, key)
     if not path.is_file():
         return None
     try:
-        return path.read_text(encoding="utf-8")
+        return strip_auto_changes(path.read_text(encoding="utf-8"))
     except OSError as e:
         log.warning(f"读取场景副本失败：{path}（{e}）")
         return None

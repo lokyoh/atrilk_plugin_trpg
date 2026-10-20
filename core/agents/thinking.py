@@ -3,7 +3,7 @@
 机制参考 ``ATRI/system/agent/brain/thinking.py``：模型在一次输出里先给出
 「思考内容」，再用一段 ```text 代码块列出要调用的功能（每行一个
 ``功能名(参数名=参数值, ...)``）。解析后逐个执行，把结果回填给模型继续思考，
-直到某个功能结束循环（:class:`AgentFinish`）或模型不再给出功能调用。
+直到某个功能结束循环（:class:`AgentFinishError`）或模型不再给出功能调用。
 
 解析层复用主 Agent 的解释器（``ATRI.system.agent.brain.action_parser``），
 下面这些容错都在那边实现、两边共享：
@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -37,15 +38,15 @@ from .base import AgentError, AgentResult, TrpgAgent, UsageEntry
 
 __all__ = [
     "AgentContext",
-    "AgentFinish",
+    "AgentFinishError",
     "AgentTool",
     "ThinkingAgent",
     "ToolArg",
 ]
 
 
-class AgentFinish(Exception):
-    """功能用它提前结束循环，并携带最终要返回的内容（如 ``narrate``）。"""
+class AgentFinishError(Exception):
+    """功能用它提前结束思考循环（**不是错误**：只是用异常短路循环），并携带最终要返回的内容。"""
 
     def __init__(self, output: str = ""):
         super().__init__(output)
@@ -83,7 +84,7 @@ class AgentTool:
     """可被 :class:`ThinkingAgent` 调用的一项功能。
 
     子类用类属性声明名称、说明与参数，用 :meth:`call` 实现逻辑。需要结束整轮
-    思考时抛出 :class:`AgentFinish`。
+    思考时抛出 :class:`AgentFinishError`。
     """
 
     #: 供模型调用的功能名（小写下划线）
@@ -92,6 +93,9 @@ class AgentTool:
     description: ClassVar[str] = ""
     #: 参数声明
     args: ClassVar[tuple[ToolArg, ...]] = ()
+    #: 返回给模型的最大长度：超了截断，免得多次思考把上下文撑爆（0 = 不截）
+    #: 需要整篇返回的功能（如读场景文档）在自己的类里调大
+    max_result_chars: ClassVar[int] = 600
 
     @staticmethod
     async def call(context: AgentContext, **kwargs: Any) -> Any:
@@ -100,14 +104,18 @@ class AgentTool:
 
     @classmethod
     def prompt_block(cls) -> str:
-        """生成一段功能说明，形如 ``名称 / 说明 / 参数``。"""
-        lines = [f"{cls.function_name}:", f"    说明: {cls.description}"]
+        """一行式功能说明：``- 名称：说明｜参数：a（类型）=说明，b（类型）=说明``。
+
+        原来是「名称 / 说明 / 参数」四五行缩进块，22 个功能光缩进与换行就吃掉上千字；
+        合成一行后含义不变，提示词短一截。
+        """
+        line = f"- {cls.function_name}：{cls.description}"
         if cls.args:
-            lines.append("    参数:")
-            lines.extend(
-                f"        -{arg.name} {arg.type}: {arg.description}" for arg in cls.args
+            args = "，".join(
+                f"{arg.name}（{arg.type}）={arg.description}" for arg in cls.args
             )
-        return "\n".join(lines)
+            line += f"｜参数：{args}"
+        return line
 
 
 class ThinkingAgent(TrpgAgent):
@@ -125,13 +133,19 @@ class ThinkingAgent(TrpgAgent):
 
     # ---- 功能与提示词 ----
 
-    def tool_map(self) -> dict[str, type[AgentTool]]:
-        """功能名 -> 功能类。"""
-        return {tool.function_name: tool for tool in self.tools}
+    def active_tools(self, values: Mapping[str, Any]) -> tuple[type[AgentTool], ...]:
+        """本次运行可用的功能；默认全给，子类可按局面裁剪（省提示词、少误调用）。"""
+        return self.tools
 
-    def function_prompt(self) -> str:
+    def tool_map(
+        self, tools: tuple[type[AgentTool], ...] | None = None
+    ) -> dict[str, type[AgentTool]]:
+        """功能名 -> 功能类。"""
+        return {tool.function_name: tool for tool in (tools or self.tools)}
+
+    def function_prompt(self, tools: tuple[type[AgentTool], ...] | None = None) -> str:
         """把功能清单与调用要求拼成一段提示词。"""
-        blocks = "\n".join(tool.prompt_block() for tool in self.tools)
+        blocks = "\n".join(tool.prompt_block() for tool in (tools or self.tools))
         return (
             "你可以调用以下功能，禁止调用未列出的功能:\n"
             f"{blocks}\n\n"
@@ -154,8 +168,9 @@ class ThinkingAgent(TrpgAgent):
         """系统提示词（角色 + 功能说明）与用户输入。"""
         messages = LLMMessages()
         system = self.system_prompt.strip()
-        if self.tools:
-            function_prompt = self.function_prompt()
+        tools = self.active_tools(values)
+        if tools:
+            function_prompt = self.function_prompt(tools)
             system = f"{system}\n\n{function_prompt}" if system else function_prompt
         if system:
             messages.add_message(LLMMessage("system", LLMContents().text(system)))
@@ -189,7 +204,7 @@ class ThinkingAgent(TrpgAgent):
         self.check_inputs(values)
         self.ensure_available()
         context = context or AgentContext()
-        tools = self.tool_map()
+        tools = self.tool_map(self.active_tools(values))
 
         messages = self.build_messages(values)
         last_content = ""
@@ -228,7 +243,7 @@ class ThinkingAgent(TrpgAgent):
             else:
                 feedback = []
 
-            finish: AgentFinish | None = None
+            finish: AgentFinishError | None = None
             for call in calls:
                 name = call["function"]
                 tool = tools.get(name)
@@ -247,7 +262,7 @@ class ThinkingAgent(TrpgAgent):
                     continue
                 try:
                     result = await tool.call(context, **args)
-                except AgentFinish as raised:
+                except AgentFinishError as raised:
                     if len(calls) == 1:
                         return self._result(raised.output, resp, usages)
                     # 结束调用的文本是在**没看到**同批功能返回的情况下写出来的：
@@ -260,10 +275,18 @@ class ThinkingAgent(TrpgAgent):
                     feedback.append(f"功能 {name} 执行失败，请勿再次调用")
                     continue
                 # 记下功能输出的文本摘要：调用方据此写复盘里的「裁定」一行。
+                # 过长的返回会截断——每一步思考都会把这段重新发给模型，不截会越滚越大。
+                text = str(result)
+                limit = getattr(tool, "max_result_chars", 0) or 0
+                if limit and len(text) > limit:
+                    text = (
+                        text[:limit].rstrip()
+                        + "\n……（返回过长已截断；需要更多就缩小查询范围）"
+                    )
                 context.data.setdefault("tool_log", []).append(
-                    {"function": name, "result": str(result)}
+                    {"function": name, "result": text}
                 )
-                feedback.append(f"调用 {name} 返回：{result}")
+                feedback.append(f"调用 {name} 返回：{text}")
 
             if finish is not None:
                 feedback.append(
