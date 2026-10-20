@@ -162,7 +162,9 @@ def level_up(card: Any) -> str:
     """
     level = int(getattr(card, "level", 1) or 1)
     if level >= MAX_LEVEL:
-        return f"{getattr(card, 'name', '') or '角色'} 已经是 {MAX_LEVEL} 级，无法再升级。"
+        return (
+            f"{getattr(card, 'name', '') or '角色'} 已经是 {MAX_LEVEL} 级，无法再升级。"
+        )
     threshold = next_level_threshold(level)
     if threshold is None:
         return "已达等级上限。"

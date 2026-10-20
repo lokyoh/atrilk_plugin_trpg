@@ -66,7 +66,6 @@ from .conditions import (
 )
 from .equipment import get_weapon
 from .monsters import Monster
-from .progression import xp_for_cr
 from .npcs import (
     build_npc,
     is_npc_key,
@@ -77,6 +76,7 @@ from .npcs import (
     sync_combatant,
     update_npc,
 )
+from .progression import xp_for_cr
 from .save_store import Save, get_character, read_scene, save_dir, set_character
 
 __all__ = [
@@ -91,8 +91,8 @@ __all__ = [
     "apply_damage",
     "attack",
     "auto_crit_on_hit",
-    "can_target",
     "can_act",
+    "can_target",
     "clear_combat",
     "combat_path",
     "combat_text",
@@ -1054,10 +1054,7 @@ def record_defeat(state: CombatState, enemy: Combatant, reason: str = "倒下") 
     tier_npc = is_npc_key(key)
     cr = float(monster.cr) if monster is not None else 0.0
     xp = npc_xp(key) if tier_npc else xp_for_cr(cr)
-    if tier_npc:
-        cr_text = "档位"
-    else:
-        cr_text = monster.cr_text if monster is not None else "0"
+    cr_text = "档位" if tier_npc else monster.cr_text if monster is not None else "0"
     state.defeated.append(
         {
             "cid": enemy.cid,
@@ -1077,9 +1074,7 @@ def forget_defeat(state: CombatState, enemy: Combatant) -> None:
 
     没有这条的话，被治疗救活的敌人仍然会照常计经验与战利品。
     """
-    state.defeated = [
-        item for item in state.defeated if item.get("cid") != enemy.cid
-    ]
+    state.defeated = [item for item in state.defeated if item.get("cid") != enemy.cid]
 
 
 def apply_damage(

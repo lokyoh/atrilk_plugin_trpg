@@ -43,8 +43,8 @@ __all__ = [
     "NPC_FILENAME",
     "NPC_KEY_PREFIX",
     "NPC_TIERS",
-    "NPC_TIER_MAP",
     "NPC_TIER_CR",
+    "NPC_TIER_MAP",
     "NPC_TIER_XP",
     "NpcRecord",
     "NpcTier",
@@ -109,7 +109,9 @@ def npc_xp(key: str) -> int:
     """
     parsed = tier_from_key(str(key or "").split(SCALE_SUFFIX, 1)[0])
     tier, level = parsed if parsed is not None else (None, 1)
-    table = NPC_TIER_XP.get(tier.key if tier is not None else "", NPC_TIER_XP["soldier"])
+    table = NPC_TIER_XP.get(
+        tier.key if tier is not None else "", NPC_TIER_XP["soldier"]
+    )
     return table[max(1, min(int(level), len(table))) - 1]
 
 

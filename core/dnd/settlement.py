@@ -125,8 +125,10 @@ def roll_loot(cr: float, rng: Any = None) -> dict[str, Any]:
 
 def total_xp(state: CombatState) -> int:
     """本场战斗累计可分配的经验值（各被击败怪物 CR 对应经验之和）。"""
-    return sum(int(item.get("xp") or xp_for_cr(_as_float(item.get("cr"))))
-               for item in state.defeated)
+    return sum(
+        int(item.get("xp") or xp_for_cr(_as_float(item.get("cr"))))
+        for item in state.defeated
+    )
 
 
 def _as_float(value: Any) -> float:
@@ -277,7 +279,9 @@ def _award_xp(card: DndCharacter, share: int) -> list[str]:
     return lines
 
 
-def settle_combat(save: Save, state: CombatState, *, rng: Any = None) -> SettlementResult:
+def settle_combat(
+    save: Save, state: CombatState, *, rng: Any = None
+) -> SettlementResult:
     """结算一场战斗：经验平分 + 战利品 + 升级，全部写盘。
 
     调用方负责在结算**之后**清除战斗状态（:func:`~.combat.clear_combat`）。
@@ -319,6 +323,6 @@ def settle_combat(save: Save, state: CombatState, *, rng: Any = None) -> Settlem
     if result.coins or result.items:
         current = list(save.progress.get("战利品") or [])
         entry = f"{result.loot_text}（最高档次 {top:g}）"
-        update_progress(save, 战利品=current + [entry])
+        update_progress(save, 战利品=[*current, entry])
 
     return result

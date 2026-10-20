@@ -34,8 +34,8 @@ from ATRI.system.agent.llm import (
     llm_manager,
 )
 
-from .base import AgentError, AgentResult, TrpgAgent, UsageEntry
 from ..trpg.text import strip_safety_blocks
+from .base import AgentError, AgentResult, TrpgAgent, UsageEntry
 
 __all__ = [
     "AgentContext",

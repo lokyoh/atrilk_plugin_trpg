@@ -197,9 +197,7 @@ def parse_story_entities(text: str) -> list[Entity]:
             if match is not None:
                 name, kind, public = clean_name(match.group("name")), "place", False
         if name:
-            current = Entity(
-                name=name, kind=kind, source="story", public=public
-            )
+            current = Entity(name=name, kind=kind, source="story", public=public)
     flush()
     return entities
 

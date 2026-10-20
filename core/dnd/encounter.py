@@ -92,7 +92,9 @@ def target_cr_text(level: int, count: int = 1, *, party_size: int = 4) -> str:
     return _cr_text(target_cr_for(level, count, party_size=party_size))
 
 
-def recommended_monsters(level: int, count: int = 1, *, party_size: int = 4) -> list[Monster]:
+def recommended_monsters(
+    level: int, count: int = 1, *, party_size: int = 4
+) -> list[Monster]:
     """按目标 CR 推荐怪物表里最合适的几只（CR 越接近目标越靠前）。"""
     target = target_cr_for(level, count, party_size=party_size)
     return sorted(

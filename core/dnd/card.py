@@ -61,6 +61,7 @@ def _join_reason(reason: str, extra: str) -> str:
         return f"（{extra}）"
     return reason[:-1] + f"；{extra}）"
 
+
 #: 种族 / 亚种自带的伤害抗性（建卡时自动写进
 #: :attr:`DndCharacter.damage_resistances`）。龙裔的吐息抗性取决于自选龙种，
 #: 由 DM 在建卡后自行补一条。
@@ -716,24 +717,22 @@ class DndCharacter(TrpgCharacter):
         combined = state_adv
         if explicit is not Advantage.NORMAL:
             # 状态与显式指定相遇：优势劣势抵消
-            combined = (
-                state_adv if explicit is state_adv else Advantage.NORMAL
-            )
+            combined = state_adv if explicit is state_adv else Advantage.NORMAL
         names = [c for c in normalize_conditions(self.conditions) if c]
         if self.exhaustion:
             names.append(f"力竭 {self.exhaustion} 级")
         kind_cn = {"check": "检定", "save": "豁免", "attack": "攻击"}[kind]
-        stance = "优势" if combined is Advantage.ADVANTAGE else (
-            "劣势" if combined is Advantage.DISADVANTAGE else "优劣抵消"
+        stance = (
+            "优势"
+            if combined is Advantage.ADVANTAGE
+            else ("劣势" if combined is Advantage.DISADVANTAGE else "优劣抵消")
         )
         if not names:
             return combined, ""
         reason = f"（{'、'.join(names)}：{kind_cn}{stance}）"
         return combined, reason
 
-    def resolve_attack_advantage(
-        self, explicit: Advantage
-    ) -> tuple[Advantage, str]:
+    def resolve_attack_advantage(self, explicit: Advantage) -> tuple[Advantage, str]:
         """攻击检定的最终优势姿态：把自身状态（中毒 / 力竭 / 恐慌……）与
         调用方显式指定的姿态合并（相遇抵消），并给出原因文本。
 
@@ -941,7 +940,7 @@ class DndCharacter(TrpgCharacter):
             names = [*names, f"力竭 {self.exhaustion} 级"]
         return "、".join(names)
 
-    def effect(self) -> "ConditionEffect":
+    def effect(self) -> ConditionEffect:
         """当前状态合并后的机械效果。"""
         return merge_effects(self.conditions, exhaustion=self.exhaustion)
 

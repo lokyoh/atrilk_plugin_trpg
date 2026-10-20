@@ -20,7 +20,7 @@ DM 仍然可以用显式的 advantage 参数覆盖（剧情上说得通时）。
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 
 from ..trpg.dice import Advantage
@@ -118,9 +118,7 @@ class ConditionEffect:
                 dict.fromkeys(self.auto_fail_saves + other.auto_fail_saves)
             ),
             check_adv_abilities=tuple(
-                dict.fromkeys(
-                    self.check_adv_abilities + other.check_adv_abilities
-                )
+                dict.fromkeys(self.check_adv_abilities + other.check_adv_abilities)
             ),
             save_adv_abilities=tuple(
                 dict.fromkeys(self.save_adv_abilities + other.save_adv_abilities)
@@ -130,7 +128,8 @@ class ConditionEffect:
             speed_scale=min(self.speed_scale, other.speed_scale),
             hp_max_scale=min(self.hp_max_scale, other.hp_max_scale),
             resistances=tuple(dict.fromkeys(self.resistances + other.resistances)),
-            breaks_concentration=self.breaks_concentration or other.breaks_concentration,
+            breaks_concentration=self.breaks_concentration
+            or other.breaks_concentration,
             notes=tuple(dict.fromkeys(self.notes + other.notes)),
         )
 
@@ -385,7 +384,7 @@ def normalize_conditions(raw: Iterable[str] | str | None) -> list[str]:
     if raw is None:
         return []
     if isinstance(raw, str):
-        raw = [part for part in _split_text(raw)]
+        raw = list(_split_text(raw))
     out: list[str] = []
     for item in raw:
         text = str(item or "").strip().strip("。.!！?？;；,，、 ")
@@ -477,7 +476,8 @@ def attack_advantage(
     reasons: list[str] = []
     if attacker.own_attack is not Advantage.NORMAL:
         reasons.append(
-            "攻击者" + ("有优势" if attacker.own_attack is Advantage.ADVANTAGE else "有劣势")
+            "攻击者"
+            + ("有优势" if attacker.own_attack is Advantage.ADVANTAGE else "有劣势")
         )
     if target.vs_attack is not Advantage.NORMAL:
         reasons.append(
@@ -491,15 +491,17 @@ def attack_advantage(
         elif not melee:
             advantage = _combine(advantage, Advantage.DISADVANTAGE)
             reasons.append("目标倒地：远程劣势")
-    if "麻痹" in normalize_conditions(target_conditions) and melee and 0 <= distance <= 5:
+    if (
+        "麻痹" in normalize_conditions(target_conditions)
+        and melee
+        and 0 <= distance <= 5
+    ):
         reasons.append("目标麻痹：5 尺内命中自动暴击")
     reason = "；".join(reasons)
     return advantage, reason
 
 
-def save_auto_fail(
-    conditions: Iterable[str] | None, ability: str
-) -> bool:
+def save_auto_fail(conditions: Iterable[str] | None, ability: str) -> bool:
     """某项豁免是否因状态自动失败（麻痹 / 震慑 / 昏迷 / 石化的力量与敏捷）。"""
     ability_obj = str(ability or "").strip().lower()
     aliases = {
@@ -551,7 +553,9 @@ def resolve_damage(
             continue
         if level.startswith("免疫"):
             factor = 0.0
-            notes.append(f"{dtype}免疫" + ("（非魔法武器）" if "非魔法" in level else ""))
+            notes.append(
+                f"{dtype}免疫" + ("（非魔法武器）" if "非魔法" in level else "")
+            )
         elif level == "易伤":
             factor *= 2.0
             notes.append(f"{dtype}易伤")
