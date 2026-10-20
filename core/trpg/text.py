@@ -9,12 +9,40 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 
-__all__ = ["bullet", "kv_block", "rule_line", "strip_player_hints", "truncate"]
+__all__ = [
+    "bullet",
+    "kv_block",
+    "rule_line",
+    "strip_player_hints",
+    "strip_safety_blocks",
+    "truncate",
+]
 
 DEFAULT_LIMIT = 800
 
-#: 叙述结尾给玩家的「接下来你们可以…」提示块（只给玩家看，不该进历史 / 复盘）
-_PLAYER_HINTS_RE = re.compile(r"^[ \t>*_#\-]*接下来你们可以", re.MULTILINE)
+#: 叙述结尾给玩家的「接下来你们可以…」提示块（只给玩家看，不该进历史 / 复盘）。
+#: 不锚定行首：模型偶尔不守「单独一行」的规矩、把提示写在句末；也容忍「接着」这类
+#: 换措辞与单数「你」。冒号或行尾必须跟上——否则「接下来你可以活着离开」这种正文里
+#: 的相似句子会被误伤（「下面」是常见空间词，容易撞正文，不做变体）。
+_PLAYER_HINTS_RE = re.compile(
+    r"[ \t>*_#\-]*(?:接下来|接着)你(?:们)?可以(?:[：:]|$)", re.MULTILINE
+)
+
+#: 模型侧偶尔会把安全审查的元信息（``<ds_safety>…</ds_safety>``）混进应答正文：
+#: 原样透出会给玩家看到一堆无关标签，事件历史与复盘也会被污染。
+_SAFETY_BLOCK_RE = re.compile(r"<ds_([a-z_]+)>.*?</ds_\1>", re.DOTALL)
+_SAFETY_TAG_RE = re.compile(r"</?ds_[a-z_]+>")
+
+
+def strip_safety_blocks(text: str) -> str:
+    """剥掉模型应答里混入的审查元信息块（如 ``<ds_safety>…</ds_safety>``）。
+
+    这些块不是给玩家看的内容：留着会原样泄漏成 DM 叙述，并污染事件历史与复盘。
+    成对的整块剥掉，没配对的残留标签也清掉；剥完顺手把连续空行压回正常段距。
+    """
+    cleaned = _SAFETY_BLOCK_RE.sub("", str(text or ""))
+    cleaned = _SAFETY_TAG_RE.sub("", cleaned)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
 
 def strip_player_hints(text: str) -> str:

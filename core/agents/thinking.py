@@ -35,6 +35,7 @@ from ATRI.system.agent.llm import (
 )
 
 from .base import AgentError, AgentResult, TrpgAgent, UsageEntry
+from ..trpg.text import strip_safety_blocks
 
 __all__ = [
     "AgentContext",
@@ -224,6 +225,8 @@ class ThinkingAgent(TrpgAgent):
             self._collect_usage(usages, resp)
             raw = resp.content if isinstance(resp.content, str) else str(resp.content)
             content, calls, issues = self.split_response(raw)
+            # 审查元信息（<ds_safety>…）不是正文：这里就剥掉，别带进最终叙述
+            content = strip_safety_blocks(content)
             if content:
                 last_content = content
 
@@ -315,10 +318,11 @@ class ThinkingAgent(TrpgAgent):
     def _result(
         self, content: str, resp: Any, usages: list[UsageEntry] | None = None
     ) -> AgentResult:
+        # narrate 等结束功能的输出同样可能夹带审查元信息，统一在出口清掉
         return AgentResult(
             agent=self.name,
             title=self.title,
-            content=content or "",
+            content=strip_safety_blocks(content or ""),
             model_type=self.model_type,
             usage=getattr(resp, "usage", None),
             usages=list(usages or []),

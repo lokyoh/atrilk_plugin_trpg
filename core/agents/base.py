@@ -32,6 +32,8 @@ from ATRI.system.agent.llm import (
     llm_manager,
 )
 
+from ..trpg.text import strip_safety_blocks
+
 __all__ = [
     "AgentError",
     "AgentInput",
@@ -167,6 +169,8 @@ class TrpgAgent:
         content = resp.content
         if not isinstance(content, str):
             content = str(content)
+        # 模型偶尔会把审查元信息（<ds_safety>…）混进应答，原样返回会泄漏成正文
+        content = strip_safety_blocks(content)
         usage = getattr(resp, "usage", None)
         return AgentResult(
             agent=self.name,

@@ -174,7 +174,8 @@ class SettlementResult:
     def loot_text(self) -> str:
         parts = []
         if self.coins:
-            parts.append(f"金币 {coins_text(self.coins)}")
+            # 币种名由 coins_text 自带（「银 60 · 金 8」），不再重复加「金币」前缀
+            parts.append(coins_text(self.coins))
         if self.items:
             parts.append("物品 " + "、".join(self.items))
         return "；".join(parts) or "没有搜出任何东西。"
