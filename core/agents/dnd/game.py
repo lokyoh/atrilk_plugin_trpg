@@ -43,6 +43,7 @@ from ...dnd.combat import (
     use_resource,
 )
 from ...dnd.judge import dnd_judge
+from ...dnd.memory import memory_text
 from ...dnd.names import player_name
 from ...dnd.npcs import list_npcs, npcs_text
 from ...dnd.save_store import (
@@ -264,6 +265,44 @@ def _party_block(save, order, focus: str = "") -> str:
         else:
             blocks.append(_card_brief(card))
     return "\n\n".join(blocks)
+
+
+#: 注入 DM 提示词的「最近原始事件」条数上限。
+#: 剧情记忆摘要已经覆盖了「已发生什么」，这里只留一行即时细节兜底。
+_RECENT_EVENTS_MAX = 1
+
+#: 单条原始事件的最大字符数。
+_RECENT_EVENT_LEN = 80
+
+#: 剧情记忆摘要注入提示词的字数上限（整轮）。
+_MEMORY_TEXT_MAX = 160
+
+#: 逐人结算时摘要的字数上限（这一轮只结算一个人，不用给全景）。
+_MEMORY_TEXT_MAX_PARTIAL = 100
+
+
+def _history_block(save, limit: int, *, summary_max: int = _MEMORY_TEXT_MAX) -> str:
+    """拼「已发生」块：剧情记忆摘要 + 最近一条原始事件。
+
+    **不再按场景过滤**：原来 ``events_text(..., scene=save.current_scene)`` 会让
+    DM 换个场景就忘掉之前发生的事；摘要本身跨场景，原始事件也一并跨场景取。
+
+    还没有任何记忆时（新档开局）退回纯流水账视图——那时摘要替代不了什么，
+    反而把上下文砍得太狠。
+
+    :param limit: 原始事件条数上限（由调用方按逐人 / 整轮裁剪后给出）
+    :param summary_max: 摘要字数上限
+    """
+    summary = memory_text(save, max_chars=summary_max)
+    if not summary:
+        # 还没有记忆：按流水账给，但同样不按场景过滤
+        return events_text(save, max(1, limit), max_len=120)
+    parts = [summary]
+    count = max(1, min(limit, _RECENT_EVENTS_MAX))
+    recent = events_text(save, count, max_len=_RECENT_EVENT_LEN)
+    if recent:
+        parts.append("【刚刚】\n" + recent)
+    return "\n\n".join(parts)
 
 
 def _progress_text(save) -> str:
@@ -841,10 +880,20 @@ async def run_dm_round(
         _mark_wrapping_up(save)
 
     # 历史与 NPC 名单按设置裁剪：每轮都会重发，条数/长度直接乘在成本上。
+    #
+    # 「已发生」这一块有两部分：
+    # - **剧情记忆摘要**（跨场景，结构化：已发生 / 待回收 / 关系）——替代原来那
+    #   几百字符的流水账，换场景也不会失忆；
+    # - **最近两三条原始事件**——保住「上一轮具体发生了什么」的即时细节。
+    # 两部分合起来比原来更短，且覆盖全场景；更早的旧事由 DM 用 recall 按需查。
     limit = max(1, min(history_limit, settings.history_events()))
     if partial:
         limit = max(1, limit // 2)
-    history = events_text(save, limit, scene=save.current_scene or None, max_len=160)
+    history = _history_block(
+        save,
+        limit,
+        summary_max=_MEMORY_TEXT_MAX_PARTIAL if partial else _MEMORY_TEXT_MAX,
+    )
     # 本局出场过的具名 NPC：带着旧伤与旧账，供 DM 复用而不是重新造人。
     roster_limit = settings.npc_roster_limit()
     roster = (

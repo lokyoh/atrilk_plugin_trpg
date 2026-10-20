@@ -33,6 +33,7 @@ from typing import Any
 
 from .card import DndCharacter
 from .combat import CombatState
+from .memory import add_memory, current_round
 from .monsters import SCALE_SUFFIX
 from .npcs import is_npc_key, tier_from_key
 from .progression import can_level_up, level_up, xp_for_cr
@@ -324,5 +325,17 @@ def settle_combat(
         current = list(save.progress.get("战利品") or [])
         entry = f"{result.loot_text}（最高档次 {top:g}）"
         update_progress(save, 战利品=[*current, entry])
+
+    # 战斗结束是「已发生」的大事，顺手摘一条剧情记忆（零额外模型成本）：
+    # 只记被击败的敌人，逃跑 / 被擒的不算。
+    if state.defeated:
+        names = "、".join(str(item.get("name") or "?") for item in state.defeated)
+        add_memory(
+            save,
+            f"战斗结束，击败了{names}",
+            kind="fact",
+            round=current_round(save),
+            source="auto",
+        )
 
     return result

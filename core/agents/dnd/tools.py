@@ -63,6 +63,15 @@ from ...dnd.conditions import (
 )
 from ...dnd.encounter import calibrate_specs
 from ...dnd.equipment import ARMORS, SHIELDS, WEAPONS, get_armor, get_weapon
+from ...dnd.memory import (
+    MEMORY_MAX,
+    add_memory,
+    current_round,
+    list_memories,
+    recall_memories,
+    remember_from_tool,
+    set_resolved,
+)
 from ...dnd.monsters import MONSTERS, get_monster, monster_names
 from ...dnd.npcs import (
     NPC_KEY_PREFIX,
@@ -138,6 +147,8 @@ __all__ = [
     "NarrateTool",
     "QueryDataTool",
     "ReadSceneTool",
+    "RecallTool",
+    "RememberTool",
     "RestTool",
     "RollDiceTool",
     "SecretRollTool",
@@ -916,6 +927,14 @@ class UpdateCharacterTool(AgentTool):
         elif field == "notes":
             card.notes = text
             message = "备注已更新"
+            # 备注是 DM 手写的关键事实，顺手摘一条剧情记忆（零额外模型成本）
+            if save is not None and text:
+                remember_from_tool(
+                    save,
+                    "update_character",
+                    {"field": "notes", "value": text, "player": card.name},
+                    round=current_round(save),
+                )
         elif field == "features":
             card.features.append(text)
             message = f"已追加特性：{text}"
@@ -1112,6 +1131,13 @@ class UpdateSceneTool(AgentTool):
         ok = append_scene_change(save, save.current_scene, text, kind=label)
         if not ok:
             return "当前场景没有存档副本，无法记录变化"
+        # 顺手摘一条剧情记忆（零额外模型成本）：场景变化本身就是「已发生」的事。
+        remember_from_tool(
+            save,
+            "update_scene",
+            {"note": text},
+            round=current_round(save),
+        )
         return f"已在场景「{save.current_scene}」记录变化：{text}"
 
 
@@ -2227,6 +2253,12 @@ class UpdateNpcTool(AgentTool):
                     note=str(note or "") or None,
                 )
                 record = find_npc(save, npc_name) or record
+            remember_from_tool(
+                save,
+                "update_npc",
+                {"name": npc_name, "status": status, "note": note},
+                round=current_round(save),
+            )
             return f"已把 {npc_name} 记进 NPC 名单。\n  {record.brief()}"
 
         changes: dict[str, Any] = {}
@@ -2245,7 +2277,107 @@ class UpdateNpcTool(AgentTool):
         updated = update_npc(save, npc_name, **changes)
         if updated is None:
             return f"更新 {npc_name} 失败"
+        remember_from_tool(
+            save,
+            "update_npc",
+            {
+                "name": npc_name,
+                "status": changes.get("status"),
+                "note": changes.get("note"),
+            },
+            round=current_round(save),
+        )
         return "已更新：\n  " + updated.brief()
+
+
+# --------------------------------------------------------------------------- #
+# 剧情记忆
+# --------------------------------------------------------------------------- #
+
+
+class RememberTool(AgentTool):
+    """手动记一条剧情记忆（可选；系统也会从别的工具里自动摘）。"""
+
+    function_name = "remember"
+    description = "记一条剧情记忆"
+    args = (
+        ToolArg("text", "str", "一句话，40 字以内"),
+        ToolArg(
+            "kind",
+            "str",
+            "fact=已发生 / foreshadow=待回收 / relation=关系 / resolved=标记已回收",
+        ),
+    )
+
+    @staticmethod
+    async def call(
+        context: AgentContext,
+        text: Any = "",
+        kind: Any = "fact",
+        **kwargs: Any,
+    ) -> str:
+        save = load_save(context.save_id) if context.save_id else None
+        if save is None:
+            return "当前没有存档，无法记录剧情记忆"
+        body = str(text or "").strip()
+        if not body:
+            return "记忆内容为空，未记录"
+        kind_text = str(kind or "fact").strip().lower()
+        kind_map = {
+            "fact": "fact",
+            "事实": "fact",
+            "已发生": "fact",
+            "foreshadow": "foreshadow",
+            "伏笔": "foreshadow",
+            "待回收": "foreshadow",
+            "relation": "relation",
+            "关系": "relation",
+        }
+        # kind=resolved：这条伏笔已经兑现了，标掉旧的那条
+        if kind_text in {"resolved", "已回收", "回收"}:
+            hit = set_resolved(save, body, resolved=True)
+            if hit is not None:
+                return f"已把记忆标记为「已回收」：{hit.text}"
+            kind_text = "fact"
+        real_kind = kind_map.get(kind_text, "fact")
+        memory = add_memory(
+            save,
+            body,
+            kind=real_kind,
+            round=current_round(save),
+            source="dm",
+        )
+        if memory is None:
+            return "记忆内容为空，未记录"
+        label = memory.label
+        extra = f"（共 {len(list_memories(save))}/{MEMORY_MAX} 条）"
+        return f"已记下【{label}】{extra}：{memory.text}"
+
+
+class RecallTool(AgentTool):
+    """按关键词检索剧情记忆（按需调用，平时零开销）。"""
+
+    function_name = "recall"
+    description = "查剧情记忆"
+    args = (
+        ToolArg("topic", "str", "关键词；留空取最近的"),
+        ToolArg("limit", "int", "最多几条（默认 5）"),
+    )
+
+    @staticmethod
+    async def call(
+        context: AgentContext, topic: Any = "", limit: Any = 5, **kwargs: Any
+    ) -> str:
+        save = load_save(context.save_id) if context.save_id else None
+        if save is None:
+            return "当前没有存档，查不到剧情记忆"
+        count = _parse_int(limit, 5)
+        count = max(1, min(count, MEMORY_MAX))
+        hits = recall_memories(save, str(topic or ""), limit=count)
+        if not hits:
+            return "还没有任何剧情记忆"
+        lines = [item.line() for item in hits]
+        return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #
@@ -2302,6 +2434,8 @@ DM_TOOLS: tuple[type[AgentTool], ...] = (
     UpdateNpcTool,
     EndCombatTool,
     RestTool,
+    RememberTool,
+    RecallTool,
     AwaitPlayersTool,
     WrapUpTool,
     NarrateTool,
