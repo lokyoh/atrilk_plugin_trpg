@@ -81,7 +81,11 @@ class CheckResult:
         return self.total >= self.dc
 
     def describe(self) -> str:
-        """可读的检定文案，例如 ``力量（运动）检定：[17]+3 = 20 ≥ DC15 成功``。"""
+        """可读的检定文案，例如 ``力量（运动）检定：[17]+3 = 20 ≥ DC15 成功``。
+
+        难度同时给**数值和档位名**（DC15 中等）——DM 按数值判断是否合理，
+        玩家只看得懂「中等 / 困难」这种档位，两边各取所需，不用维护两份文案。
+        """
         rolls_text = (
             "+".join(str(r) for r in self.rolls) if self.rolls else str(self.natural)
         )
@@ -98,7 +102,25 @@ class CheckResult:
         if self.auto_critical and self.nat1:
             return f"{text}（大失败）"
         verdict = "成功" if self.success else "失败"
-        return f"{text} / DC{self.dc} {verdict}"
+        label = self.dc_label
+        return (
+            f"{text} / DC{self.dc} {label} {verdict}"
+            if label
+            else f"{text} / DC{self.dc} {verdict}"
+        )
+
+    @property
+    def dc_label(self) -> str:
+        """难度的档位名（非常简单 / 容易 / 中等 / 困难……），玩家看得懂这个。
+
+        惰性导入：本模块是``core.trpg`` 里的通用 d20 层，不该反向依赖规则包
+        ``core.dnd``，所以等真的用到档位名时再去取。
+        """
+        try:
+            from ..dnd.difficulty import describe_dc
+        except ImportError:  # 规则包未就位时不该让检定崩掉
+            return ""
+        return describe_dc(self.dc)
 
 
 def roll_check(

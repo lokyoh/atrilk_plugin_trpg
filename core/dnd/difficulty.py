@@ -147,8 +147,14 @@ def dc_for(text: str, skill_key: str = "") -> int:
 
 
 def describe_dc(dc: int) -> str:
-    """DC → 档位名（DM 叙述时好说「这是一次困难的检定」）。"""
-    value = max(5, min(30, int(dc or DEFAULT_BASE_DC)))
+    """DC → 档位名（DM 叙述时好说「这是一次困难的检定」）。
+
+    ``dc`` 钳在 5~30 的PHB 区间内。**注意**：``None`` 才回落到基准难度，
+    ``0`` 不是假值——它表示「没定档」，和 DC=5 的「非常简单」不是一回事，
+    早先用 ``dc or DEFAULT`` 会把 0 悄悄当成 15。
+    """
+    value = int(DEFAULT_BASE_DC if dc is None else dc)
+    value = max(5, min(30, value))
     name = ""
     for label, band in DC_BANDS:
         if value >= band:
