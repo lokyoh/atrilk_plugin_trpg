@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 from nonebot import get_bot, get_driver
 from nonebot.adapters import Event
-from nonebot.adapters.onebot.v11 import Message, MessageEvent
+from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
 from nonebot.internal.matcher import Matcher
 from nonebot.params import ArgPlainText, CommandArg
 from nonebot.rule import Rule
@@ -1026,7 +1026,7 @@ async def _start_game(
 
 
 @start_round.handle()
-async def _start_round(event: MessageEvent):
+async def _start_round(event: MessageEvent, bot: Bot):
     """开始：开局建好存档后，等玩家都加入，再由任意已加入的玩家发它以正式开局。"""
     from .core.agents.dnd import is_started, run_opening
 
@@ -1085,9 +1085,9 @@ async def _start_round(event: MessageEvent):
     latest.progress.pop("starting", None)
     save_save(latest)
 
-    # 世界背景手册：存进存档了，再发一份到群文件方便玩家随时翻。
+    # 世界背景手册：存进存档了，再发一份给玩家方便随时翻。
     # 必须在 finish() 之前发——finish 会抛异常终止，后面代码不会再跑。
-    brief_note = await _send_world_brief(event, result, latest.save_id)
+    brief_note = await _send_world_brief(event, result, latest.save_id, bot)
 
     extra = f"\n\n{result.rulings_text}" if result.rulings_text else ""
     await start_round.finish(
@@ -1099,13 +1099,25 @@ async def _start_round(event: MessageEvent):
     )
 
 
-async def _send_world_brief(event: MessageEvent, result, save_id: str) -> str:
-    """把开局整理出的世界背景手册发到群文件。
+async def _send_world_brief(
+    event: MessageEvent, result, save_id: str, bot: Bot | None = None
+) -> str:
+    """把开局整理出的世界背景手册发给玩家。
 
     文件名带上存档 ID（``世界背景手册_<存档ID>.md``）：一个群可能同时有好几局，
     同名文件互相覆盖后玩家就分不清哪份是哪局的。
 
+    发送按三级退级（能到哪一级算哪一级，全失败也不影响已经开好的局）：
+
+    1. **文件消息段**（``ATRI.message.file_msg``）：把字节流拼成 OneBot 的
+       ``file`` 段直接发，协议端（NapCat / Lagrange 等）会落成群文件；
+    2. **上传 API**（``upload_group_file`` / ``upload_private_file``）：
+       协议端不支持 ``file`` 段时改走官方上传接口；
+    3. **直接贴正文**：群文件两条路都不通（协议端没开文件、机器人没权限）时，
+       至少把手册内容当消息发出去，别让玩家两手空空。
+
     :param save_id: 本局存档 ID，用于拼文件名。
+    :param bot: 发送用的 Bot；留空则按当前会话取。
     :return: 给玩家的一句话说明；没生成或发不出去时返回空串（**不影响已经开好的局**）。
     """
     from ATRI.message import file_msg
@@ -1121,13 +1133,100 @@ async def _send_world_brief(event: MessageEvent, result, save_id: str) -> str:
         log.warning(f"读世界背景手册失败：{path}（{str_traceback(e)}）")
         return ""
     name = f"世界背景手册_{_safe_file_name(save_id)}.md"
-    try:
-        await event.bot.send(event.get_session(), file_msg(name, data))
-    except Exception as e:
-        # 群文件不是所有会话都支持（私聊、权限、实现差异），失败就跳过
-        log.warning(f"世界背景手册发不出去：{str_traceback(e)}")
+    if bot is None:
+        bot = _session_bot()
+    if bot is None:
+        log.warning("世界背景手册发不出去：拿不到 Bot 对象")
         return ""
-    return f"\n\n📁 世界背景手册已发到群文件（{name}），随时可翻。"
+
+    # 1) 文件消息段
+    try:
+        await bot.send(event, file_msg(name, data))
+        return f"\n\n📁 世界背景手册已发到群文件（{name}），随时可翻。"
+    except Exception as e:
+        log.warning(f"世界背景手册按文件段发送失败：{str_traceback(e)}")
+
+    # 2) 上传 API
+    if await _upload_brief_file(bot, event, name, data):
+        return f"\n\n📁 世界背景手册已发到群文件（{name}），随时可翻。"
+
+    # 3) 兜底：把正文当消息发出去
+    try:
+        for chunk in _split_text_for_msg(text):
+            await bot.send(event, chunk)
+    except Exception as e:
+        log.warning(f"世界背景手册连正文都发不出去：{str_traceback(e)}")
+        return ""
+    return f"\n\n📖 世界背景手册发不成文件，已直接贴在下面（{name}）。"
+
+
+def _session_bot() -> Bot | None:
+    """取当前会话的 Bot；取不到就返回 None（不抛异常）。"""
+    try:
+        return get_bot()
+    except Exception:
+        return None
+
+
+async def _upload_brief_file(
+    bot: Bot, event: MessageEvent, name: str, data: bytes
+) -> bool:
+    """走协议端的上传接口把手册传上去。
+
+    群聊用 ``upload_group_file``，私聊用 ``upload_private_file``；协议端没实现
+    这些接口时会抛异常，这里一律吞掉返回 False（交给下一级兜底）。
+
+    :return: 是否上传成功。
+    """
+    import base64
+
+    payload = f"base64://{base64.b64encode(data).decode('utf-8')}"
+    try:
+        # 鸭子判断群/私聊：只有群事件才有 group_id
+        group_id = getattr(event, "group_id", None)
+        if group_id is not None:
+            await bot.call_api(
+                "upload_group_file",
+                group_id=int(group_id),
+                file=payload,
+                name=name,
+            )
+        else:
+            await bot.call_api(
+                "upload_private_file",
+                user_id=int(event.get_user_id()),
+                file=payload,
+                name=name,
+            )
+    except Exception as e:
+        log.warning(f"世界背景手册按上传接口发送失败：{str_traceback(e)}")
+        return False
+    return True
+
+
+def _split_text_for_msg(text: str, limit: int = 3000) -> list[str]:
+    """把正文切成一条条能直接发出去的消息（按空行分段，过长再硬切）。"""
+    body = str(text or "").strip()
+    if not body:
+        return []
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for paragraph in body.split("\n\n"):
+        piece = paragraph.strip()
+        if not piece:
+            continue
+        if size + len(piece) + 2 > limit and current:
+            chunks.append("\n\n".join(current))
+            current, size = [], 0
+        while len(piece) > limit:
+            chunks.append(piece[:limit])
+            piece = piece[limit:]
+        current.append(piece)
+        size += len(piece) + 2
+    if current:
+        chunks.append("\n\n".join(current))
+    return chunks
 
 
 def _safe_file_name(text: str) -> str:
