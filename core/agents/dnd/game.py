@@ -37,6 +37,7 @@ from ...dnd.combat import (
     combat_text,
     current_actor,
     is_out,
+    living_enemies,
     load_combat,
     peek_following,
     save_combat,
@@ -578,6 +579,56 @@ _EQUIP_COMBAT_RE = re.compile(
 _EQUIP_SHELL_RE = re.compile(r"^(?:我要|我想|我|请|麻烦|帮我|给|把|将)+")
 #: 切碎后落单的无义词（「收下」「穿上」被切剩的残片）
 _EQUIP_NOISE_RE = re.compile(r"(?:下来|起来|上|走|了|吧|的|都|和|与|并)")
+#: 玩家明确在打东西的说法
+_ATTACK_RE = re.compile(
+    r"(攻击|攻打|砍|劈|刺|射|砸|投掷|踢|撞|扑|杀|干掉|解决|放倒|砍倒|劈倒)"
+)
+
+
+def _stale_targets(text: str, combat) -> list[str]:
+    """行动里点到的名字里，有几个是**已经退场**的敌人。
+
+    玩家在战斗里砍一个上一轮就倒下的地精，是最常见的空转：DM 得读完整段
+    叙述才发现目标不在，白白花掉一整轮。这里纯代码判定，零模型开销。
+    """
+    if combat is None:
+        return []
+    standing = {c.name for c in living_enemies(combat)}
+    out_names = [
+        c.name
+        for c in combat.order
+        if c.is_enemy and c.name not in standing and c.name and c.name in text
+    ]
+    # 玩家同时点了还在场的敌人 → 大概是想打那个，不拦
+    if any(name in text for name in standing):
+        return []
+    return out_names
+
+
+def _precheck_note(text: str, combat) -> str:
+    """行动前置体检：发现「打空气」时给玩家一句提醒（空串 = 没问题）。
+
+    只提醒不拦——玩家可能是在描述幻觉 或者干脆在演剧情，
+    真要拦就变成跟玩家吵架了。
+    """
+    stale = _stale_targets(text, combat)
+    if not stale:
+        return ""
+    alive = "、".join(c.name for c in living_enemies(combat)) or "（没有了）"
+    return (
+        f"💡 提醒：【{'、'.join(stale)}】已经不在场上了（可能已倒下或撤离）。\n"
+        f"现在还站着的敌人：{alive}\n"
+        "如果没别的打算，可以改成对上面这些名字发起行动。"
+    )
+
+
+def _stale_brief(text: str, combat) -> str:
+    """同一体检，但只给 DM 一句话（省得他自己从叙述里推目标死没死）。"""
+    stale = _stale_targets(text, combat)
+    if not stale:
+        return ""
+    alive = "、".join(c.name for c in living_enemies(combat)) or "无"
+    return f"系统提示：行动点到的 {'、'.join(stale)} 已退场，现存敌人 {alive}"
 
 
 def _equip_take_request(text: str) -> list[str]:
@@ -767,8 +818,10 @@ async def submit_action(
 
     state = load_round(save)
     combat = load_combat(save)
+    # 「打空气」提醒（只有战斗里才有）；不拦，只是提醒，见 _precheck_note。
+    stale_note = ""
+    stale_brief = ""
     if combat is not None:
-        # 战斗中：等待名单由先攻顺序决定，只有当前回合的玩家能行动。
         actor = current_actor(combat)
         if actor is not None and is_out(save, actor):
             # 当前该行动的玩家已倒地 / 阵亡 / 状况外：推进到下一名能行动的玩家
@@ -789,6 +842,11 @@ async def submit_action(
         # 行动经济（软提示）：行动里写了移动类动作就记一次「本回合移动过」。
         if actor is not None and _MOVE_RE.search(text):
             use_resource(save, combat, actor.cid, "move")
+        # 前置体检：玩家打的是已经退场的敌人时，先提醒一句再照常提交。
+        # 不拦（他可能另有安排），但省掉 DM 花一整轮才发现目标不在。
+        stale_note = _precheck_note(text, combat)
+        # DM 侧只补一句，不新增提示词行；玩家若已改行动，下轮就不会再提。
+        stale_brief = _stale_brief(text, combat) if stale_note else ""
     elif state.waiting is None:
         # DM 还没指定过等待名单：开局默认等全员（倒地 / 阵亡的除外）
         state.waiting = _filter_waiting(save, list(save.player_ids))
@@ -797,6 +855,7 @@ async def submit_action(
         "action": text,
         "resolution": resolution,
         "note": downed_note,
+        "hint": stale_brief,
     }
     save_round(save, state)
 
@@ -806,12 +865,14 @@ async def submit_action(
         prefix = f"⚠️ {card.name} 现在{downed_note}。\n" if downed_note else ""
         if combat is not None or not settings.use_partial(save):
             # 战斗中按先攻逐回合结算；或者设置里关掉了逐人结算（省模型调用）
+            hint = f"\n\n{stale_note}" if stale_note else ""
             return TurnResult(
                 Verdict.ACCEPT,
                 message=(
                     prefix + f"✅ 已记下你的行动（{_player_label(save, user_id)}）。\n"
                     f"还在等：{names}。\n"
                     "DM 会在名单上的玩家都提交后统一主持；在那之前你可以再 @我 修改自己的行动。"
+                    + hint
                 ),
                 waiting_for=waiting,
             )
@@ -901,6 +962,7 @@ async def run_dm_round(
             continue
         resolution = str(item.get("resolution", "") or "").strip()
         note = str(item.get("note", "") or "").strip()
+        hint = str(item.get("hint", "") or "").strip()
         if opening:
             # 开场轮没有玩家行动，DM 直接主持。
             continue
@@ -908,6 +970,8 @@ async def run_dm_round(
         if note:
             head += f"（⚠️ {note}）"
         entry = f"{head}\n{action}"
+        if hint:
+            entry += f"\n（{hint}）"
         if resolution:
             entry += f"\n（规则判断器已结算：{resolution}）"
             resolved_any = True
