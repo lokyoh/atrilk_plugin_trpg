@@ -359,7 +359,14 @@ def _story_rulings(context) -> list[str]:
 
 
 #: 要回显给玩家的判定功能（暗骰故意不在其中：暗骰只给 DM 看）
-_PLAYER_RULING_TOOLS = ("check", "roll_dice", "attack", "enemy_attack", "cast_spell")
+_PLAYER_RULING_TOOLS = (
+    "check",
+    "roll_dice",
+    "attack",
+    "enemy_attack",
+    "cast_spell",
+    "heal",
+)
 
 
 def _one_line(text: str) -> str:

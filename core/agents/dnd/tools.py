@@ -1537,6 +1537,89 @@ class UpdateEnemyTool(AgentTool):
         )
 
 
+class HealTool(AgentTool):
+    """治疗：药水、绷带、神术、药水瓶——都能走它。"""
+
+    function_name = "heal"
+    description = (
+        "治疗一名参战者并写回生命值（药水 / 绷带 / 治疗法术 / 神术都走它）。"
+        "**治疗倒地濒死者会让他立刻恢复意识并清空死亡豁免**；已阵亡者无效"
+    )
+    args = (
+        ToolArg("target", "str", "被治疗者：玩家角色名 / user_id，或敌人名"),
+        ToolArg("amount", "str", "治疗量点数，如 8；写「d8」按骰子掷；-3 表示扣血"),
+        ToolArg("reason", "str", "用了什么（可选），如「喝下治疗药水」；会写进回执供叙述引用"),
+    )
+    #: 回执里带死亡豁免进度等明细，别用默认的600 字截掉
+    max_result_chars = 900
+
+    @staticmethod
+    async def call(
+        context: AgentContext,
+        target: Any = "",
+        amount: Any = "",
+        reason: Any = "",
+        **kwargs: Any,
+    ) -> str:
+        save = load_save(context.save_id) if context.save_id else None
+        if save is None:
+            return "当前没有存档，无法治疗"
+        name = str(target or "").strip()
+        if not name:
+            return "请给出被治疗者的名字（玩家角色名或敌人名）"
+
+        # 治疗量：支持「d8」骰子表达式与「+8 / -3」增减
+        expr = str(amount or "").strip()
+        if not expr:
+            return "请给出治疗量点数（如 8，或 d8+2）"
+        if re.fullmatch(r"[+-]?\d{1,3}", expr):
+            value = int(expr)
+        else:
+            value, _detail = roll_damage(expr, rng=None)
+
+        state = load_combat(save)
+        combatant = None
+        if state is not None:
+            combatant = find_combatant(state, name)
+        if combatant is not None:
+            text = heal_combatant(save, state, combatant, value)
+        else:
+            # 不在战斗里也能治（剧情中休整、用道具），直接写角色卡
+            card = get_character(save, name) if name in save.player_ids else None
+            if card is None:
+                for uid in save.player_ids:
+                    found = get_character(save, uid)
+                    if found is not None and found.name == name:
+                        card = found
+                        break
+            if card is None:
+                return (
+                    f"没找到叫「{name}」的参战者。治疗需要战斗中先用 move / start_combat "
+                    "把人放上场，或用角色名。"
+                )
+            if card.is_dead:
+                return (
+                    f"{card.name} 已经阵亡，普通治疗无效；复活需要复活术 / 神迹这类"
+                    "剧情手段，可用 update_character 的「死亡豁免」字段写 value=复活。"
+                )
+            was_down = card.hp <= 0
+            if value < 0:
+                card.current_hp = max(0, card.hp + value)
+            else:
+                card.current_hp = min(card.max_hp, card.hp + value)
+            text = f"{card.name} 剩余 {card.hp}/{card.max_hp}"
+            if was_down and card.hp > 0:
+                card.clear_death_state()
+                text += "，恢复意识（死亡豁免清零）"
+            set_character(save, card)
+            text += "。"
+
+        why = str(reason or "").strip()
+        if why:
+            text = f"（{why}）{text}"
+        return text
+
+
 class EndCombatTool(AgentTool):
     """结束当前战斗。"""
 
@@ -2240,7 +2323,7 @@ class UpdateNpcTool(AgentTool):
         ToolArg(
             "note",
             "str",
-            "身份、关系、欠的账，**以及他的说话风格**（口头禅、语气、称呼习惯）——"
+            "身份、关系、欠的账，**以及他的说话风格**（口头禅、语气、称呼习惯）；"
             "下次遇到时照着写就不会换了个人（可选）",
         ),
         ToolArg("place", "str", "最后出现的地点（可选）"),
@@ -2486,6 +2569,7 @@ DM_TOOLS: tuple[type[AgentTool], ...] = (
     UpdateEnemyTool,
     UpdateBattlefieldTool,
     UpdateNpcTool,
+    HealTool,
     EndCombatTool,
     RestTool,
     RememberTool,
