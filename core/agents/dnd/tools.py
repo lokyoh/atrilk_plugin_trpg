@@ -816,10 +816,7 @@ class UpdateCharacterTool(AgentTool):
     """修改（存档里的）角色卡字段并落盘。"""
 
     function_name = "update_character"
-    description = (
-        "改玩家角色卡并落盘（生命 / 状态 / 专注 / 死亡豁免 / 经验 / 等级 / 姓名 / "
-        "备注 / 特性 / 标签 / 法术 / 装备）"
-    )
+    description = "改玩家角色卡并落盘（字段见参数）"
     args = (
         ToolArg(
             "field",
@@ -2228,7 +2225,7 @@ class UpdateNpcTool(AgentTool):
     """维护本局 NPC 名单（关系、状态、旧伤、所在地）。"""
 
     function_name = "update_npc"
-    description = "维护本局 NPC 名单：关系 / 状态 / 所在地 / 旧伤；未登记的带上模板补记"
+    description = "维护 NPC 名单（见参数）；未登记的带上 template 补记"
     args = (
         ToolArg("name", "str", "NPC 名，如 黑心商人卡尔"),
         ToolArg("template", "str", "平民/士兵/老兵/首领 或怪物模板（可选）"),
