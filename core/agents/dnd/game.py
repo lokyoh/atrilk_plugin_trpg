@@ -64,6 +64,7 @@ from ...dnd.save_store import (
     save_save,
 )
 from ...dnd.world_bible import bible_text
+from ...dnd.world_brief import build_world_brief
 from ...dnd.world_store import read_doc, story_text
 from ...trpg.rule import Verdict
 from ...trpg.text import strip_player_hints
@@ -105,6 +106,9 @@ class TurnResult:
     ended: bool = False
     #: 要展示给玩家的判定明细（骰点 + 成败）；暗骰不会出现在这里
     rulings: list[str] = field(default_factory=list)
+    #: 开场轮整理出的世界背景手册：落盘路径与正文（没有则为 ``None`` / 空串）
+    world_brief_path: Any = None
+    world_brief_text: str = ""
 
     @property
     def text(self) -> str:
@@ -999,6 +1003,14 @@ async def run_opening(*, save_id: str, chat_id: str = "") -> TurnResult:
             message="这局冒险的存档不见了，发送 /跑团.开局 重新开启。",
         )
     actions = {str(uid): {"action": "", "resolution": ""} for uid in save.player_ids}
-    return await run_dm_round(
+    result = await run_dm_round(
         save_id=save.save_id, actions=actions, chat_id=chat_id, opening=True
     )
+    # 开场白出得来才整理手册：没开局成功就没必要给玩家一份背景资料。
+    # 结果挂到 result 上，由 handler 决定要不要发群文件。
+    if result.narration.strip():
+        latest = load_save(save.save_id) or save
+        path, text = build_world_brief(latest)
+        result.world_brief_path = path
+        result.world_brief_text = text
+    return result

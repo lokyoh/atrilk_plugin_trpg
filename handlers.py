@@ -1084,13 +1084,45 @@ async def _start_round(event: MessageEvent):
     latest.progress["started"] = True
     latest.progress.pop("starting", None)
     save_save(latest)
+
+    # 世界背景手册：存进存档了，再发一份到群文件方便玩家随时翻。
+    # 必须在 finish() 之前发——finish 会抛异常终止，后面代码不会再跑。
+    brief_note = await _send_world_brief(event, result)
+
     extra = f"\n\n{result.rulings_text}" if result.rulings_text else ""
     await start_round.finish(
         "🎬 开局！本局玩家："
         + ("、".join(names) or "（只有你）")
         + f"\n\n📖 {narration}"
         + extra
+        + brief_note
     )
+
+
+async def _send_world_brief(event: MessageEvent, result) -> str:
+    """把开局整理出的世界背景手册发到群文件。
+
+    :return: 给玩家的一句话说明；没生成或发不出去时返回空串（**不影响已经开好的局**）。
+    """
+    from ATRI.message import file_msg
+
+    text = str(getattr(result, "world_brief_text", "") or "")
+    path = getattr(result, "world_brief_path", None)
+    if not text or path is None:
+        return ""
+    try:
+        with open(path, "rb") as file:
+            data = file.read()
+    except OSError as e:
+        log.warning(f"读世界背景手册失败：{path}（{str_traceback(e)}）")
+        return ""
+    try:
+        await event.bot.send(event.get_session(), file_msg("世界背景手册.md", data))
+    except Exception as e:
+        # 群文件不是所有会话都支持（私聊、权限、实现差异），失败就跳过
+        log.warning(f"世界背景手册发不出去：{str_traceback(e)}")
+        return ""
+    return "\n\n📁 世界背景手册已发到群文件（世界背景手册.md），随时可翻。"
 
 
 @resume_game.handle()
