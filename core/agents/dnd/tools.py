@@ -16,6 +16,13 @@ import re
 from typing import Any
 
 from ...dnd.attributes import ABILITIES, get_ability
+from ...dnd.battlemap import (
+    battlefield_text,
+    has_map,
+    normalize_terrain,
+    range_check,
+    set_terrain,
+)
 from ...dnd.card import DndCharacter
 from ...dnd.combat import (
     apply_damage as combat_damage,
@@ -31,15 +38,18 @@ from ...dnd.combat import (
     find_combatant,
     heal_combatant,
     load_combat,
+    move_combatant,
     parse_enemy_list,
     party_level,
     resource_of,
     roll_damage,
+    save_combat,
     start_combat,
     update_enemy,
     use_resource,
 )
 from ...dnd.equipment import ARMORS, SHIELDS, WEAPONS, get_armor, get_weapon
+from ...dnd.encounter import calibrate_specs
 from ...dnd.monsters import MONSTERS, get_monster, monster_names
 from ...dnd.npcs import (
     NPC_TIERS,
@@ -55,13 +65,24 @@ from ...dnd.npcs import (
     upsert_npc,
 )
 from ...dnd.profession import CLASSES, get_class
+from ...dnd.progression import (
+    ASI_LEVELS,
+    LEVEL_XP_THRESHOLDS,
+    MAX_LEVEL,
+    can_level_up,
+    level_up,
+    xp_progress_text,
+)
 from ...dnd.race import RACES, get_race
+from ...dnd.settlement import settle_combat
 from ...dnd.save_store import (
     append_scene_change,
     find_character,
     get_character,
+    list_scenes,
     load_round,
     load_save,
+    read_scene,
     save_round,
     set_character,
 )
@@ -85,7 +106,7 @@ from ...dnd.world_store import (
 )
 from ...trpg.check import roll_check
 from ...trpg.dice import Advantage, DiceError, roll
-from ..thinking import AgentContext, AgentFinish, AgentTool, ToolArg
+from ..thinking import AgentContext, AgentFinishError, AgentTool, ToolArg
 from .rules import match_rules
 
 __all__ = [
@@ -98,11 +119,15 @@ __all__ = [
     "EnemyAttackTool",
     "GetRuleTool",
     "MoveSceneTool",
+    "MoveTool",
     "NarrateTool",
     "QueryDataTool",
+    "ReadSceneTool",
     "RestTool",
     "RollDiceTool",
+    "SecretRollTool",
     "StartCombatTool",
+    "UpdateBattlefieldTool",
     "UpdateCharacterTool",
     "UpdateEnemyTool",
     "UpdateNpcTool",
@@ -182,6 +207,40 @@ class RollDiceTool(AgentTool):
         return result.describe()
 
 
+class SecretRollTool(AgentTool):
+    """暗骰：结果只给 DM 看，用来决定 NPC 的行动与隐藏判定。"""
+
+    function_name = "secret_roll"
+    description = (
+        "暗骰：结果只有你看得到（玩家不可见、不进复盘）。决定 NPC 行动、NPC 检定、"
+        "隐藏事件、玩家是否被察觉，再据此叙述（别把骰点念出来）"
+    )
+    args = (
+        ToolArg("expr", "str", "骰子表达式，如 1d20+3"),
+        ToolArg("reason", "str", "在判断什么，如「卫兵是否注意到翻墙的玩家」"),
+    )
+
+    @staticmethod
+    async def call(
+        context: AgentContext,
+        expr: str = "1d20",
+        reason: str = "",
+        **kwargs: Any,
+    ) -> str:
+        try:
+            result = roll(expr)
+        except DiceError as e:
+            return f"暗骰失败：{e}"
+        why = str(reason or "").strip() or "未说明用途"
+        context.data.setdefault("secret_log", []).append(
+            {"expr": expr, "total": result.total, "reason": why}
+        )
+        return (
+            f"【暗骰·玩家不可见】{result.describe()} —— 用于：{why}\n"
+            "请据此决定 NPC / 隐藏事态的结果，叙述里不要出现骰点与「暗骰」字样。"
+        )
+
+
 def _resolve_check(card, kind: str, dc: int, advantage: Advantage):
     """把检定对象解析成技能 / 属性 / 豁免并执行。"""
     text = str(kind or "").strip()
@@ -252,6 +311,7 @@ class GetRuleTool(AgentTool):
     """查询规则条目。"""
 
     function_name = "get_rule"
+    max_result_chars = 2500
     description = "查询 DND 5e 规则条目，输入主题关键词返回相关规则原文"
     args = (
         ToolArg(
@@ -532,18 +592,14 @@ class QueryDataTool(AgentTool):
     """查询 DND 静态数据表。"""
 
     function_name = "query_data"
+    max_result_chars = 2500
     description = (
-        "查询 DND 静态数据表（种族 / 职业 / 技能 / 武器 / 护甲 / 怪物 / 法术 / NPC 档位 / "
-        "本局 NPC 名单）或全局世界库文档（世界 / 剧情 / 区域 / 城镇 / 地点 / 地下城 / 场景）"
+        "查 DND 数据表（race/profession/skill/weapon/armor/monster/spell/npc_tier/npc）"
+        "或世界库文档（world/story/area/city/place/dungeon/scene），table 可写中文"
     )
     args = (
-        ToolArg(
-            "table",
-            "str",
-            "数据表 race/profession/skill/weapon/armor/monster/spell/npc_tier/npc（可用中文），"
-            "或世界库 world/story/area/city/place/dungeon/scene（可用中文）",
-        ),
-        ToolArg("name", "str", "条目 / 文档名；留空则列出该表或该类文档的全部名称"),
+        ToolArg("table", "str", "表名 / 文档类型"),
+        ToolArg("name", "str", "条目或文档名；留空列出全部名称"),
     )
 
     @staticmethod
@@ -588,29 +644,21 @@ class UpdateCharacterTool(AgentTool):
     """修改（存档里的）角色卡字段并落盘。"""
 
     function_name = "update_character"
-    description = (
-        "修改存档里玩家角色卡的字段并落盘"
-        "（生命值、状态、死亡豁免、经验、等级、姓名、备注、特性、标签、法术）"
-    )
+    description = "改玩家角色卡并落盘（生命 / 状态 / 死亡豁免 / 经验 / 等级 / 姓名 / 备注 / 特性 / 标签 / 法术）"
     args = (
         ToolArg(
             "field",
             "str",
-            "字段：hp / temp_hp / conditions / 死亡豁免 / exhaustion / exp / level / name / "
+            "hp / temp_hp / conditions / 死亡豁免 / exhaustion / exp / level / name / "
             "notes / features / tags / spells",
         ),
         ToolArg(
             "value",
             "str",
-            "新值；hp 可写「满血」；conditions 用、分隔（也支持「清空」）；features、tags 追加一条；"
-            "spells 用、分隔（覆盖整张法术表，写「清空」则清空）；"
-            "死亡豁免可写 清空 / 复活 / 稳定 / 死亡 / 成功N / 失败N，其余覆盖",
+            "新值；hp 可写「满血」；conditions/spells 用、分隔（可写「清空」）；"
+            "features/tags 追加；死亡豁免可写 清空/复活/稳定/死亡/成功N/失败N",
         ),
-        ToolArg(
-            "player",
-            "str",
-            "改哪名玩家的卡：角色名或 user_id；只有一名玩家时可留空",
-        ),
+        ToolArg("player", "str", "改谁：角色名或 user_id；单人可留空"),
     )
 
     @staticmethod
@@ -696,11 +744,32 @@ class UpdateCharacterTool(AgentTool):
             card.exhaustion = max(0, min(6, _parse_int(text, card.exhaustion)))
             message = f"力竭等级已设为 {card.exhaustion}"
         elif field == "exp":
-            card.exp = _parse_int(text, card.exp)
-            message = f"经验值已设为 {card.exp}"
+            # 支持「=300」直接设与「+300 / -300」增减；达阈值自动走升级结算
+            before = card.exp
+            if text.startswith(("+", "-")):
+                card.exp = max(0, card.exp + _parse_int(text, 0))
+            else:
+                card.exp = max(0, _parse_int(text, card.exp))
+            message = f"经验值 {before} → {card.exp} XP；{xp_progress_text(card)}"
+            while can_level_up(card):
+                message += "\n" + level_up(card)
         elif field == "level":
-            card.level = max(1, _parse_int(text, card.level))
-            message = f"等级已设为 {card.level}"
+            before = card.level
+            target = max(1, _parse_int(text, card.level))
+            card.level = min(MAX_LEVEL, target)
+            # 直接改等级时把经验抬到该级的下限，避免「等级 5 但经验 0」的自相矛盾
+            card.exp = max(card.exp, LEVEL_XP_THRESHOLDS[min(card.level, MAX_LEVEL) - 1])
+            message = (
+                f"等级 Lv.{before} → Lv.{card.level}"
+                f"（生命上限 {card.max_hp}，熟练加值 +{card.proficiency}）"
+            )
+            if target > MAX_LEVEL:
+                message += f"；等级上限为 {MAX_LEVEL}，已取上限"
+            if card.level in ASI_LEVELS:
+                message += (
+                    f"（Lv.{card.level} 是属性提升等级：请用 features 落盘属性点 / "
+                    "职业特性选择）"
+                )
         elif field == "name":
             card.name = text
             message = f"姓名已设为 {card.name or '（空）'}"
@@ -753,17 +822,8 @@ class AwaitPlayersTool(AgentTool):
     """声明下一轮要等哪些玩家提交行动。"""
 
     function_name = "await_players"
-    description = (
-        "声明本轮结束后，下一轮要等待哪些玩家提交行动（由你决定，例如只等在场的玩家）；"
-        "不调用则沿用上一轮的名单，开局默认等待所有玩家"
-    )
-    args = (
-        ToolArg(
-            "players",
-            "str",
-            "要等待的玩家，用、分隔，写角色名或 user_id；「全员」= 所有玩家；「无」= 谁先提交就立刻主持",
-        ),
-    )
+    description = "声明下一轮等哪些玩家提交（不调用沿用上轮，开局默认全员）"
+    args = (ToolArg("players", "str", "用、分隔写角色名 / user_id；也可写 全员 / 无"),)
 
     @staticmethod
     async def call(context: AgentContext, players: Any = "", **kwargs: Any) -> str:
@@ -799,16 +859,14 @@ class NarrateTool(AgentTool):
 
     function_name = "narrate"
     description = (
-        "把主持叙述发给玩家并结束本次思考；必须调用且放在最后。"
-        "**必须单独一轮调用**：叙述里要用到检定 / 掷骰 / 攻击等功能的结果时，"
-        "先调那些功能、等返回后再单独调用本功能；与其它功能同批调用时叙述不会发送，"
-        "你会被要求结合结果重写"
+        "把叙述发给玩家并结束思考；必须最后调用、**单独一轮**"
+        "（依赖检定 / 攻击结果时要等返回后再单独调）"
     )
-    args = (ToolArg("text", "str", "要发给玩家的主持叙述正文"),)
+    args = (ToolArg("text", "str", "要发给玩家的叙述正文"),)
 
     @staticmethod
     async def call(context: AgentContext, text: Any = "", **kwargs: Any) -> str:
-        raise AgentFinish(str(text or "").strip())
+        raise AgentFinishError(str(text or "").strip())
 
 
 class MoveSceneTool(AgentTool):
@@ -816,15 +874,13 @@ class MoveSceneTool(AgentTool):
 
     function_name = "move_scene"
     description = (
-        "让玩家切换到一个地点 / 场景；该地点还没有生成时自动生成通用场景"
-        "（区域 → 城镇据点 / 自然地点 / 地下城 → 通用场景），再结合本局剧情构建出"
-        "本局专属的场景副本存进存档。**这是剧情事件**：返回后你必须在叙述中交代"
-        "玩家如何离场与入场，使其合理"
+        "切到某地点 / 场景（没生成过会自动补齐并本局化）；**剧情事件**："
+        "返回后必须在叙述里交代离场与入场"
     )
     args = (
-        ToolArg("location", "str", "地点 / 场景名，如「白港」「霜牙地窟」「北境」"),
-        ToolArg("kind", "str", "可选：城镇据点 / 自然地点 / 地下城；不确定就留空"),
-        ToolArg("region", "str", "可选：所在区域名，用于定位；不确定就留空"),
+        ToolArg("location", "str", "地点 / 场景名，如「白港」「霜牙地窟」"),
+        ToolArg("kind", "str", "可选：城镇据点 / 自然地点 / 地下城"),
+        ToolArg("region", "str", "可选：所在区域名"),
     )
 
     @staticmethod
@@ -871,13 +927,10 @@ class UpdateSceneTool(AgentTool):
     """在当前场景的存档副本文末追加一条变化记录。"""
 
     function_name = "update_scene"
-    description = (
-        "在当前场景的存档副本文末追加一条变化记录"
-        "（场景被破坏、NPC 死亡、物品被拿走、环境改变等）"
-    )
+    description = "在当前场景副本文末追加一条变化（破坏 / 人物 / 物品 / 环境）"
     args = (
         ToolArg("note", "str", "变化内容，如「大门被玩家砸开」"),
-        ToolArg("kind", "str", "可选变化类型，如 破坏 / 人物 / 物品 / 环境，默认 变化"),
+        ToolArg("kind", "str", "类型（可选），默认 变化"),
     )
 
     @staticmethod
@@ -899,6 +952,36 @@ class UpdateSceneTool(AgentTool):
         return f"已在场景「{save.current_scene}」记录变化：{text}"
 
 
+class ReadSceneTool(AgentTool):
+    """读取本局场景的完整文档（提示词里只给简介，细节按需查）。"""
+
+    function_name = "get_scene"
+    #: 场景文档要整篇给模型看，别截
+    max_result_chars = 6000
+    description = (
+        "读取场景的完整文档：布局 / 通道、可交互元素、在场者、隐藏信息、变化记录。"
+        "提示词里只有简介，需要细节（玩家看到什么、有什么能互动、藏着什么、出口在哪）时用它"
+    )
+    args = (ToolArg("name", "str", "场景名；留空读当前场景"),)
+
+    @staticmethod
+    async def call(context: AgentContext, name: Any = "", **kwargs: Any) -> str:
+        save = load_save(context.save_id) if context.save_id else None
+        if save is None:
+            return "当前没有存档，无法读取场景"
+        key = str(name or "").strip() or (save.current_scene or "").strip()
+        if not key:
+            return "当前还没有进入任何场景"
+        body = read_scene(save, key)
+        if body is None:
+            doc = read_doc(save.world_key, "scene", key)
+            body = doc.content if doc is not None else ""
+        if not body:
+            known = "、".join(list_scenes(save.save_id)) or "（无）"
+            return f"没有找到场景「{key}」。本局已有场景：{known}"
+        return f"【{key}】（本局场景副本）\n{body}"
+
+
 # --------------------------------------------------------------------------- #
 # 战斗
 # --------------------------------------------------------------------------- #
@@ -908,23 +991,30 @@ class StartCombatTool(AgentTool):
     """宣布开战：掷先攻、排顺序、开始逐回合结算。"""
 
     function_name = "start_combat"
-    description = (
-        "宣布开战：按你列的敌人清单掷先攻并排出先攻顺序；开战后由系统按顺序推进回合"
-        "（轮到玩家时该玩家行动、轮到敌人时你用 enemy_attack 结算）"
-    )
+    #: 返回里有战场地图与开战指引，放宽
+    max_result_chars = 4000
+    description = "宣布开战：掷先攻、排顺序并接管回合（敌人回合用 enemy_attack 结算）"
     args = (
         ToolArg(
             "enemies",
             "str",
-            "敌人清单，如「地精x3、大地精」；数量写法 地精x3 / 3只地精 / 地精 3；"
-            "剧情里的具名 NPC 写「名字:档位」或「名字:怪物模板」，如「黑心商人卡尔:老兵、打手x2:士兵」",
+            "敌人清单：地精x3 / 3只地精；具名 NPC 写「名字:档位」，如 卡尔:老兵、打手x2:士兵",
         ),
-        ToolArg("note", "str", "起因 / 环境（可选），如「在酒馆后巷伏击」"),
+        ToolArg("note", "str", "起因（可选），如「在酒馆后巷伏击」"),
+        ToolArg(
+            "terrain",
+            "str",
+            "战场环境（可选），如「雨夜的窄巷，两侧堆着货箱」；留空就用当前场景自动生成",
+        ),
     )
 
     @staticmethod
     async def call(
-        context: AgentContext, enemies: Any = "", note: Any = "", **kwargs: Any
+        context: AgentContext,
+        enemies: Any = "",
+        note: Any = "",
+        terrain: Any = "",
+        **kwargs: Any,
     ) -> str:
         save = load_save(context.save_id) if context.save_id else None
         if save is None:
@@ -951,12 +1041,27 @@ class StartCombatTool(AgentTool):
         if not save.player_ids:
             return "存档里还没有玩家，无法开战"
 
+        # CR 校准：单只怪 = 队伍平均等级，成群按数量下调（见 core/dnd/encounter.py）
+        level = party_level(save)
+        specs, calibration = calibrate_specs(
+            specs, level, party_size=max(1, len(save.player_ids))
+        )
+
+        brief = "；".join(
+            part
+            for part in (str(note or "").strip(), str(terrain or "").strip())
+            if part
+        )
         state = start_combat(
-            save, specs, current=str(context.user_id or ""), note=str(note or "")
+            save, specs, current=str(context.user_id or ""), note=brief
         )
         context.data["combat_started"] = True
 
         lines = ["⚔️ 战斗开始，先攻已掷好。"]
+        if calibration:
+            lines.append(
+                f"（CR 校准：队伍平均等级 {level} —— " + "；".join(calibration) + "）"
+            )
         if unknown:
             lines.append("（没认出来的写法已忽略：" + "、".join(unknown) + "）")
         lines.append("")
@@ -970,26 +1075,111 @@ class StartCombatTool(AgentTool):
             )
         lines.append("")
         lines.append(
+            "**开战的第一段叙述必须先把战场讲清楚**：地形与光线是什么样的、掩体与障碍在"
+            "哪、双方各自站在什么位置、彼此相距多远（就照上面的【战场】说），然后再写谁先"
+            "动手。之后每次攻击 / 施法系统都会校验距离与视线：够不着会被打回，先用 move "
+            "靠近；掩体已经自动算进 AC；敌人行动前先确认它是否在触及 / 射程内。"
+        )
+        lines.append(
             "按上面的顺序叙述：标记「现在」的那位就是本轮该行动的玩家。"
-            "玩家攻击用 attack、施法用 cast_spell，敌人反击用 enemy_attack"
+            "玩家攻击用 attack、要位置用 move、施法用 cast_spell，敌人反击用 enemy_attack"
             "（都由系统掷命中与伤害）；不要替还没轮到的玩家决定行动。"
         )
         return "\n".join(lines)
+
+
+class MoveTool(AgentTool):
+    """按棋盘移动参战者（系统算路径、消耗与剩余移动）。"""
+
+    function_name = "move"
+    description = (
+        "移动参战者：靠近目标或走到某格（坐标 1 起算），系统算路径与消耗并扣本回合移动；"
+        "够不着时先用它靠近；**敌人上前也用它**（player 写敌人名）"
+    )
+    args = (
+        ToolArg("target", "str", "靠近谁，与 pos 二选一"),
+        ToolArg("pos", "str", "目标格坐标，写 列,行，如 7,4"),
+        ToolArg("player", "str", "谁在移动：角色名 / user_id / 敌人名；单人可留空"),
+    )
+
+    @staticmethod
+    async def call(
+        context: AgentContext,
+        target: Any = "",
+        pos: Any = "",
+        player: Any = "",
+        **kwargs: Any,
+    ) -> str:
+        save = load_save(context.save_id) if context.save_id else None
+        if save is None:
+            return "当前没有存档，无法移动"
+        state = load_combat(save)
+        if state is None:
+            return "现在不在战斗中；剧情里的移动直接叙述即可，不需要本功能"
+        ref = str(player or "").strip() or str(context.user_id or "")
+        return move_combatant(
+            save, state, ref, target=str(target or ""), pos=str(pos or "")
+        )
+
+
+class UpdateBattlefieldTool(AgentTool):
+    """微调战场地形（DM 想加个箱子、砸出个缺口时用）。"""
+
+    function_name = "update_battlefield"
+    max_result_chars = 1200
+    description = "改战场某格地形（砸墙 / 推货架 / 点火后让地图跟上叙述）"
+    args = (
+        ToolArg("x", "int", "列（从 1 开始）"),
+        ToolArg("y", "int", "行（从 1 开始）"),
+        ToolArg("terrain", "str", "空地/困难/半掩体/四分之三掩体/障碍/危险/浅水"),
+        ToolArg("note", "str", "这块地形是什么（可选，如「翻倒的马车」）"),
+    )
+
+    @staticmethod
+    async def call(
+        context: AgentContext,
+        x: Any = 0,
+        y: Any = 0,
+        terrain: Any = "",
+        note: Any = "",
+        **kwargs: Any,
+    ) -> str:
+        save = load_save(context.save_id) if context.save_id else None
+        if save is None:
+            return "当前没有存档"
+        state = load_combat(save)
+        if state is None:
+            return "现在不在战斗中，没有可调整的战场"
+        if not has_map(state):
+            return "这场战斗没有棋盘（旧战斗存档），地形直接叙述即可"
+        key = normalize_terrain(str(terrain or ""))
+        if not key:
+            return "没认出这个地形。可用：空地 / 困难 / 半掩体 / 四分之三掩体 / 障碍 / 危险 / 浅水"
+        col, row = _parse_int(x, 0), _parse_int(y, 0)
+        if not set_terrain(state, col - 1, row - 1, key):
+            return f"坐标 {col},{row} 超出棋盘（{state.width}×{state.height}）"
+        extra = str(note or "").strip()
+        if extra:
+            state.note = f"{state.note}；{extra}" if state.note else extra
+        save_combat(save, state)
+        return (
+            f"已把 {col},{row} 改成「{terrain}」"
+            + (f"（{extra}）" if extra else "")
+            + "。\n"
+            + battlefield_text(state, with_map=False)
+        )
 
 
 class AttackTool(AgentTool):
     """玩家攻击：自动掷命中、掷伤害并扣敌人生命。"""
 
     function_name = "attack"
-    description = (
-        "玩家攻击敌人：按角色卡的武器与攻击加值掷命中，命中则掷伤害并扣敌人生命"
-        "（武器默认取角色卡里第一件，也可指定；指定了不在装备里的武器会提醒你）"
-    )
+    description = "玩家攻击：自动掷命中与伤害并扣血（武器默认取卡上第一件）"
     args = (
-        ToolArg("target", "str", "攻击目标，如 地精2 / 地精"),
-        ToolArg("weapon", "str", "使用的武器（可选，默认用角色卡里的第一件武器）"),
-        ToolArg("player", "str", "谁在攻击：角色名或 user_id；只有一名玩家时可留空"),
-        ToolArg("advantage", "str", "普通 / 优势 / 劣势，默认普通"),
+        ToolArg("target", "str", "攻击目标，如 地精2"),
+        ToolArg("weapon", "str", "武器（可选，默认第一件）"),
+        ToolArg("player", "str", "谁在攻击：角色名或 user_id；单人可留空"),
+        ToolArg("advantage", "str", "普通 / 优势 / 劣势"),
     )
 
     @staticmethod
@@ -1030,14 +1220,12 @@ class EnemyAttackTool(AgentTool):
     """敌人攻击玩家：按怪物数据自动结算。"""
 
     function_name = "enemy_attack"
-    description = (
-        "敌人攻击玩家：按怪物数据的攻击加值掷命中，命中则掷伤害并扣该玩家的生命"
-    )
+    description = "敌人攻击玩家：自动掷命中与伤害并扣该玩家生命"
     args = (
-        ToolArg("enemy", "str", "发动攻击的敌人，如 地精1"),
+        ToolArg("enemy", "str", "敌人名，如 地精1"),
         ToolArg("target", "str", "被攻击的玩家：角色名或 user_id"),
-        ToolArg("attack_name", "str", "用哪项攻击（可选，默认第一项），如 短弓 / 爪击"),
-        ToolArg("advantage", "str", "普通 / 优势 / 劣势，默认普通"),
+        ToolArg("attack_name", "str", "用哪项攻击（可选，默认第一项）"),
+        ToolArg("advantage", "str", "普通 / 优势 / 劣势"),
     )
 
     @staticmethod
@@ -1070,15 +1258,12 @@ class UpdateEnemyTool(AgentTool):
     """直接改敌人状态（陷阱、环境、逃跑、投降、被擒……）。"""
 
     function_name = "update_enemy"
-    description = (
-        "直接改某个敌人的状态：生命值增减 / 设定、退场（倒地、逃跑、被擒）、附注；"
-        "用于陷阱、环境伤害、投降等不走攻击判定的情况"
-    )
+    description = "直接改敌人状态：生命增减 / 退场 / 附注（陷阱、环境伤害、投降等）"
     args = (
         ToolArg("name", "str", "敌人名，如 地精1"),
-        ToolArg("hp", "str", "生命值：新值（12）或增减（-5 / +8），留空不改"),
-        ToolArg("out", "str", "是否退场：是 / 否，留空不改"),
-        ToolArg("note", "str", "附注（可选），如「被推下悬崖」"),
+        ToolArg("hp", "str", "新值（12）或增减（-5），留空不改"),
+        ToolArg("out", "str", "是否退场：是 / 否"),
+        ToolArg("note", "str", "附注（可选）"),
     )
 
     @staticmethod
@@ -1111,7 +1296,8 @@ class EndCombatTool(AgentTool):
 
     function_name = "end_combat"
     description = (
-        "结束当前战斗（敌人全灭 / 玩家撤退 / 谈判成功），清掉先攻顺序并回到普通推进"
+        "结束当前战斗（敌人全灭 / 玩家撤退 / 谈判成功），自动结算经验与战利品，"
+        "清掉先攻顺序并回到普通推进"
     )
     args = (ToolArg("result", "str", "战斗结果（可选），如「敌人溃散」「双方议和」"),)
 
@@ -1120,8 +1306,11 @@ class EndCombatTool(AgentTool):
         save = load_save(context.save_id) if context.save_id else None
         if save is None:
             return "当前没有存档，无法结束战斗"
-        if load_combat(save) is None:
+        combat = load_combat(save)
+        if combat is None:
             return "现在不在战斗中"
+        # 先结算再清战斗：结算要用 combat.defeated 里的战果
+        report = settle_combat(save, combat)
         clear_combat(save)
         state = load_round(save)
         state.waiting = None
@@ -1129,7 +1318,7 @@ class EndCombatTool(AgentTool):
         save_round(save, state)
         tail = f"（{result}）" if str(result or "").strip() else ""
         return (
-            f"⚔️ 战斗结束{tail}，先攻顺序已清空。"
+            f"⚔️ 战斗结束{tail}，先攻顺序已清空。\n{report.text()}\n"
             "接下来回到普通推进：下一轮默认等待所有玩家（也可以用 await_players 指定名单）。"
         )
 
@@ -1167,10 +1356,61 @@ def _target_name(target: Any) -> str:
     return getattr(target, "name", "") or str(getattr(target, "user_id", ""))
 
 
+def _spell_range_feet(text: str) -> int:
+    """把法术射程文字解析成尺：``-1`` 表示不限 / 特殊。
+
+    ``自身`` 单独出现表示只能作用自己（0）；``自身（15 尺半径）`` 这类范围法术
+    取括号里的尺数当可及距离。
+    """
+    raw = str(text or "")
+    if "触碰" in raw or "接触" in raw:
+        return 5
+    if any(word in raw for word in ("视线", "特殊", "不限", "见描述")):
+        return -1
+    match = re.search(r"(\d+)\s*(?:尺|feet|ft|foot)", raw)
+    if match:
+        return int(match.group(1))
+    if "里" in raw:
+        miles = re.search(r"(\d+)\s*里", raw)
+        if miles:
+            return int(miles.group(1)) * 5280
+    if any(word in raw for word in ("自身", "自己", "self")):
+        return 0
+    return -1
+
+
+def _spell_range_block(state, caster, targets, spell_obj) -> str:
+    """法术射程校验：够不着就返回原因（空串表示通过）。"""
+    if state is None or not has_map(state):
+        return ""
+    limit = _spell_range_feet(spell_obj.range_text)
+    if limit < 0:
+        return ""
+    me = find_combatant(state, str(caster.user_id))
+    for target in targets:
+        if isinstance(target, DndCharacter):
+            if str(target.user_id) == str(caster.user_id):
+                continue
+            return f"{spell_obj.cn}够不到 {target.name}：{target.name}不在战场上"
+        if limit == 0:
+            return f"{spell_obj.cn}只能作用于自己"
+        gate = range_check(
+            state,
+            me,
+            target,
+            reach=5,
+            normal=0 if limit <= 5 else limit,
+            max_range=0 if limit <= 5 else limit,
+        )
+        if not gate.ok:
+            return f"{spell_obj.cn}够不到 {target.name}：{gate.reason}"
+    return ""
+
+
 def _target_ac(save, state, target: Any) -> int:
     if isinstance(target, DndCharacter):
         return target.armor_class
-    return effective_ac(save, target)
+    return effective_ac(save, target, state)
 
 
 def _target_save_bonus(save, target: Any, ability: str) -> int:
@@ -1234,28 +1474,20 @@ class CastSpellTool(AgentTool):
     """施法：自动结算法术攻击 / 目标豁免 / 治疗，并扣除法术位。"""
 
     function_name = "cast_spell"
+    #: 范围法术会一次结算多个目标，放宽
+    max_result_chars = 1500
     description = (
-        "施法者施展一个法术：按规则自动结算法术攻击（对抗 AC）、目标豁免（法术豁免 DC）、"
-        "治疗量，并扣除法术位（戏法不消耗；法术位不够会被打回）"
+        "施法：自动结算法术攻击 / 目标豁免 / 治疗并扣法术位"
+        "（戏法不消耗，位不够或够不着会被打回）"
     )
     args = (
+        ToolArg("spell", "str", "法术名，如 火焰箭 / 火球术（见 spell 表）"),
         ToolArg(
-            "spell",
-            "str",
-            "法术名，如 火焰箭 / 魔法飞弹 / 火球术 / 治疗伤害（见 query_data 的 spell 表）",
+            "target", "str", "目标，多个用、分隔；范围法术写全需豁免的人；留空为自己"
         ),
-        ToolArg(
-            "target",
-            "str",
-            "目标：敌人名 / 玩家名，多个用、分隔（范围法术就把需要用豁免的人都写上）；留空默认自己",
-        ),
-        ToolArg("player", "str", "谁在施法：角色名或 user_id；只有一名玩家时可留空"),
-        ToolArg(
-            "slot",
-            "str",
-            "用第几环法术位施展（可选，默认法术本身环阶；升环会消耗更高环）",
-        ),
-        ToolArg("advantage", "str", "法术攻击用：普通 / 优势 / 劣势，默认普通"),
+        ToolArg("player", "str", "谁在施法：角色名或 user_id；单人可留空"),
+        ToolArg("slot", "str", "用第几环（可选，默认本法环阶）"),
+        ToolArg("advantage", "str", "普通 / 优势 / 劣势"),
     )
 
     @staticmethod
@@ -1287,6 +1519,17 @@ class CastSpellTool(AgentTool):
         warn = ""
         if not card.knows_spell(spell_obj):
             warn = f"（注意：{spell_obj.cn} 不在 {card.name} 的法术表里，若是卷轴 / 神赐请自行解释）\n"
+
+        # —— 射程校验（先查够不够得着，够不着就别花法术位）——
+        pre_state = load_combat(save)
+        refs = str(target or "").strip()
+        if refs.lower() in {"", "自己", "自身", "self"}:
+            probe: list[Any] = [card]
+        else:
+            probe, _unknown = _spell_targets(save, pre_state, refs)
+        blocked = _spell_range_block(pre_state, card, probe, spell_obj)
+        if blocked:
+            return warn + blocked
 
         # —— 法术位 ——
         slot_level = spell_obj.level
@@ -1488,12 +1731,11 @@ class RestTool(AgentTool):
 
     function_name = "rest"
     description = (
-        "结算一次休息：长休 → 生命回满、法术位回满、临时生命清零、力竭 -1；"
-        "短休 → 邪术师契约法术位回满（生命骰由你按规则裁决，可用 update_character 改 HP）"
+        "结算休息：长休回满生命与法术位、清临时生命、力竭 -1；短休回契约法术位"
     )
     args = (
-        ToolArg("kind", "str", "长休 / 短休，默认长休"),
-        ToolArg("player", "str", "为哪名玩家结算：角色名或 user_id；留空 = 全员"),
+        ToolArg("kind", "str", "长休 / 短休"),
+        ToolArg("player", "str", "为谁结算；留空 = 全员"),
     )
 
     @staticmethod
@@ -1573,23 +1815,14 @@ class UpdateNpcTool(AgentTool):
     """维护本局 NPC 名单（关系、状态、旧伤、所在地）。"""
 
     function_name = "update_npc"
-    description = (
-        "维护本局 NPC 名单：记下具名 NPC 的关系、状态、所在地、当前生命（旧伤），"
-        "或把还没登记过的 NPC 记进名单（要给模板，如 老兵 / 匪帮首领）"
-    )
+    description = "维护本局 NPC 名单：关系 / 状态 / 所在地 / 旧伤；未登记的带上模板补记"
     args = (
-        ToolArg("name", "str", "NPC 名字，如 黑心商人卡尔"),
-        ToolArg(
-            "template",
-            "str",
-            "档位或怪物模板（可选）：平民 / 士兵 / 老兵 / 首领，或 匪帮首领 / 骑士……",
-        ),
-        ToolArg("hp", "str", "当前生命值（可选）"),
-        ToolArg(
-            "status", "str", "状态（可选）：存活 / 受伤 / 倒下 / 逃跑 / 被俘 / 失踪……"
-        ),
-        ToolArg("note", "str", "备注（可选）：关系、身份、欠的账……"),
-        ToolArg("place", "str", "最后出现的地点 / 场景（可选）"),
+        ToolArg("name", "str", "NPC 名，如 黑心商人卡尔"),
+        ToolArg("template", "str", "平民/士兵/老兵/首领 或怪物模板（可选）"),
+        ToolArg("hp", "str", "当前生命（可选）"),
+        ToolArg("status", "str", "存活/受伤/倒下/逃跑/被俘/失踪（可选）"),
+        ToolArg("note", "str", "关系、身份、欠的账（可选）"),
+        ToolArg("place", "str", "最后出现的地点（可选）"),
     )
 
     @staticmethod
@@ -1680,12 +1913,10 @@ class WrapUpTool(AgentTool):
 
     function_name = "wrap_up"
     description = (
-        "为本次跑团写下结局并结档（保留存档与复盘）。**只有玩家先发送 /跑团.结档** 之后"
-        "才允许调用，否则会被系统打回；没收到结档状态时你只能提醒玩家可以结档。"
-        "调用后本轮思考即告结束，**不要与 narrate 写在同一批**：先 wrap_up，"
-        "下一轮再 narrate 结局"
+        "写结局并结档（保留存档与复盘）。**只有玩家 /跑团.结档 之后才可调用**，"
+        "否则会被打回；不要与 narrate 同批（先 wrap_up，下一轮再 narrate 结局）"
     )
-    args = (ToolArg("note", "str", "结局一句话（可选），如「众人带着宝藏回到白港」"),)
+    args = (ToolArg("note", "str", "结局一句话（可选）"),)
 
     @staticmethod
     async def call(context: AgentContext, note: Any = "", **kwargs: Any) -> str:
@@ -1708,17 +1939,21 @@ class WrapUpTool(AgentTool):
 #: DM 主持可用的全部功能
 DM_TOOLS: tuple[type[AgentTool], ...] = (
     RollDiceTool,
+    SecretRollTool,
     CheckTool,
     GetRuleTool,
     QueryDataTool,
+    ReadSceneTool,
     UpdateCharacterTool,
     MoveSceneTool,
     UpdateSceneTool,
     StartCombatTool,
+    MoveTool,
     AttackTool,
     CastSpellTool,
     EnemyAttackTool,
     UpdateEnemyTool,
+    UpdateBattlefieldTool,
     UpdateNpcTool,
     EndCombatTool,
     RestTool,

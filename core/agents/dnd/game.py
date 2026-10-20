@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
+from ... import settings
+from ...dnd.battlemap import map_digest
 from ...dnd.billing import bind_save, record_result
 from ...dnd.combat import (
     advance_turn,
@@ -42,8 +44,8 @@ from ...dnd.combat import (
 from ...dnd.judge import dnd_judge
 from ...dnd.names import player_name
 from ...dnd.npcs import list_npcs, npcs_text
+from ...dnd.settlement import settle_combat
 from ...dnd.save_store import (
-    append_scene_change,
     append_story,
     append_story_ending,
     clear_binding,
@@ -61,8 +63,10 @@ from ...dnd.save_store import (
     save_round,
     save_save,
 )
+from ...dnd.world_bible import bible_text
 from ...dnd.world_store import read_doc, story_text
 from ...trpg.rule import Verdict
+from ...trpg.text import strip_player_hints
 from ..base import AgentError
 from ..thinking import AgentContext
 from .build_scene import scene_builder_agent
@@ -77,6 +81,7 @@ __all__ = [
     "resolve_players",
     "run_dm_round",
     "run_opening",
+    "scene_brief",
     "scene_text",
     "submit_action",
 ]
@@ -98,11 +103,23 @@ class TurnResult:
     waiting_for: list[str] = field(default_factory=list)
     #: 本轮之后本局已经结档（DM 用 wrap_up 收尾）
     ended: bool = False
+    #: 要展示给玩家的判定明细（骰点 + 成败）；暗骰不会出现在这里
+    rulings: list[str] = field(default_factory=list)
 
     @property
     def text(self) -> str:
-        """实际要发给玩家的正文。"""
-        return self.narration or self.message
+        """实际要发给玩家的正文（主持叙述 + 判定明细）。"""
+        body = self.narration or self.message
+        if self.narration and self.rulings:
+            body += "\n\n🎲 判定\n" + "\n".join(f"· {line}" for line in self.rulings)
+        return body
+
+    @property
+    def rulings_text(self) -> str:
+        """只有判定明细的那一段（给需要自己拼文案的调用方用）。"""
+        if not self.rulings:
+            return ""
+        return "🎲 判定\n" + "\n".join(f"· {line}" for line in self.rulings)
 
     @property
     def passed(self) -> bool:
@@ -127,6 +144,72 @@ def scene_text(save) -> str:
     return doc.content if doc is not None else ""
 
 
+def _field(body: str, *names: str) -> str:
+    """从场景文档里取某个字段的值（``- 一句话定位：xxxx``）。"""
+    for name in names:
+        match = re.search(
+            rf"^[-*·]\s*{re.escape(name)}\s*[：:]\s*(.+)$", body, re.MULTILINE
+        )
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _recent_changes(body: str, limit: int = 3) -> list[str]:
+    """取场景副本「变化记录」小节里最近几条（这些才是会累积、需要记住的）。"""
+    index = body.find("## 变化记录")
+    if index < 0:
+        return []
+    lines: list[str] = []
+    for line in body[index:].splitlines()[1:]:
+        text = line.strip()
+        # 变化记录是最后一节；万一后面又接了别的标题，到此为止
+        if text.startswith("#"):
+            break
+        if text.startswith("- "):
+            lines.append(text)
+    return lines[-limit:]
+
+
+def scene_brief(save) -> str:
+    """当前场景的**简介**（进提示词用），细节由 DM 自己用 ``get_scene`` 查。
+
+    完整场景文档（布局 / 可交互元素 / 在场者 / 隐藏信息）每轮都塞进提示词太贵也
+    太吵，这里只留：场景名、一句话定位、氛围、最近的变化记录。
+    """
+    key = (save.current_scene or "").strip()
+    if not key:
+        return ""
+    body = scene_text(save)
+    if not body:
+        return f"场景：{key}"
+
+    name = _field(body, "场景名称") or key
+    kind = _field(body, "地点类型")
+    headline = f"场景：{name}" + (f"（{kind}）" if kind else "")
+    lines = [headline]
+    for label, names in (
+        ("定位", ("一句话定位", "场景功能")),
+        ("氛围", ("整体氛围", "直觉")),
+    ):
+        value = _field(body, *names)
+        if value:
+            lines.append(f"{label}：{value}")
+    changes = _recent_changes(body)
+    if changes:
+        lines.append("最近的变化：")
+        lines.extend(f"· {item.lstrip('- ').strip()}" for item in changes)
+    if len(lines) == 1:
+        # 文档结构不完整时退回开头几行，别让提示词里出现空白场景
+        preview = " ".join(
+            line.strip()
+            for line in body.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        )
+        lines.append(preview[:200] + ("…" if len(preview) > 200 else ""))
+    return "\n".join(lines)
+
+
 def _party_text(save) -> str:
     """本局角色的摘要，供构建器把场景里的 NPC / 线索挂到具体角色上。"""
     lines: list[str] = []
@@ -135,6 +218,47 @@ def _party_text(save) -> str:
         if card is not None:
             lines.append(card.summary())
     return "\n\n".join(lines)
+
+
+def _card_brief(card) -> str:
+    """角色卡的一行摘要：多人局里非焦点玩家用它，省掉整块属性/技能/法术。"""
+    race = card.race_obj
+    profession = card.profession_obj
+    weapons = "、".join(weapon.cn for weapon in card.primary_weapons()[:2])
+    line = (
+        f"【{card.name}】{race.cn if race else '未知种族'} "
+        f"{profession.cn if profession else '无业'} Lv.{card.level}"
+        f"　HP {card.hp}/{card.max_hp}　AC {card.armor_class}"
+    )
+    if weapons:
+        line += f"　武器 {weapons}"
+    if card.is_caster:
+        line += f"　法术位 {card.spell_slots_text()}"
+    line += f"　XP {card.exp}"
+    status = list(card.conditions)
+    if card.exhaustion:
+        status.append(f"力竭 {card.exhaustion} 级")
+    if status:
+        line += "　状态 " + "、".join(status)
+    return line
+
+
+def _party_block(save, order, focus: str = "") -> str:
+    """本轮参与者的角色卡：焦点玩家给完整摘要，其他人只给一行。
+
+    逐人结算时焦点就是当前行动的玩家；多人的整轮总结里大家都是「一行」，
+    够 DM 判断血量 / 武器 / 状态，具体数值要查再走 query_data / update_character。
+    """
+    blocks: list[str] = []
+    for user_id in order:
+        card = get_character(save, user_id)
+        if card is None:
+            continue
+        if focus and str(user_id) == str(focus):
+            blocks.append(card.summary())
+        else:
+            blocks.append(_card_brief(card))
+    return "\n\n".join(blocks)
 
 
 def _progress_text(save) -> str:
@@ -185,18 +309,99 @@ def _story_rulings(context) -> list[str]:
     return lines
 
 
+#: 要回显给玩家的判定功能（暗骰故意不在其中：暗骰只给 DM 看）
+_PLAYER_RULING_TOOLS = ("check", "roll_dice", "attack", "enemy_attack", "cast_spell")
+
+
+def _one_line(text: str) -> str:
+    """把多行结算文案压成一行（判定块每行一条）。"""
+    return " ".join(str(text or "").split())
+
+
+def _player_rulings(
+    save, actions, order, context, skip: set[str] | None = None
+) -> list[str]:
+    """收集这一轮要发给玩家的判定明细（骰点 + 成败）。
+
+    两个来源：① 规则判断器在提交行动时就已经掷掉的检定；② DM 这轮调用
+    check / attack / cast_spell 等功能的返回。暗骰（secret_roll）永远不会进来。
+
+    :param skip: 这些玩家的预结算检定**已经**在逐人结算时给过了，不再重复回显。
+    """
+    skip = skip or set()
+    lines: list[str] = []
+    for user_id in order:
+        if str(user_id) in skip:
+            continue
+        resolution = _one_line((actions.get(user_id) or {}).get("resolution", ""))
+        if resolution:
+            lines.append(f"{_player_label(save, user_id)}：{resolution}")
+    log = context.data.get("tool_log")
+    if isinstance(log, list):
+        for item in log:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("function", "")) not in _PLAYER_RULING_TOOLS:
+                continue
+            text = _one_line(str(item.get("result", "")))
+            if text:
+                lines.append(text)
+    return list(dict.fromkeys(lines))
+
+
+def _party_wiped(save) -> bool:
+    """所有玩家都已阵亡（死亡豁免 3 次失败）——本局该收尾了。"""
+    ids = list(save.player_ids or [])
+    if not ids:
+        return False
+    for user_id in ids:
+        card = get_character(save, user_id)
+        if card is None or not card.is_dead:
+            return False
+    return True
+
+
+def _mark_wrapping_up(save) -> None:
+    """全员阵亡时自动进入收尾流程（幂等）：让 wrap_up 能被调用、并写进复盘。"""
+    if save.progress.get("wrapping_up"):
+        return
+    save.progress["wrapping_up"] = True
+    save_save(save)
+    log_event(save, "note", "全员阵亡：本局进入收尾", actor="dm")
+
+
 def _ending_text(save) -> str:
-    """本轮给 DM 的结档状态提示。"""
+    """本轮给 DM 的结档状态提示。
+
+    **只在真的要收尾时注入**：玩家发过 ``/跑团.结档``，或者全队已经阵亡。
+    平时这一段整块不出现（省 token），而「不能自行结档」的规矩写在系统提示词里。
+    """
+    if _party_wiped(save):
+        return (
+            "全员阵亡：队伍已经没有能行动的玩家了。请写一段收尾叙述，"
+            "交代这一局是怎么落幕的，然后调用 wrap_up 结束本局。"
+        )
     if save.progress.get("wrapping_up"):
         return (
             "玩家已经决定为本次跑团结档：请顺势把剧情推向收束——该收的伏笔收拢、"
             "该告别的人告别，并在这一轮或最近几轮的叙述里给出一个像样的结局；"
             "然后调用 wrap_up 结束本局（存档与复盘都会保留）。"
         )
-    return (
-        "玩家还没有决定结档：**不要**自行结束本局，wrap_up 会被系统打回。"
-        "若有玩家流露出收尾的意思，提醒他/她可以发送 /跑团.结档 来正式收尾即可。"
-    )
+    return ""
+
+
+def _finish_save(save, chat_id: str, *, note: str = "本局就此结档。") -> None:
+    """结档：清战斗与回合、标记结束、解绑会话，并在复盘末尾落一条结档线。"""
+    clear_combat(save)
+    clear_round(save)
+    save.progress["ended"] = True
+    save_save(save)
+    if chat_id:
+        clear_binding(str(chat_id))
+    try:
+        append_story_ending(save, note)
+    except OSError as e:
+        log.warning(f"写复盘结档线失败：{str_traceback(e)}")
 
 
 async def build_scene_for_save(save, generic: str) -> str | None:
@@ -241,12 +446,9 @@ async def open_scene(
         if built is None:
             log.warning(f"场景「{key}」构建失败，已退回通用场景")
 
-    old = (save.current_scene or "").strip()
-    if old and old != key:
-        append_scene_change(save, old, "玩家离开该场景", kind="离开")
-
+    # 进出场景只是剧情上的转场，不往场景副本里记流水：
+    # 那类记录不会影响下次读取，只会在提示词里堆噪声（转场已由复盘记下）。
     save.current_scene = key
-    append_scene_change(save, key, "玩家进入该场景", kind="进入")
     save_save(save)
     return key, read_scene(save, key) or generic
 
@@ -354,6 +556,26 @@ def resolve_players(save, text: str) -> tuple[list[str], list[str]]:
     return ids, unknown
 
 
+#: 最后一名玩家提交后交给 DM 的整轮要求
+_FINAL_PHASE = (
+    "本轮所有玩家都已提交行动：把每个人的结果按顺序串起来，写出这些行动叠加后的局势变化，"
+    "再给出「接下来你们可以」。已经掷过的检定不要重掷。**篇幅 250 字以内**。"
+)
+
+
+def _partial_phase(save, state, user_id: str) -> str:
+    """逐人结算时告诉 DM：现在只处理这一名玩家，别提前收束整轮。"""
+    waiting = [uid for uid in (state.waiting or []) if uid in state.actions]
+    index = waiting.index(str(user_id)) + 1 if str(user_id) in waiting else len(waiting)
+    total = len(state.waiting or []) or len(save.player_ids) or 1
+    return (
+        f"这是本轮的逐人结算（第 {index}/{total} 名玩家）。现在**只处理**"
+        f"「{_player_label(save, user_id)}」这一次行动：只写他这一行动的即时结果与影响，"
+        "不总结全场、不替其他还没提交的玩家行动、不写「接下来你们可以」，也不要宣告本轮结束"
+        "——等其他玩家都行动完，系统会再让你做整轮总结。**篇幅 150 字以内**。"
+    )
+
+
 async def submit_action(
     *,
     save_id: str,
@@ -362,12 +584,13 @@ async def submit_action(
     chat_id: str = "",
     history_limit: int = 10,
 ) -> TurnResult:
-    """接住一名玩家的行动：规则把关 → 存进本轮 → 名单上的人都提交了交给 DM。
+    """接住一名玩家的行动：规则把关 → 存进本轮 → 逐人结算 / 末位整轮总结。
 
     - 规则判断不通过：直接打回 / 追问，**不**保存；
-    - 通过：存进本轮；名单上还有人没提交就只回一句等待，玩家可再次 @ 覆盖自己的行动；
-    - 名单（由 DM 决定，默认全员）都提交后：一次性交给 DM 统一主持。
-    - **战斗中**：名单由先攻顺序决定，只有当前回合的玩家能提交，提交即主持。
+    - 通过且名单上还有人没提交：**立刻**只把这一名玩家的结果讲出来（逐人结算），
+      并提示还在等谁；在那之前他仍可再 @ 覆盖自己的行动；
+    - 名单（由 DM 决定，默认全员）都提交后：带全部行动由 DM 输出整轮结果；
+    - **战斗中**：名单由先攻顺序决定，只有当前回合的玩家能提交，提交即结算该回合。
     """
     save = load_save(save_id)
     if save is None:
@@ -445,17 +668,32 @@ async def submit_action(
     if waiting:
         names = "、".join(_player_label(save, uid) for uid in waiting)
         prefix = f"⚠️ {card.name} 现在{downed_note}。\n" if downed_note else ""
-        return TurnResult(
-            Verdict.ACCEPT,
-            message=(
-                prefix + f"✅ 已记下你的行动（{_player_label(save, user_id)}）。\n"
-                f"还在等：{names}。\n"
-                "DM 会在名单上的玩家都提交后统一主持；在那之前你可以再 @我 修改自己的行动。"
-            ),
-            waiting_for=waiting,
+        if combat is not None or not settings.use_partial(save):
+            # 战斗中按先攻逐回合结算；或者设置里关掉了逐人结算（省模型调用）
+            return TurnResult(
+                Verdict.ACCEPT,
+                message=(
+                    prefix + f"✅ 已记下你的行动（{_player_label(save, user_id)}）。\n"
+                    f"还在等：{names}。\n"
+                    "DM 会在名单上的玩家都提交后统一主持；在那之前你可以再 @我 修改自己的行动。"
+                ),
+                waiting_for=waiting,
+            )
+        # 剧情轮：先把**这一名玩家**的结果讲出来；整轮总结等最后一人提交后再给。
+        partial = await run_dm_round(
+            save_id=save.save_id,
+            actions={str(user_id): state.actions[str(user_id)]},
+            chat_id=chat_id,
+            history_limit=history_limit,
+            phase=_partial_phase(save, state, str(user_id)),
+            partial=True,
         )
+        partial.waiting_for = waiting
+        if partial.narration:
+            partial.narration += f"\n\n（还在等 {'、'.join(names)} 提交行动。）"
+        return partial
 
-    # 名单上的人都提交了：清空本轮行动（保留名单），再交给 DM。
+    # 名单上的人都提交了：清空本轮行动（保留名单），再交给 DM 做整轮总结。
     actions = state.actions
     state.actions = {}
     save_round(save, state)
@@ -464,6 +702,13 @@ async def submit_action(
         actions=actions,
         chat_id=chat_id,
         history_limit=history_limit,
+        phase=_FINAL_PHASE if combat is None else "",
+        # 前面几名的检定结果已经在逐人结算时回显过，整轮总结里不重复
+        skip_resolution=(
+            {str(uid) for uid in actions if str(uid) != str(user_id)}
+            if combat is None and settings.use_partial(save)
+            else None
+        ),
     )
 
 
@@ -484,11 +729,17 @@ async def run_dm_round(
     chat_id: str = "",
     history_limit: int = 10,
     opening: bool = False,
+    phase: str = "",
+    partial: bool = False,
+    skip_resolution: set[str] | None = None,
 ) -> TurnResult:
-    """把本轮的玩家行动一起交给 DM 主持、落事件日志，并记下 DM 决定的下一轮等待名单。
+    """把本轮的玩家行动交给 DM 主持、落事件日志，并记下 DM 决定的下一轮等待名单。
 
     :param actions: ``{user_id: {"action": ..., "resolution": ...}}``。
     :param opening: ``True`` 时为开场轮：没有玩家行动，DM 直接给出开场白。
+    :param phase: 本轮进度说明（逐人结算 / 整轮总结），只说给 DM 听。
+    :param partial: ``True`` 表示逐人结算：只讲这一名玩家的结果，**不**推进等待名单、
+        不推进战斗回合、不写复盘。
     """
     save = load_save(save_id)
     if save is None:
@@ -506,7 +757,6 @@ async def run_dm_round(
         return TurnResult(Verdict.NEED_INFO, message="这一轮还没有收到任何玩家的行动。")
 
     blocks: list[str] = []
-    party: list[str] = []
     resolved_any = False
     for user_id in order:
         item = actions.get(user_id) or {}
@@ -515,9 +765,6 @@ async def run_dm_round(
             continue
         resolution = str(item.get("resolution", "") or "").strip()
         note = str(item.get("note", "") or "").strip()
-        card = get_character(save, user_id)
-        if card is not None:
-            party.append(card.summary())
         if opening:
             # 开场轮没有玩家行动，DM 直接主持。
             continue
@@ -530,9 +777,12 @@ async def run_dm_round(
             resolved_any = True
         blocks.append(entry)
 
-        log_event(save, "action", action, actor=str(user_id))
-        if resolution:
-            log_event(save, "check", resolution, actor=str(user_id))
+        # 逐人结算先不记行动流水：整轮总结时会把所有行动一起记下来，
+        # 免得历史里同一句行动出现两遍（那一轮的叙述照样会记）。
+        if not partial:
+            log_event(save, "action", action, actor=str(user_id))
+            if resolution:
+                log_event(save, "check", resolution, actor=str(user_id))
 
     if opening:
         action_text = _OPENING_PROMPT
@@ -543,13 +793,37 @@ async def run_dm_round(
             )
 
         action_text = "\n\n".join(blocks)
-        if len(blocks) > 1:
+        if len(blocks) > 1 and not partial:
             action_text = "本轮有多名玩家同时行动，请一并处理：\n\n" + action_text
 
-    scene = scene_text(save)
-    history = events_text(save, history_limit, scene=save.current_scene or None)
+    # 场景只给简介（名称 / 定位 / 氛围 / 最近变化）；要看布局、在场者、隐藏信息，
+    # 由 DM 自己用 get_scene 查完整副本。
+    scene = scene_brief(save)
+
+    # 世界圣经：专有名词与事实的唯一来源（人名 / 势力 / 地名不跑偏的关键）；
+    # 没有圣经的老世界照常空着，不影响主持。
+    bible = bible_text(save.world_key, max_chars=settings.world_bible_max_chars())
+
+    # 全队阵亡：自动进入收尾流程，让这一轮就能收尾（wrap_up 才不会被拦）
+    if not partial and _party_wiped(save):
+        _mark_wrapping_up(save)
+
+    # 历史与 NPC 名单按设置裁剪：每轮都会重发，条数/长度直接乘在成本上。
+    limit = max(1, min(history_limit, settings.history_events()))
+    if partial:
+        limit = max(1, limit // 2)
+    history = events_text(save, limit, scene=save.current_scene or None, max_len=160)
     # 本局出场过的具名 NPC：带着旧伤与旧账，供 DM 复用而不是重新造人。
-    roster = npcs_text(save) if list_npcs(save) else ""
+    roster_limit = settings.npc_roster_limit()
+    roster = (
+        npcs_text(save, limit=roster_limit)
+        if roster_limit > 0 and list_npcs(save)
+        else ""
+    )
+
+    # 角色卡：焦点玩家给完整摘要，其余人一行（多人局省一大块）
+    focus = order[0] if (partial or len(order) == 1) else ""
+    party_block = _party_block(save, order, focus)
 
     # 战斗中：把先攻顺序、当前回合与随后的敌人回合一并告诉 DM。
     combat = load_combat(save)
@@ -558,7 +832,13 @@ async def run_dm_round(
     combat_block = ""
     if combat is not None:
         following, next_player = peek_following(save, combat)
-        combat_block = combat_text(save, combat)
+        # 地图只在布局变化时附：每轮重画十几行很贵，坐标与距离另外给
+        digest = map_digest(combat)
+        with_map = settings.battle_map_always() or digest != combat.map_hash
+        combat_block = combat_text(save, combat, with_map=with_map)
+        if with_map and digest:
+            combat.map_hash = digest
+            save_combat(save, combat)
         if following:
             combat_block += (
                 "\n本回合结束后，紧接着由 "
@@ -576,12 +856,14 @@ async def run_dm_round(
             result = await dm_agent.run(
                 context=context,
                 action=action_text,
-                character="\n\n".join(party),
+                character=party_block,
                 scene=scene,
                 npcs=roster,
+                bible=bible,
                 ending=_ending_text(save),
                 combat=combat_block,
                 history=history,
+                phase=phase,
             )
             record_result(result)
     except AgentError as e:
@@ -597,7 +879,22 @@ async def run_dm_round(
         save = latest
 
     narration = (result.content or "").strip() or "……（DM 沉默了片刻）"
-    log_event(save, "narration", narration, actor="dm")
+    # 「接下来你们可以」只用于提醒正在玩的玩家：进历史 / 复盘时去掉。
+    archived = strip_player_hints(narration)
+    log_event(save, "narration", archived, actor="dm")
+    rulings_for_player = _player_rulings(
+        save, actions, order, context, skip=skip_resolution
+    )
+
+    # 逐人结算：这一名玩家的结果已经讲完，等待名单 / 战斗回合 / 复盘都不动，
+    # 等最后一名玩家提交后再做整轮总结。
+    if partial:
+        return TurnResult(
+            Verdict.ACCEPT,
+            narration=narration,
+            resolved=resolved_any,
+            rulings=rulings_for_player,
+        )
 
     # 下一轮要等谁：DM 可以用 await_players 声明；战斗中则由先攻顺序决定。
     declared = context.data.get("await_players")
@@ -619,9 +916,15 @@ async def run_dm_round(
         _following, next_player = peek_following(save, combat)
         state.waiting = [next_player.cid] if next_player is not None else []
     elif combat is not None:
-        # 敌人全部退场：自动结束战斗，等待名单交回 DM（没声明就默认全员）
+        # 敌人全部退场：先结算经验与战利品，再自动结束战斗，等待名单交回 DM
+        report = settle_combat(save, combat)
         clear_combat(save)
-        log_event(save, "combat", "战斗结束：敌人全部退场", actor="dm")
+        settlement = report.text()
+        log_event(save, "combat", "战斗结束：敌人全部退场\n" + settlement, actor="dm")
+        # 结算要玩家也看得见：XP / 升级 / 战利品是他们的
+        narration = f"{narration}\n\n{settlement}"
+        archived = f"{archived}\n\n{settlement}"
+        rulings_for_player = [*rulings_for_player, settlement]
         state.waiting = ids
     else:
         state.waiting = ids if ids is not None else state.waiting
@@ -656,28 +959,30 @@ async def run_dm_round(
                 ]
             ),
             rulings=rulings,
-            narration=narration,
+            narration=archived,
             transition=transition,
         )
     except OSError as e:  # 复盘写失败不该影响这一轮的叙述
         log.warning(f"写复盘失败：{str_traceback(e)}")
 
-    # —— 结档：只有玩家先 /跑团.结档（DM 用 wrap_up 宣告收尾）才会走到这里 ——
+    # —— 结档：玩家 /跑团.结档（DM 用 wrap_up 收尾），或全队阵亡后自动结档 ——
     ended = bool(context.data.get("wrap_up"))
     if ended:
-        clear_combat(save)
-        clear_round(save)  # 丢掉没凑齐的本轮，重开时不会又等旧名单
-        save.progress["ended"] = True
-        save_save(save)
-        if chat_id:
-            clear_binding(str(chat_id))
-        try:
-            append_story_ending(save)
-        except OSError as e:
-            log.warning(f"写复盘结档线失败：{str_traceback(e)}")
+        _finish_save(save, chat_id)
+    elif not partial and _party_wiped(save):
+        # 兜底：最后一击发生在这次叙述里（DM 没来得及 wrap_up）也不能卡在半局
+        _finish_save(save, chat_id, note="全员阵亡，本局就此结档。")
+        narration = (
+            narration + "\n\n（全员阵亡，本局就此结档。想开新的一局用 /跑团.开局。）"
+        )
+        ended = True
 
     return TurnResult(
-        Verdict.ACCEPT, narration=narration, resolved=resolved_any, ended=ended
+        Verdict.ACCEPT,
+        narration=narration,
+        resolved=resolved_any,
+        ended=ended,
+        rulings=rulings_for_player,
     )
 
 

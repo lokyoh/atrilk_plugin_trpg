@@ -43,9 +43,22 @@ from ATRI.log import log
 
 from ..trpg.check import CheckResult, roll_check
 from ..trpg.dice import Advantage, DiceError, DiceExpr, parse_dice, roll, roll_d20
+from .battlemap import (
+    CELL_FEET,
+    battlefield_text,
+    build_battlefield,
+    chebyshev,
+    cover_bonus,
+    has_map,
+    has_position,
+    plan_move,
+    range_check,
+    terrain_at,
+)
 from .card import DndCharacter
 from .equipment import get_weapon
-from .monsters import Monster, get_monster
+from .monsters import Monster
+from .progression import xp_for_cr
 from .npcs import (
     build_npc,
     register_encounter,
@@ -54,7 +67,7 @@ from .npcs import (
     sync_combatant,
     update_npc,
 )
-from .save_store import Save, get_character, save_dir, set_character
+from .save_store import Save, get_character, read_scene, save_dir, set_character
 
 __all__ = [
     "COMBAT_FILENAME",
@@ -71,6 +84,7 @@ __all__ = [
     "clear_combat",
     "combat_path",
     "combat_text",
+    "cover_text",
     "current_actor",
     "effective_ac",
     "effective_hp",
@@ -81,10 +95,12 @@ __all__ = [
     "is_dying",
     "is_out",
     "load_combat",
+    "move_combatant",
     "parse_enemy_list",
     "party_level",
     "peek_following",
     "player_status",
+    "record_defeat",
     "resource_of",
     "resources_text",
     "roll_damage",
@@ -103,6 +119,14 @@ MAX_ENEMIES = 12
 # --------------------------------------------------------------------------- #
 # 数据结构
 # --------------------------------------------------------------------------- #
+
+
+def _int_or(value: Any, default: int) -> int:
+    """把 JSON 里的值安全转成整数（缺省 / 空串 / 非法值都退回默认值）。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 @dataclass(slots=True)
@@ -125,6 +149,13 @@ class Combatant:
     bonus_used: bool = False  #: 已用过附赠动作
     reaction_used: bool = False  #: 已用过反应
     moved: bool = False  #: 本回合移动过
+    #: 棋盘坐标（0 基，``-1`` 表示还没放到棋盘上——老存档的战斗没有地图）
+    x: int = -1
+    y: int = -1
+    #: 速度（尺 / 回合）
+    speed: int = 30
+    #: 本回合已经走过的距离（尺）
+    move_used: int = 0
 
     @property
     def is_enemy(self) -> bool:
@@ -136,11 +167,12 @@ class Combatant:
         return bool(self.npc)
 
     def reset_turn(self) -> None:
-        """新一轮自己的回合开始：清空行动经济记账。"""
+        """新一轮自己的回合开始：清空行动经济记账与已经走过的距离。"""
         self.action_used = False
         self.bonus_used = False
         self.reaction_used = False
         self.moved = False
+        self.move_used = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -159,6 +191,10 @@ class Combatant:
             "bonus_used": self.bonus_used,
             "reaction_used": self.reaction_used,
             "moved": self.moved,
+            "x": self.x,
+            "y": self.y,
+            "speed": self.speed,
+            "move_used": self.move_used,
         }
 
     @classmethod
@@ -179,6 +215,10 @@ class Combatant:
             bonus_used=bool(data.get("bonus_used", False)),
             reaction_used=bool(data.get("reaction_used", False)),
             moved=bool(data.get("moved", False)),
+            x=_int_or(data.get("x"), -1),
+            y=_int_or(data.get("y"), -1),
+            speed=_int_or(data.get("speed"), 30) or 30,
+            move_used=_int_or(data.get("move_used"), 0),
         )
 
 
@@ -198,6 +238,18 @@ class CombatState:
     order: list[Combatant] = field(default_factory=list)
     #: 推进回合时系统自动结算的事（死亡豁免等），交给 DM 叙述；下次推进时清空
     pending: list[str] = field(default_factory=list)
+    #: 战场棋盘：边长（格）；``0`` 表示这场战斗没有棋盘（老存档）
+    width: int = 0
+    height: int = 0
+    #: 地形：(``"x,y"``) -> 地形键；没记录的格子是空地
+    tiles: dict[str, str] = field(default_factory=dict)
+    #: 战场风格（模板键 / 展示名），用于叙述素材
+    terrain: str = ""
+    terrain_label: str = ""
+    #: 上一次把地图塞进提示词时的战场指纹（布局没变就不再重画地图）
+    map_hash: str = ""
+    #: 本场被击败的敌人（结算经验 / 战利品用）：``{"name","monster","cr","xp"}``
+    defeated: list[dict[str, Any]] = field(default_factory=list)
     started_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -208,12 +260,20 @@ class CombatState:
             "turn": self.turn,
             "order": [c.to_dict() for c in self.order],
             "pending": list(self.pending),
+            "width": self.width,
+            "height": self.height,
+            "tiles": dict(self.tiles),
+            "terrain": self.terrain,
+            "terrain_label": self.terrain_label,
+            "map_hash": self.map_hash,
+            "defeated": [dict(item) for item in self.defeated],
             "started_at": self.started_at,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CombatState:
         order = data.get("order")
+        tiles = data.get("tiles")
         return cls(
             scene=str(data.get("scene", "") or ""),
             note=str(data.get("note", "") or ""),
@@ -226,6 +286,21 @@ class CombatState:
             ],
             pending=[
                 str(item) for item in (data.get("pending") or []) if str(item).strip()
+            ],
+            width=_int_or(data.get("width"), 0),
+            height=_int_or(data.get("height"), 0),
+            tiles=(
+                {str(key): str(value) for key, value in tiles.items()}
+                if isinstance(tiles, dict)
+                else {}
+            ),
+            terrain=str(data.get("terrain", "") or ""),
+            terrain_label=str(data.get("terrain_label", "") or ""),
+            map_hash=str(data.get("map_hash", "") or ""),
+            defeated=[
+                {str(k): v for k, v in item.items()}
+                for item in (data.get("defeated") or [])
+                if isinstance(item, dict)
             ],
             started_at=float(data.get("started_at", 0.0) or 0.0),
         )
@@ -292,12 +367,26 @@ def effective_hp(save: Save, combatant: Combatant) -> tuple[int, int]:
     return combatant.hp, combatant.max_hp
 
 
-def effective_ac(save: Save, combatant: Combatant) -> int:
-    """取参战者的 AC；玩家的以角色卡为准。"""
+def effective_ac(
+    save: Save, combatant: Combatant, state: CombatState | None = None
+) -> int:
+    """取参战者的 AC；玩家的以角色卡为准，站在掩体后按地形加值。"""
     if combatant.kind == "player":
         card = get_character(save, combatant.cid)
-        return card.armor_class if card is not None else combatant.ac
-    return combatant.ac
+        base = card.armor_class if card is not None else combatant.ac
+    else:
+        base = combatant.ac
+    if state is not None:
+        base += cover_bonus(state, combatant)
+    return base
+
+
+def cover_text(state: CombatState, combatant: Combatant) -> str:
+    """掩体说明（给叙述 / 展示用）；没有掩体返回空串。"""
+    bonus = cover_bonus(state, combatant)
+    if not bonus:
+        return ""
+    return f"（掩体 AC +{bonus}）"
 
 
 def is_out(save: Save, combatant: Combatant) -> bool:
@@ -506,6 +595,11 @@ def _walk(
             continue
         if commit:
             state.turn = index
+            # 进入新的一轮：敌人的移动额度也一并重置（它们不走 reset_turn）
+            if round_no != state.round:
+                for other in order:
+                    if other.is_enemy:
+                        other.move_used = 0
             state.round = round_no
             combatant.reset_turn()
         return enemies, combatant
@@ -676,6 +770,12 @@ def _normalize_specs(specs: list) -> list[EnemySpec]:
     return out
 
 
+def _card_speed(card: DndCharacter) -> int:
+    """角色的速度（尺 / 回合）；种族数据缺失时按 30 尺。"""
+    race = card.race_obj
+    return int(getattr(race, "speed", 30) or 30)
+
+
 def start_combat(
     save: Save,
     specs: list,
@@ -706,6 +806,7 @@ def start_combat(
                 ac=card.armor_class,
                 hp=card.hp,
                 max_hp=card.max_hp,
+                speed=_card_speed(card),
             )
         )
 
@@ -749,6 +850,7 @@ def start_combat(
                     max_hp=max_hp,
                     monster=spec.monster.key,
                     npc=npc_name,
+                    speed=int(getattr(spec.monster, "speed", 30) or 30),
                 )
             )
 
@@ -769,6 +871,22 @@ def start_combat(
     state = CombatState(
         scene=save.current_scene, note=str(note or ""), round=1, turn=turn, order=order
     )
+    # 战场棋盘：按场景类型与人数生成，玩家在下、敌人在上（零额外模型调用）。
+    # 生成失败（例如缺少场景文档）就退化成「没有棋盘」，射程校验自动跳过。
+    try:
+        scene_doc = read_scene(save, save.current_scene) or ""
+        build_battlefield(
+            state,
+            [c for c in order if c.kind == "player"],
+            [c for c in order if c.is_enemy],
+            # 场景正文 + DM 给的战场环境都拿来猜地形模板（雨巷 / 林地 / 洞窟……）
+            scene_text=f"{scene_doc}\n{note or ''}",
+        )
+    except Exception as e:  # 棋盘只是增强，不能因为它让开战失败
+        log.warning(f"生成战场棋盘失败：{str_traceback(e)}")
+        state.width = 0
+        state.height = 0
+        state.tiles = {}
     save_combat(save, state)
 
     # 具名 NPC 登记进名单（首次出场创建，之后带着旧伤与旧账）
@@ -812,6 +930,33 @@ def roll_damage(expr: str, *, crit: bool = False, rng: Any = None) -> tuple[int,
         rng=rng,
     )
     return result.total, result.describe()
+
+
+def record_defeat(state: CombatState, enemy: Combatant, reason: str = "倒下") -> None:
+    """把被击败的敌人记进 :attr:`CombatState.defeated`，供战斗结算算经验 / 战利品。
+
+    同名同模板只记一次（同名 NPC 的旧档已在场时不算新的战果），经验按
+    :func:`~.progression.xp_for_cr` 由怪物的挑战等级推出；模板已查不到时按 CR0 兜底。
+    """
+    if not enemy.is_enemy or not enemy.monster:
+        return
+    key = enemy.monster
+    if any(item.get("monster") == key and item.get("name") == enemy.name
+           for item in state.defeated):
+        return
+    monster = resolve_monster(key)
+    cr = float(monster.cr) if monster is not None else 0.0
+    state.defeated.append(
+        {
+            "name": enemy.name,
+            "monster": key,
+            "cr": cr,
+            "cr_text": monster.cr_text if monster is not None else "0",
+            "xp": xp_for_cr(cr),
+            "npc": enemy.npc,
+            "reason": reason,
+        }
+    )
 
 
 def apply_damage(
@@ -864,6 +1009,7 @@ def apply_damage(
     note = f"{target.name} 剩余 {target.hp}/{target.max_hp}"
     if target.hp <= 0:
         target.out = True
+        record_defeat(state, target)
         note += "，已倒下"
     save_combat(save, state)
     sync_combatant(save, target)
@@ -935,7 +1081,7 @@ def attack(
     if not can_target(save, target):
         return f"{target.name} 已经阵亡或退场了，换个目标吧。", False
 
-    target_ac = effective_ac(save, target)
+    target_ac = effective_ac(save, target, state)
     weapon = get_weapon(weapon_ref) if weapon_ref else None
     if weapon is None and not weapon_ref:
         weapons = card.primary_weapons()
@@ -947,6 +1093,25 @@ def attack(
         owned = {item.key for item in card.primary_weapons()}
         if weapon.key not in owned:
             warn = f"（注意：{weapon.cn} 不在 {card.name} 的装备里）\n"
+
+    # 距离 / 射程 / 视线：有棋盘时硬校验（够不着就直接打回，不掷骰）。
+    attacker = next(
+        (c for c in state.order if c.kind == "player" and c.cid == str(card.user_id)),
+        None,
+    )
+    gate = range_check(
+        state,
+        attacker,
+        target,
+        reach=10 if (weapon is not None and "触及" in weapon.properties) else 5,
+        normal=weapon.ranged_normal if weapon is not None else 0,
+        max_range=weapon.ranged_max if weapon is not None else 0,
+    )
+    if not gate.ok:
+        return f"{warn}距离不足：{gate.reason}", False
+    if gate.disadvantage and advantage is not Advantage.DISADVANTAGE:
+        advantage = Advantage.DISADVANTAGE
+        warn += "（目标超出常规射程，本次攻击带劣势）\n"
 
     if weapon is not None:
         result: CheckResult = card.check_attack(
@@ -962,7 +1127,12 @@ def attack(
         damage_expr = str(max(1, 1 + card.modifier("str")))
         label = "徒手"
 
-    lines = [f"【{card.name}】{label} → {result.describe()}（目标 AC {target_ac}）"]
+    lines = [
+        f"【{card.name}】{label} → {result.describe()}"
+        f"（目标 AC {target_ac}{cover_text(state, target)}；距离 {gate.distance} 尺）"
+        if gate.distance >= 0
+        else f"【{card.name}】{label} → {result.describe()}（目标 AC {target_ac}）"
+    ]
     if not result.success:
         lines.append(f"未命中 {target.name}。")
         return warn + "\n".join(lines), False
@@ -1017,7 +1187,21 @@ def enemy_attack(
     if target.cid == enemy.cid or not can_target(save, target):
         return f"{target.name} 已经不能作为目标了。", False
 
-    target_ac = effective_ac(save, target)
+    # 距离 / 射程 / 视线：有棋盘时硬校验——够不着这一击就不该结算。
+    gate = range_check(
+        state,
+        enemy,
+        target,
+        reach=attack_obj.reach,
+        normal=attack_obj.ranged_normal,
+        max_range=attack_obj.ranged_max,
+    )
+    if not gate.ok:
+        return f"{enemy.name} 够不着 {target.name}：{gate.reason}", False
+    if gate.disadvantage and advantage is not Advantage.DISADVANTAGE:
+        advantage = Advantage.DISADVANTAGE
+
+    target_ac = effective_ac(save, target, state)
     bonus = monster.attack_bonus(attack_obj)
     result = roll_check(
         bonus,
@@ -1028,7 +1212,8 @@ def enemy_attack(
     )
     lines = [
         f"【{enemy.name}】{attack_obj.name} → {result.describe()}"
-        f"（目标 {target.name} AC {target_ac}）"
+        f"（目标 {target.name} AC {target_ac}{cover_text(state, target)}"
+        + (f"，距离 {gate.distance} 尺）" if gate.distance >= 0 else "）")
     ]
     if not result.success:
         lines.append(f"未命中 {target.name}。")
@@ -1082,6 +1267,8 @@ def update_enemy(
     if flag:
         enemy.out = flag not in {"否", "不是", "no", "false", "0", "无"}
         save_combat(save, state)
+        if enemy.out:
+            record_defeat(state, enemy, reason=str(note or "退场"))
         notes.append(f"{enemy.name} {'已退场' if enemy.out else '回到战斗'}。")
         if enemy.npc:
             update_npc(save, enemy.npc, status="退场" if enemy.out else "存活")
@@ -1100,11 +1287,134 @@ def update_enemy(
 
 
 # --------------------------------------------------------------------------- #
+# 移动
+# --------------------------------------------------------------------------- #
+
+
+def _parse_pos(text: str) -> tuple[int, int] | None:
+    """解析 ``"4,7"`` / ``"4 7"`` 这样的坐标（**1 基**，与地图上标的一致）。"""
+    match = re.fullmatch(r"\s*(\d{1,2})\s*[,，\s]\s*(\d{1,2})\s*", str(text or ""))
+    if match is None:
+        return None
+    return int(match.group(1)) - 1, int(match.group(2)) - 1
+
+
+def move_combatant(
+    save: Save,
+    state: CombatState,
+    ref: str,
+    *,
+    target: str = "",
+    pos: str = "",
+) -> str:
+    """让一名参战者移动：靠近某个目标，或走到指定坐标。
+
+    系统按格子算路径与消耗（困难地形一步算两格），并扣掉本回合的移动预算；
+    预算用完就走不动了，得等下一回合。
+    """
+    mover = find_combatant(state, ref)
+    if mover is None:
+        names = "、".join(c.name for c in state.order)
+        return f"没找到「{ref}」。场上：{names}"
+    if not has_map(state):
+        return "这场战斗没有棋盘（旧战斗存档），移动请直接叙述即可"
+    if not has_position(mover):
+        return f"{mover.name} 还没有被放到棋盘上，无法移动"
+
+    speed = int(getattr(mover, "speed", 30) or 30)
+    used = int(getattr(mover, "move_used", 0) or 0)
+    budget = max(0, speed - used)
+    if budget <= 0:
+        return (
+            f"{mover.name} 本回合的移动已经用完（{used}/{speed} 尺），"
+            "要挪位置只能等下一回合。"
+        )
+
+    dest_ref = str(target or "").strip()
+    dest: tuple[int, int] | None = None
+    if dest_ref:
+        other = find_combatant(state, dest_ref)
+        if other is None:
+            return f"没找到移动目标「{dest_ref}」"
+        if not has_position(other):
+            return f"{other.name} 还没有被放到棋盘上"
+        if other.cid == mover.cid:
+            return "要移动到别处请给出目标或坐标"
+        if chebyshev(int(mover.x), int(mover.y), int(other.x), int(other.y)) <= 1:
+            # 已经贴身：别再算路径了（贴着目标时「最近的格子」就是原地，会误报无路可走）
+            return f"{mover.name} 已经贴到 {other.name} 身边了，不必再移动。"
+        dest = (int(other.x), int(other.y))
+    elif str(pos or "").strip():
+        parsed = _parse_pos(str(pos))
+        if parsed is None:
+            return f"看不懂坐标「{pos}」，请写成 列,行（例如 5,3；坐标从 1 开始）"
+        if not (0 <= parsed[0] < state.width and 0 <= parsed[1] < state.height):
+            return f"坐标 {pos} 超出棋盘（{state.width}×{state.height}）"
+        occupied = {
+            (int(c.x), int(c.y))
+            for c in state.order
+            if has_position(c) and c.cid != mover.cid and not c.out
+        }
+        if parsed in occupied:
+            return f"坐标 {pos} 上已经有人了，换一格或直接指定目标让他靠近"
+        dest = parsed
+    else:
+        return "请给出要靠近的目标（target）或目标格坐标（pos）"
+
+    start = (int(mover.x), int(mover.y))
+    if dest == start:
+        return f"{mover.name} 已经在那儿了。"
+
+    blocked = {
+        (int(c.x), int(c.y))
+        for c in state.order
+        if has_position(c) and c.cid != mover.cid and not c.out
+    }
+    cell, cost, remain = plan_move(state, mover, dest, budget, blocked_cells=blocked)
+    if cost <= 0 and cell == start:
+        return (
+            f"{mover.name} 从 {start[0] + 1},{start[1] + 1} 出发无路可走"
+            "（周围被障碍或人堵住了）。"
+        )
+    # 目标是「人」时贴到相邻格就算到位：别把目标自己站的那一格也算成距离，
+    # 否则明明已经贴身了还会提示「还差 5 尺」。
+    need = max(0, remain - 1) if dest_ref else remain
+
+    mover.x, mover.y = int(cell[0]), int(cell[1])
+    mover.move_used = used + cost
+    if cost > 0:
+        mover.moved = True
+    save_combat(save, state)
+
+    terrain = terrain_at(state, mover.x, mover.y)
+    lines = [
+        f"【{mover.name}】从 {start[0] + 1},{start[1] + 1} 移动到 "
+        f"{mover.x + 1},{mover.y + 1}，走了 {cost} 尺"
+        f"（本回合已用 {mover.move_used}/{speed} 尺，剩余 "
+        f"{max(0, speed - mover.move_used)} 尺）"
+    ]
+    if terrain.note and terrain.key != "floor":
+        lines.append(f"（脚下是{terrain.cn}：{terrain.note}）")
+    if need > 0:
+        lines.append(
+            f"离目标还差 {need * CELL_FEET} 尺，本回合走不到了——要靠近得等下一回合。"
+        )
+    else:
+        lines.append("已经贴到目标身边。" if dest_ref else "已经走到目标位置。")
+    return "\n".join(lines)
+
+
+def state_tile(state: CombatState, combatant: Combatant):
+    """参战者脚下的地形。"""
+    return terrain_at(state, combatant.x, combatant.y)
+
+
+# --------------------------------------------------------------------------- #
 # 展示
 # --------------------------------------------------------------------------- #
 
 
-def combat_text(save: Save, state: CombatState) -> str:
+def combat_text(save: Save, state: CombatState, *, with_map: bool = True) -> str:
     """战斗现状文本，用于 DM 输入与玩家提示。"""
     current = current_actor(state)
     lines = [
@@ -1115,6 +1425,9 @@ def combat_text(save: Save, state: CombatState) -> str:
         lines.extend(f"  · {item}" for item in state.pending)
     if state.note:
         lines.append(f"起因 / 环境：{state.note}")
+    board = battlefield_text(state, with_map=with_map)
+    if board:
+        lines.append(board)
     lines.append("先攻顺序：")
     for index, combatant in enumerate(state.order, start=1):
         hp_now, hp_max = effective_hp(save, combatant)
@@ -1140,7 +1453,8 @@ def combat_text(save: Save, state: CombatState) -> str:
             turn_used = f"　本回合已用：{resources_text(combatant)}"
         lines.append(
             f"  {index}. {combatant.initiative:>2} {combatant.name}（{role}）"
-            f" HP {hp_now}/{hp_max}　AC {effective_ac(save, combatant)}{status}{turn_used}{mark}"
+            f" HP {hp_now}/{hp_max}　AC {effective_ac(save, combatant, state)}"
+            f"{cover_text(state, combatant)}{status}{turn_used}{mark}"
         )
     lines.append(
         "（轮到倒地濒死的玩家时由系统自动掷死亡豁免：DC 10，3 次成功伤势稳定、3 次失败死亡；"
