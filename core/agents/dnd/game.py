@@ -36,10 +36,12 @@ from ...dnd.combat import (
     clear_combat,
     combat_text,
     current_actor,
+    effective_ac,
     is_out,
     living_enemies,
     load_combat,
     peek_following,
+    resources_text,
     save_combat,
     use_resource,
 )
@@ -631,6 +633,44 @@ def _stale_brief(text: str, combat) -> str:
     return f"系统提示：行动点到的 {'、'.join(stale)} 已退场，现存敌人 {alive}"
 
 
+def _player_status_line(save, state) -> str:
+    """轮到下一名玩家时，给他一份自己的状态回执（纯数据推导，零模型开销）。
+
+    战斗中玩家最容易缺的信息是**自己还剩多少血、法术位用掉几个、有没有挂状态**——
+    这些数据全在角色卡上，只是没机会告诉他。以前要等他自己问、或等 DM 偶然提起。
+    这里直接拼一行：只给「有变化或有风险」时才出声，全满全空时不刷屏。
+    """
+    actor = current_actor(state)
+    if actor is None or actor.kind != "player":
+        return ""
+    card = get_character(save, actor.cid)
+    if card is None:
+        return ""
+    parts = [
+        f"HP {card.current_hp}/{card.max_hp}　AC {effective_ac(save, actor, state)}"
+    ]
+    # 只在真有问题时提示：低血、临时生命、状态、力竭、法术位
+    if card.hp > 0 and card.hp <= max(1, card.max_hp // 3):
+        parts.append("⚠️ 血量偏低")
+    if card.temp_hp:
+        parts.append(f"临时生命 {card.temp_hp}")
+    conditions = card.conditions_text()
+    if conditions:
+        parts.append(f"状态：{conditions}")
+    slots = card.spell_slots_text()
+    if slots:
+        parts.append(f"法术位 {slots}")
+    if actor.moved:
+        parts.append(f"已移动 {actor.move_used}/{actor.speed} 尺")
+    used = resources_text(actor)
+    if used:
+        parts.append(f"本回合已用：{used}")
+    death = card.death_save_text()
+    if death:
+        parts.append(death)
+    return "　".join(parts)
+
+
 def _equip_take_request(text: str) -> list[str]:
     """玩家是不是在明确地「把东西收进装备栏」；是的话给出东西名列表。
 
@@ -1129,9 +1169,15 @@ async def run_dm_round(
         if context.data.get("combat_started"):
             narration = _combat_banner(save, combat, narration)
         elif next_player is not None:
-            narration += (
-                f"\n\n⏭️ 下一回合轮到【{_player_label(save, next_player.cid)}】。"
+            # 轮到下一位了：给**他自己**一份状态回执（HP / 法术位 / 状态 / 已用资源）。
+            # 以前玩家只能靠问才知道这些，而问一次就是一轮模型往返。
+            status_line = _player_status_line(save, combat)
+            turn_hint = (
+                f"\n\n⏭️ 下一回合轮到【{_player_label(save, next_player.cid)}】行动。"
             )
+            if status_line:
+                turn_hint += f"\n{status_line}"
+            narration += turn_hint
     elif combat is not None:
         # 敌人全部退场：先结算经验与战利品，再自动结束战斗，等待名单交回 DM
         report = settle_combat(save, combat)
