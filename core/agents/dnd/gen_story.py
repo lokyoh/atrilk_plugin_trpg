@@ -12,12 +12,19 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from ...dnd.world_bible import Entity
 from ...dnd.world_store import clean_name
 from ..base import AgentInput, AgentResult, TrpgAgent
 
-__all__ = ["StoryAgent", "StoryResult", "parse_story_profile", "story_agent"]
+__all__ = [
+    "StoryAgent",
+    "StoryResult",
+    "parse_story_entities",
+    "parse_story_profile",
+    "story_agent",
+]
 
 
 _SYSTEM_PROMPT = """# 任务
@@ -119,6 +126,15 @@ _STORY_INTRO_RE = re.compile(
 )
 
 
+#: 任意二级 / 三级小标题（跟踪章节用）
+_HEADING_RE = re.compile(r"^(?P<hashes>#{2,4})\s*(?P<title>.+?)\s*$")
+
+#: 小节内的「- 所在地：X」/「- 所在地区：X」行
+_LOCATION_FIELD_RE = re.compile(
+    r"^[-*·]\s*所在(?:地区|地)\s*[：:]\s*(?P<value>.+?)\s*$"
+)
+
+
 def parse_story_profile(text: str) -> tuple[str, str]:
     """解析故事档案，返回 ``(故事名称, 一句话简介)``；缺失的部分为空串。
 
@@ -133,6 +149,56 @@ def parse_story_profile(text: str) -> tuple[str, str]:
     )
 
 
+def parse_story_entities(text: str) -> list[Entity]:
+    """从故事文档提取实体登记：势力（「势力动机」节）与关键节点（「关键节点」节）。
+
+    小标题写法是提示词规定的固定格式（``### 势力一：<名称>`` / ``### 节点一：<名称>``），
+    程序提取零成本、不会认错；地区取小节里的「所在地 / 所在地区」行。
+    事件名是一次性剧情，不登记。
+    """
+    entities: list[Entity] = []
+    section = ""
+    current: Entity | None = None
+
+    def flush() -> None:
+        nonlocal current
+        if current is not None and current.name:
+            entities.append(current)
+        current = None
+
+    for line in (text or "").splitlines():
+        head = _HEADING_RE.match(line)
+        if head is None:
+            if current is not None and not current.region:
+                location = _LOCATION_FIELD_RE.match(line)
+                if location is not None:
+                    current.region = clean_name(location.group("value"))
+            continue
+        level = len(head.group("hashes"))
+        title = head.group("title").strip()
+        if level == 2:
+            flush()
+            section = title
+            continue
+        if level != 3:
+            continue
+        flush()
+        name = ""
+        kind = ""
+        if "势力动机" in section:
+            match = re.match(r"^势力[^\n：:]{0,8}[：:]\s*(?P<name>.+?)$", title)
+            if match is not None:
+                name, kind = clean_name(match.group("name")), "faction"
+        elif "关键节点" in section:
+            match = re.match(r"^节点[^\n：:]{0,8}[：:]\s*(?P<name>.+?)$", title)
+            if match is not None:
+                name, kind = clean_name(match.group("name")), "place"
+        if name:
+            current = Entity(name=name, kind=kind, source="story")
+    flush()
+    return entities
+
+
 @dataclass(slots=True)
 class StoryResult(AgentResult):
     """故事生成结果：模型原文 + 故事档案解析出的名称与简介。"""
@@ -141,6 +207,8 @@ class StoryResult(AgentResult):
     story_title: str = ""
     #: 一句话简介（故事档案；解析失败为空串）
     story_intro: str = ""
+    #: 实体登记（势力与关键节点；程序从小标题提取）
+    entities: list[Entity] = field(default_factory=list)
 
 
 class StoryAgent(TrpgAgent):
@@ -174,6 +242,7 @@ class StoryAgent(TrpgAgent):
             usages=list(result.usages),
             story_title=story_title,
             story_intro=story_intro,
+            entities=parse_story_entities(result.content),
         )
 
 

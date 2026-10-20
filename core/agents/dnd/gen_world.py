@@ -17,16 +17,26 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ATRI.log import log
 
+from ...dnd.world_bible import Entity, entities_from_json
 from ...dnd.world_store import clean_name
+from ...dnd.world_topology import (
+    MAX_REGIONS,
+    MIN_REGIONS,
+    Topology,
+    build_topology,
+    lint_world,
+    prompt_text,
+)
 from ..base import AgentInput, AgentResult, TrpgAgent
 
 __all__ = [
     "WorldAgent",
     "WorldMapResult",
+    "parse_region_names",
     "parse_world_map",
     "parse_world_profile",
     "world_agent",
@@ -34,45 +44,35 @@ __all__ = [
 
 
 _SYSTEM_PROMPT = """# 任务
-为跑团生成一张世界地图，输出三个部分：
-1. 世界档案：世界名称与一句话简介。
-2. 地区描述文档：依次描述每个地区，供后续生成国家 / 区域数据使用。
-3. 相邻数据文档：以 JSON 记录地区之间的陆地相邻关系，置于描述文档底部。
+为跑团生成一张世界地图。**地理由系统给定**：地区数量、顺序、方位与相邻关系都在下面的「地区布局」里，你不许改动，只负责给每个地区起名、写设定。
 
-# 文档一：世界档案
-- 世界名称：给这个世界起一个名字（可为地名、王国名或意象化的称呼）。
-- 一句话简介：不超过 30 字，概括这个世界的风格、基调或最大看点。
+# 写作顺序
+按「地区布局」列出的顺序，一个地区写一节：`## 地区一：<你起的名字>`，依次到最后一个。
+- 名字要贴合世界基调、彼此风格统一（2~4 字或音译词组），不要重名，不要照抄「地区一」这类占位名。
+- 每节固定八个小节：大致形状 / 主要地形 / 标志地标 / 国都 / 特殊地区 / 人文特点 / 政治局势 / 与周边区域的分隔方式。
+- 「与周边区域的分隔方式」**只能**写布局里给它的那几个邻居，逐一说明边界地形或海域，不许新增邻接、也不许漏掉。
+- 各地区之间的历史、贸易与矛盾要互相呼应（谁跟谁有旧账、谁卡着谁的路），不要写成互不相干的独立小国。
 
-# 文档二：地区描述文档
-对每个地区，按以下顺序依次描述：
-1. 地区名称。
-2. 大致形状：在地图上的轮廓形状（如狭长半岛、不规则多边形、环形、楔形等）。
-3. 主要地形：平原、丘陵、山地、森林、沙漠、沼泽、高原、盆地、苔原等，并说明大致分布。
-4. 标志地标：该区域最著名的自然或建筑地标（山脉、河流、湖泊、瀑布、峡谷、森林、火山、海湾；长城、巨塔、神殿、要塞、运河、大桥等），每个简要说明位置与特征。
-5. 国都：名称、地理位置与基本特征。
-6. 特殊地区：禁区、圣地、魔法荒原、古战场、贸易自由市等，说明其特殊之处。
-7. 人文特点：主要民族、语言、宗教、文化习俗、经济形态等。
-8. 政治局势：当前政治体制、权力结构、内外矛盾、盟友与敌人等。
-9. 与周边区域的分隔方式：逐一说明与每个周边区域如何分隔——陆地相邻说明边界地形，海洋分隔说明海域 / 海峡 / 群岛，其他方式说明具体形式。
+# 世界档案
+文档最前面写世界名称与一句话简介（不超过 30 字，概括风格与最大看点）。
 
-# 文档二：相邻数据文档
-- 一个数组，数组中每个元素是一个字典。
-- 字典的键为区域名称，值为该区域**陆地相邻**区域的名称列表。
-- 只记录陆地相邻，海洋分隔不记入；无陆地相邻区域则值为空列表。
-- JSON 置于描述文档底部，用 Markdown 代码块包裹，必须合法、可直接解析。
-- 地区描述顺序与 JSON 中键名顺序一致。
+# 末尾结构化索引（必须）
+正文之后再给一段 JSON，内容必须与正文一致：
 
-# 输出格式
-- 三个部分合在一起输出：世界档案在最前，描述文档居中，相邻数据 JSON 在最后。
-- JSON 使用 Markdown 代码块包裹。
+```json
+{"world_name": "<世界名称>", "intro": "<一句话简介>", "regions": ["<地区一的名字>", "<地区二的名字>"], "entities": [{"name": "<专有名词>", "kind": "person|faction|item", "region": "<所属地区>", "note": "<不超过20字>"}]}
+```
+
+- `regions` 的顺序与长度必须和「地区布局」完全一致——系统只认这段 JSON 里的名字，写错会让整张地图错位。
+- `entities` 是**实体登记**：只收人物 / 势力 / 物品这类跨地区也成立的专有名词（地区与地标系统会自动收录，不要重复列），每条带所属地区与一句定位；没有就空数组 `[]`。
+  这些名字会进世界圣经，之后所有生成与主持都以它为准——写错一个名字，整局都会跟着错。
 
 # 输出模板
+
 ```markdown
 # 世界档案
 - 世界名称：<名称>
 - 一句话简介：<一句话>
-
-# 地图地区描述文档
 
 ## 地区一：<地区名称>
 
@@ -100,27 +100,15 @@ _SYSTEM_PROMPT = """# 任务
 ### 与周边区域的分隔方式
 ...
 
----
-
 ## 地区二：<地区名称>
 
-（同上，依次列出所有地区）
-
----
-
-# 相邻数据
+（同上，按布局顺序写完所有地区）
 
 ```json
-[
-  {
-    "<地区一>": ["<陆地相邻地区A>", "<陆地相邻地区B>"]
-  },
-  {
-    "<地区二>": ["<陆地相邻地区C>"]
-  }
-]
+{"world_name": "...", "intro": "...", "regions": ["...", "..."], "entities": [{"name": "...", "kind": "person", "region": "...", "note": "..."}]}
 ```
-```"""
+```
+"""
 
 #: JSON 代码块（优先 json 标注，兼容无标注）
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
@@ -178,6 +166,12 @@ class WorldMapResult(AgentResult):
     world_title: str = ""
     #: 一句话简介（世界档案；解析失败为空串）
     world_intro: str = ""
+    #: 实体登记（人物 / 势力 / 物品；来自末尾 JSON，地区与地标由程序另行播种）
+    entities: list[Entity] = field(default_factory=list)
+    #: 系统生成的拓扑（地区连续、邻接对称、无孤立点）；老调用方可以忽略
+    topology: Topology | None = None
+    #: 生成后自检发现的问题（名字数量不符 / 重名 / 邻接没写进正文……）
+    warnings: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.regions is None:
@@ -216,6 +210,77 @@ def parse_world_profile(text: str) -> tuple[str, str]:
     )
 
 
+#: 任意二级标题（地区小节的兜底解析用）
+_ANY_HEADING_RE = re.compile(r"^##\s+(?P<text>[^\n#].+?)\s*$", re.MULTILINE)
+
+#: 世界档案里的名称 / 简介也可能放在末尾 JSON 里
+_PROFILE_JSON_KEYS = ("world_name", "intro")
+
+
+def _fit_names(names: list[str], count: int) -> list[str]:
+    """把名字补齐 / 截断到拓扑给的数量，并保证不重名。"""
+    fixed: list[str] = []
+    for index in range(count):
+        candidate = names[index] if index < len(names) else f"未命名之地{index + 1}"
+        if candidate in fixed:
+            candidate = f"{candidate}·{index + 1}"
+        fixed.append(candidate)
+    return fixed
+
+
+def parse_region_names(text: str, count: int) -> tuple[list[str], bool]:
+    """按顺序取地区名：**优先末尾 JSON 的 ``regions``**，没有再退回小标题。
+
+    :return: ``(地区名列表, 是否来自 JSON)``
+    """
+    count = max(1, int(count))
+    for block in _JSON_BLOCK_RE.findall(text or ""):
+        try:
+            data = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get("regions"), list):
+            continue
+        names = [clean_name(str(item)) for item in data["regions"]]
+        names = [name for name in names if name]
+        if names:
+            return _fit_names(names, count), True
+
+    names = []
+    for match in _ANY_HEADING_RE.finditer(text or ""):
+        raw = match.group("text").strip()
+        if any(word in raw for word in ("世界档案", "地图", "相邻", "索引")):
+            continue
+        if re.search(r"[：:]", raw):
+            raw = re.split(r"[：:]", raw, maxsplit=1)[-1]
+        name = clean_name(raw)
+        if name and name not in names:
+            names.append(name)
+    return _fit_names(names, count), False
+
+
+def _profile_from_json(text: str) -> tuple[str, str]:
+    """从末尾 JSON 里取 ``(世界名称, 一句话简介)``；没有返回两个空串。"""
+    for block in _JSON_BLOCK_RE.findall(text or ""):
+        try:
+            data = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and any(key in data for key in _PROFILE_JSON_KEYS):
+            return (
+                clean_name(str(data.get("world_name", ""))),
+                clean_name(str(data.get("intro", ""))),
+            )
+    return "", ""
+
+
+def _region_count(value: object, default: int = 6) -> int:
+    """把「6」「六个」这类输入转成地区数量，限制在拓扑允许的范围内。"""
+    match = re.search(r"\d+", str(value or ""))
+    count = int(match.group()) if match else default
+    return max(MIN_REGIONS, min(MAX_REGIONS, count))
+
+
 class WorldAgent(TrpgAgent):
     """世界地图生成：产出地区描述文档与相邻关系。"""
 
@@ -234,7 +299,13 @@ class WorldAgent(TrpgAgent):
             "region_count",
             "地区数量",
             required=False,
-            description="期望生成的地区数量，可留空",
+            description="期望生成的地区数量（3~12），可留空",
+        ),
+        AgentInput(
+            "layout",
+            "地区布局",
+            required=False,
+            description="系统给定的地区数量、顺序、方位与相邻关系；模型照它写，不得改动",
         ),
     )
 
@@ -245,11 +316,29 @@ class WorldAgent(TrpgAgent):
         return "请为跑团生成一个完整的世界地图。"
 
     async def run(self, **values: object) -> WorldMapResult:
+        # 先由程序定下地理：地区数量、连续地块、对称邻接（模型不该也不擅长做这件事）
+        count = _region_count(values.get("region_count"))
+        topology = build_topology(count)
+        values = {**values, "layout": prompt_text(topology)}
+
         result = await super().run(**values)
-        regions, adjacency = parse_world_map(result.content)
-        if not regions and not adjacency:
-            log.warning("世界地图生成结果未能解析出地区与相邻关系")
-        world_title, world_intro = parse_world_profile(result.content)
+
+        names, from_json = parse_region_names(result.content, topology.count)
+        if not from_json:
+            log.info("世界地图没有可用的 JSON 索引，已按小节标题回退取地区名")
+        adjacency = {
+            names[index]: [names[i] for i in topology.neighbors(index)]
+            for index in range(topology.count)
+        }
+
+        world_title, world_intro = _profile_from_json(result.content)
+        if not world_title and not world_intro:
+            world_title, world_intro = parse_world_profile(result.content)
+
+        warnings = lint_world(topology, names, result.content)
+        for item in warnings:
+            log.warning(f"世界地图自检：{item}")
+
         return WorldMapResult(
             agent=result.agent,
             title=result.title,
@@ -257,10 +346,13 @@ class WorldAgent(TrpgAgent):
             model_type=result.model_type,
             usage=result.usage,
             usages=list(result.usages),
-            regions=regions,
+            regions=names,
             adjacency=adjacency,
             world_title=world_title,
             world_intro=world_intro,
+            entities=entities_from_json(result.content),
+            topology=topology,
+            warnings=warnings,
         )
 
 

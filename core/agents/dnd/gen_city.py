@@ -151,6 +151,12 @@ class CityAgent(TrpgAgent):
             required=False,
             description="该据点所在地区的信息，供保持一致，可留空",
         ),
+        AgentInput(
+            "bible",
+            "世界圣经",
+            required=False,
+            description="世界专有名词与事实的登记；命名与事实以它为准，可留空",
+        ),
     )
 
 

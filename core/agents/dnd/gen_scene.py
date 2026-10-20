@@ -10,9 +10,23 @@
 
 from __future__ import annotations
 
+import re
+
+from ...dnd.world_bible import Entity
+from ...dnd.world_store import clean_name
 from ..base import AgentInput, TrpgAgent
 
-__all__ = ["SceneAgent", "scene_agent"]
+__all__ = ["SceneAgent", "parse_scene_npcs", "scene_agent"]
+
+
+#: 小标题（``### 在场者：<名称或标识>`` / ``### 元素：<名称>`` / ``### 事件：<名称>``）
+_HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})\s*(?P<title>.+?)\s*$")
+
+#: 在场者小节里的「- 类型：X」行
+_KIND_FIELD_RE = re.compile(r"^[-*·]\s*类型\s*[：:]\s*(?P<value>.+?)\s*$")
+
+#: 在场者小标题：``在场者：<名称或标识>``（冒号可省）
+_PRESENTER_RE = re.compile(r"^在场者[^\n：:]{0,8}[：:]\s*(?P<name>.+?)$")
 
 
 _SYSTEM_PROMPT = """# 任务
@@ -149,8 +163,60 @@ class SceneAgent(TrpgAgent):
             required=False,
             description="世界推力 / 所在地区等信息，供保持一致，可留空",
         ),
+        AgentInput(
+            "bible",
+            "世界圣经",
+            required=False,
+            description="世界专有名词与事实的登记；命名与事实以它为准，可留空",
+        ),
     )
 
 
 #: 全局默认实例
 scene_agent = SceneAgent()
+
+
+def parse_scene_npcs(text: str) -> list[Entity]:
+    """从场景文档提取实体登记：在场者（「六、在场者」节）。
+
+    小标题写法是提示词规定的固定格式（``### 在场者：<名称或标识>``），
+    程序提取零成本、不会认错；备注取小节内的「- 类型：」行。
+    标识类在场者（「盐仓看守」这类没名字的）同样登记——DM 之后说到他们时
+    也得用同一个叫法。事件 / 可交互元素是一次性内容，不登记。
+    """
+    entities: list[Entity] = []
+    in_section = False
+    current: Entity | None = None
+
+    def flush() -> None:
+        nonlocal current
+        if current is not None and current.name:
+            entities.append(current)
+        current = None
+
+    for line in (text or "").splitlines():
+        head = _HEADING_RE.match(line)
+        if head is None:
+            if current is not None and not current.note:
+                match = _KIND_FIELD_RE.match(line)
+                if match is not None:
+                    current.note = match.group("value")[:60]
+            continue
+        level = len(head.group("hashes"))
+        title = head.group("title").strip()
+        if level == 2:
+            flush()
+            in_section = "在场者" in title
+            continue
+        if level != 3 or not in_section:
+            continue
+        flush()
+        match = _PRESENTER_RE.match(title)
+        if match is None:
+            continue
+        name = clean_name(match.group("name"))
+        if not name or len(name) > 20:
+            continue
+        current = Entity(name=name, kind="person", source="scene")
+    flush()
+    return entities

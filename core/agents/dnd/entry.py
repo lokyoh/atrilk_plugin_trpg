@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
+from ...dnd.world_bible import register_entities, seed_from_world
 from ...dnd.world_store import (
     MAIN_DOC_KEY,
     clean_name,
@@ -153,6 +154,10 @@ def _save_story(
     intro = clean_name(str(getattr(result, "story_intro", "") or ""))
     meta = {"intro": intro} if intro else None
     save_doc(world_key, "story", story_key, result.content, title=title, meta=meta)
+    # 故事里的势力 / 关键节点登记进世界圣经（之后生成与主持都以它为准）
+    register_entities(
+        world_key, getattr(result, "entities", None) or [], source=story_key
+    )
     report.story_key = story_key
     report.story_saved = True
     report.story_title = title
@@ -192,6 +197,11 @@ async def run_entry_flow(
     save_doc(world_key, "world", MAIN_DOC_KEY, world_result.content, title="世界地图")
     regions = list(world_result.regions)
     set_world_map(world_key, regions, world_result.adjacency)
+    # 世界圣经：程序播种（地区 / 地标 / 国都 / 特殊地区）+ 模型给的人物势力登记
+    seed_from_world(world_key, world_text=world_result.content)
+    register_entities(
+        world_key, getattr(world_result, "entities", None) or [], source="world"
+    )
     upsert_world(
         world_key,
         title=world_title,

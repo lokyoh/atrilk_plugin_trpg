@@ -344,6 +344,9 @@ _STEP_LOOKUP: dict[str, CreationStep] = {
     word.lower(): step for step, words in _REDO_STEPS for word in words
 }
 
+#: 步骤 -> 展示名（提示文案里用「属性」而不是「roll属性」这种内部名）
+_STEP_LABELS: dict[CreationStep, str] = {step: words[0] for step, words in _REDO_STEPS}
+
 #: 通用用法提示：改卡就是重做建卡中的一步
 _EDIT_USAGE = (
     "用法：/跑团.改卡 <步骤>\n"
@@ -437,13 +440,18 @@ def _apply_edit_step(
     except CreationError as e:
         return None, f"⚠️ {e}\n\n{creation_prompt(session.step, session)}"
 
+    if session.step is step:
+        # 这一步还没走完（例如回复「roll」只是掷出候选属性组，还要玩家挑一组）。
+        # 此时 session 里的属性仍是旧值，直接 build 会把刚掷出来的结果丢掉。
+        return None, creation_prompt(session.step, session).strip()
+
     notes = _reset_dependents(session, step)
     try:
         character = session.build()
     except CreationError as e:
         return None, f"⚠️ {e}\n\n{creation_prompt(session.step, session)}"
 
-    message = f"✅ 已重做「{step.value}」。"
+    message = f"✅ 已重做「{_STEP_LABELS.get(step, step.value)}」。"
     if notes:
         message += "\n" + "\n".join(f"· {note}" for note in notes)
     return character, message
@@ -484,12 +492,15 @@ async def _start_edit(
         new_card, message = _apply_edit_step(session, parts[1])
         matcher.state[_EDIT_SESSION_KEY] = session
         if new_card is None:
-            await edit_card.send(message)
-            return
+            # 一步没走完（如「属性 roll」只掷出候选组）：接着等他回复，
+            # 不能直接结束，否则掷出来的属性组会被丢掉。
+            await edit_card.reject(message)
         await _save_or_finish(new_card)
         await edit_card.finish(f"{message}\n\n{new_card.summary()}")
 
-    await edit_card.send(f"重做「{step.value}」：\n\n{creation_prompt(step, session)}")
+    await edit_card.send(
+        f"重做「{_STEP_LABELS.get(step, step.value)}」：\n\n{creation_prompt(step, session)}"
+    )
 
 
 @edit_card.got("reply")
@@ -537,6 +548,9 @@ _START_PICK_TTL = 600.0
 
 #: 「生成新世界 / 新故事」的触发词
 _GEN_WORDS = {"生成", "重生成", "generate", "regenerate", "new"}
+
+#: 「装一份内置预设世界」的触发词（零模型调用）
+_PRESET_WORDS = {"预设", "preset", "默认"}
 
 
 @dataclass
@@ -872,6 +886,25 @@ async def _start_game(
     worlds = list_worlds()
     pending = _pending_pick(key, user_id)
 
+    # ·「预设」：装一份内置世界（不调模型），装完照常出现在世界列表里
+    if head in _PRESET_WORDS:
+        from .core.dnd.presets import install_preset, list_presets
+
+        if not list_presets():
+            await start_game.finish("插件里没有内置的预设世界（presets/ 是空的）。")
+        try:
+            preset_key = install_preset()
+        except Exception as e:
+            log.warning(f"安装预设世界失败：{str_traceback(e)}")
+            await start_game.finish(f"⚠️ 预设世界装不上：{e}")
+        info = get_world(preset_key)
+        await start_game.finish(
+            f"📦 已装好预设世界「{info.title if info is not None else preset_key}」"
+            f"（{len(list_stories(preset_key))} 个故事，随时可用）。\n"
+            "· 用它开局 → /跑团.开局（会在世界列表里列出来）\n"
+            "· 想现生成一个 → /跑团.开局 生成 [主题]"
+        )
+
     # ·「生成」：在当前阶段生成新东西（故事阶段=新故事，否则=新世界）
     if head in _GEN_WORDS:
         if pending is not None and pending.stage == "story":
@@ -1051,10 +1084,12 @@ async def _start_round(event: MessageEvent):
     latest.progress["started"] = True
     latest.progress.pop("starting", None)
     save_save(latest)
+    extra = f"\n\n{result.rulings_text}" if result.rulings_text else ""
     await start_round.finish(
         "🎬 开局！本局玩家："
         + ("、".join(names) or "（只有你）")
         + f"\n\n📖 {narration}"
+        + extra
     )
 
 
@@ -1265,7 +1300,7 @@ async def _show_save(event: MessageEvent, args: Message = CommandArg()):
         lines.append("")
     combat = load_combat(save)
     if combat is not None:
-        lines.append(combat_text(save, combat))
+        lines.append(combat_text(save, combat, with_map=False))
         lines.append("")
     if list_npcs(save):
         lines.append(npcs_text(save))

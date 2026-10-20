@@ -77,7 +77,9 @@ class CheckResult:
 
     def describe(self) -> str:
         """可读的检定文案，例如 ``力量（运动）检定：[17]+3 = 20 ≥ DC15 成功``。"""
-        rolls_text = "+".join(str(r) for r in self.rolls) if self.rolls else str(self.natural)
+        rolls_text = (
+            "+".join(str(r) for r in self.rolls) if self.rolls else str(self.natural)
+        )
         text = f"{self.kind}：[{rolls_text}]"
         if len(self.rolls) > 1:
             text += f" 取 {self.natural}"

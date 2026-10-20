@@ -18,7 +18,13 @@ import re
 from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
+from ... import settings
 from ...dnd.billing import record_result
+from ...dnd.world_bible import (
+    Entity,
+    bible_text,
+    register_entities,
+)
 from ...dnd.world_store import (
     get_world_map,
     list_docs,
@@ -31,7 +37,7 @@ from .gen_area import area_agent, parse_area
 from .gen_city import city_agent
 from .gen_dungeon import dungeon_agent
 from .gen_place import place_agent
-from .gen_scene import scene_agent
+from .gen_scene import parse_scene_npcs, scene_agent
 
 __all__ = ["ensure_scene", "normalize_kind", "slice_block"]
 
@@ -143,15 +149,36 @@ def _first_location(area_text: str, kind: str) -> tuple[str, str, str] | None:
     return None
 
 
-async def _run_agent(agent, label: str, **values) -> str | None:
-    """调用一个生成 agent，失败只记日志并返回 ``None``。"""
+async def _run_agent(agent, label: str, world_key: str = "", **values) -> str | None:
+    """调用一个生成 agent，失败只记日志并返回 ``None``。
+
+    ``world_key`` 非空时自动注入世界圣经——专有名词与事实以它为准。
+    """
     try:
+        if world_key:
+            values.setdefault(
+                "bible",
+                bible_text(world_key, max_chars=settings.world_bible_max_chars()),
+            )
         result = await agent.run(**values)
     except Exception as e:
         log.warning(f"按需生成「{label}」失败：{str_traceback(e)}")
         return None
     record_result(result)
     return result.content
+
+
+def _register_area(world_key: str, region: str, content: str) -> None:
+    """区域文档落库后，把其中的地点名登记进世界圣经（程序提取，零成本）。"""
+    sub_areas, settlements, dungeons = parse_area(content)
+    seeded: list[Entity] = []
+    for name in sub_areas:
+        seeded.append(Entity(name=name, kind="place", region=region, note="子区域"))
+    for name in settlements:
+        seeded.append(Entity(name=name, kind="place", region=region, note="据点"))
+    for name in dungeons:
+        seeded.append(Entity(name=name, kind="place", region=region, note="地下城"))
+    register_entities(world_key, seeded, source=region)
 
 
 async def ensure_area(
@@ -172,6 +199,7 @@ async def ensure_area(
     content = await _run_agent(
         area_agent,
         f"区域「{region}」",
+        world_key,
         region=region_text,
         neighbors=neighbors,
         world=story,
@@ -179,6 +207,7 @@ async def ensure_area(
     if content is None:
         return None
     save_doc(world_key, "area", region, content, title=region)
+    _register_area(world_key, region, content)
     return content
 
 
@@ -197,6 +226,7 @@ async def _ensure_detailed(
     content = await _run_agent(
         agent,
         f"{KIND_LABELS[kind]}「{name}」",
+        world_key,
         context=context,
         **{_BASE_ARG[kind]: base},
     )
@@ -217,6 +247,7 @@ async def _make_scene(
     content = await _run_agent(
         scene_agent,
         f"场景「{name}」",
+        world_key,
         location=detailed,
         kind=KIND_LABELS.get(kind, "地点"),
         context=context,
@@ -224,6 +255,8 @@ async def _make_scene(
     if content is None:
         return None
     key = save_doc(world_key, "scene", name, content, title=name).stem
+    # 场景里的在场者登记进世界圣经（之后 DM 说到他们时用同一个叫法）
+    register_entities(world_key, parse_scene_npcs(content), source=f"scene:{name}")
     return kind, key, content
 
 
@@ -286,6 +319,10 @@ async def ensure_scene(
             picked = _first_location(area_text, kind_key)
             if picked is not None:
                 picked_kind, picked_name, base_text = picked
+                # 该地点已经有场景（预设世界常见）：直接用，别为了「补详细文档」白花一次调用
+                existing_scene = read_doc(world_key, "scene", picked_name)
+                if existing_scene is not None:
+                    return "scene", existing_scene.key, existing_scene.content
                 detailed = await _ensure_detailed(
                     world_key, picked_kind, picked_name, base_text, area_text
                 )

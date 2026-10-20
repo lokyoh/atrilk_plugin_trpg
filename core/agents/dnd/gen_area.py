@@ -193,6 +193,12 @@ class AreaAgent(TrpgAgent):
             required=False,
             description="世界地区描述文档或世界推力设定，供保持一致，可留空",
         ),
+        AgentInput(
+            "bible",
+            "世界圣经",
+            required=False,
+            description="世界专有名词与事实的登记；命名与事实以它为准，可留空",
+        ),
     )
 
     async def run(self, **values: object) -> AreaResult:

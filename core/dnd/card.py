@@ -28,7 +28,6 @@ from .attributes import (
 )
 from .background import Background, get_background
 from .equipment import (
-    ItemStack,
     Weapon,
     compute_armor_class,
     get_armor,

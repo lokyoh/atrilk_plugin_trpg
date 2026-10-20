@@ -631,7 +631,7 @@ class CreationSession:
         )
         self.ability_candidates = []
         self.ability_set_groups = []
-        self.base_scores = {a.key: v for a, v in zip(ABILITIES, picked)}
+        self.base_scores = {a.key: v for a, v in zip(ABILITIES, picked, strict=True)}
         self.record(f"属性：第 {index + 1} 组 {picked} → {self.assigned_scores_text()}")
         self.advance()
         return (
@@ -646,7 +646,9 @@ class CreationSession:
         self.ability_groups = []
         self.ability_candidates = []
         self.ability_set_groups = []
-        self.base_scores = {a.key: v for a, v in zip(ABILITIES, self.ability_pool)}
+        self.base_scores = {
+            a.key: v for a, v in zip(ABILITIES, self.ability_pool, strict=True)
+        }
         self.record(f"属性：标准数组 → {self.assigned_scores_text()}")
         self.advance()
         return (
@@ -682,12 +684,12 @@ class CreationSession:
                     f"请使用候选值 {self.ability_pool} 中的数值，不要自行改动。"
                 )
 
-        for ability, value in zip(ABILITIES, values):
+        for ability, value in zip(ABILITIES, values, strict=True):
             if not ABILITY_SCORE_MIN <= value <= ABILITY_SCORE_MAX:
                 raise CreationError(
                     f"{ability.cn} 的 {value} 超出 {ABILITY_SCORE_MIN}~{ABILITY_SCORE_MAX}。"
                 )
-        self.base_scores = {a.key: v for a, v in zip(ABILITIES, values)}
+        self.base_scores = {a.key: v for a, v in zip(ABILITIES, values, strict=True)}
         self.record(f"属性分配：{self.assigned_scores_text()}")
         self.advance()
         return f"属性已分配：{self.assigned_scores_text()}\n\n{creation_prompt(self.step, self)}"
