@@ -4,10 +4,12 @@
 不该被怪物表绑死，因此这里提供两件事：
 
 1. **档位表**：平民 / 士兵 / 老兵 / 首领 四档人形 NPC。DM 只报档位，系统按
-   **队伍等级**现算 AC / 生命 / 攻击（等级越高越硬），生成的
+   **队伍等级**现算AC / 生命 / 攻击（等级越高越硬），生成的
    :class:`~.monsters.Monster` 用 key ``npc/<档位>/<等级>`` 标识，
    :func:`resolve_monster` 任何时候都能把它还原出来（战斗落盘只存 key）。
    DM 也可以直接指定用怪物表里的模板（``黑心商人卡尔:匪帮首领``），此时沿用那张数据块。
+   **档位 NPC 不是《怪物图鉴》里的条目**，数值是现算的，因此 ``Monster.cr`` 记 0、
+   不参与 CR 校准，经验另按 :data:`NPC_TIER_XP` 给。
 2. **NPC 名单**（``saves/<存档ID>/npcs.json``）：出场过的**具名** NPC 记下名字、模板、
    当前生命、状态、备注与最后出现地点。下次再出场时带着旧伤与旧账，而不是满血重生。
    只当背景板的杂兵（``士兵x2`` 这种没名字的）不落名单。
@@ -27,13 +29,22 @@ from pathlib import Path
 from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
-from .monsters import SCALE_SUFFIX, Monster, MonsterAttack, get_monster
+from .monsters import (
+    NPC_KEY_PREFIX,
+    SCALE_SUFFIX,
+    Monster,
+    MonsterAttack,
+    get_monster,
+    proficiency_for_cr,
+)
 from .save_store import Save, save_dir
 
 __all__ = [
     "NPC_FILENAME",
+    "NPC_KEY_PREFIX",
     "NPC_TIERS",
     "NPC_TIER_MAP",
+    "NPC_TIER_CR",
     "NPC_TIER_XP",
     "NpcRecord",
     "NpcTier",
@@ -63,31 +74,8 @@ __all__ = [
 ]
 
 NPC_FILENAME = "npcs.json"
-#: 档位模板的 key 前缀
-NPC_KEY_PREFIX = "npc"
 #: 档位随等级成长时的等级上限（再高的队伍就按这个等级给数值）
 MAX_NPC_LEVEL = 12
-
-#: 档位 NPC 的独立经验表（下标 0 = 1 级）。
-#:
-#: 档位 NPC 的 ``cr`` 字段是**队伍等级**（数值现算用的），不是真实 CR，
-#: 因此不能拿 :func:`~.progression.xp_for_cr` 换算——否则3 级队打一只「老兵」
-#: 就会白送 700 XP（相当于 CR3 的正式怪物），一只打平升级、几只直接跳级。
-#: 这里按「打一只档位 NPC 大约值多少」单独给一份温和的表。
-NPC_TIER_XP: tuple[int, ...] = (
-    50,  # 1
-    100,  # 2
-    200,  # 3
-    300,  # 4
-    500,  # 5
-    750,  # 6
-    1_000,  # 7
-    1_500,  # 8
-    2_000,  # 9
-    3_000,  # 10
-    4_000,  # 11
-    5_000,  # 12
-)
 
 
 def is_npc_key(key: str) -> bool:
@@ -95,15 +83,34 @@ def is_npc_key(key: str) -> bool:
     return str(key or "").strip().startswith(f"{NPC_KEY_PREFIX}/")
 
 
-def npc_xp(key: str) -> int:
-    """按档位 NPC 的 key 取它值多少经验；取不到等级时按 1 级兜底。
+#: 档位 NPC 的经验表：``档位 key -> 队伍等级 -> XP``。
+#:
+#: 档位 NPC 是**系统现算的通用人形**，不属于《怪物图鉴》里的正式条目，
+#: 因此没有真实 CR——``Monster.cr`` 记 0，由这张表按「打一只大约值多少」结算。
+#: 它挡在 :mod:`.encounter` 的 CR 校准之外（缩放会让 key 还原时错档），
+#: 但DM 仍可以按档位与等级自由组合。
+NPC_TIER_XP: dict[str, tuple[int, ...]] = {
+    # 下标 0 = 1 级队伍
+    "civilian": (10, 15, 25, 40, 60, 90, 130, 190, 270, 380, 520, 700),
+    "soldier": (25, 50, 100, 175, 275, 400, 575, 800, 1100, 1500, 2000, 2700),
+    "veteran": (50, 100, 200, 350, 550, 800, 1150, 1600, 2200, 3000, 4000, 5400),
+    "leader": (100, 200, 400, 700, 1100, 1600, 2300, 3200, 4400, 6000, 8000, 10800),
+}
 
-    走 :data:`NPC_TIER_XP` 这张独立表，**不**参与 CR → XP 换算。
+#: 档位 NPC 没有正式 CR，一律记 0（真实 CR 由 :data:`NPC_TIER_XP` 那一列语义承担）
+NPC_TIER_CR = 0.0
+
+
+def npc_xp(key: str) -> int:
+    """按档位 NPC 的 key 取它值多少经验。
+
+    走 :data:`NPC_TIER_XP`，**不**参与 CR → XP 换算（它的 ``cr`` 本来就是 0）。
+    认不出的档位按 1 级士兵兜底。
     """
     parsed = tier_from_key(str(key or "").split(SCALE_SUFFIX, 1)[0])
-    level = parsed[1] if parsed is not None else 1
-    index = max(1, min(int(level), len(NPC_TIER_XP))) - 1
-    return NPC_TIER_XP[index]
+    tier, level = parsed if parsed is not None else (None, 1)
+    table = NPC_TIER_XP.get(tier.key if tier is not None else "", NPC_TIER_XP["soldier"])
+    return table[max(1, min(int(level), len(table))) - 1]
 
 
 # --------------------------------------------------------------------------- #
@@ -309,7 +316,9 @@ def _npc_monster_cached(tier_key: str, level: int) -> Monster:
         key=f"{NPC_KEY_PREFIX}/{tier.key}/{level}",
         cn=tier.cn,
         en=tier.en,
-        cr=float(level),
+        # 档位 NPC 没有正式 CR（数值是按队伍等级现算的），记 0；
+        # 经验由 settlement 查NPC_TIER_XP，不走CR → XP 换算
+        cr=NPC_TIER_CR,
         size="中型",
         kind="类人",
         ac=tier.level_ac(level),
@@ -322,8 +331,10 @@ def _npc_monster_cached(tier_key: str, level: int) -> Monster:
         traits=tier.level_traits(level),
         senses="被动察觉 10",
         languages="通用语",
-        desc=f"{tier.desc}（按 {level} 级队伍给的数值）",
+        desc=f"{tier.desc}（按 {level} 级队伍给的数值，非图鉴条目）",
         aliases=(),
+        # CR 记 0，熟练加值按队伍等级给（3 级→+2、9 级→+4），别让它退回 +2
+        proficiency_bonus=proficiency_for_cr(float(min(level, 20))),
     )
 
 

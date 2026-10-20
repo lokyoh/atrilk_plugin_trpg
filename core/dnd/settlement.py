@@ -3,22 +3,22 @@
 一场战斗打完之后要回答三件事，本模块就是这三件事的落点：
 
 - **经验奖励**：5e 规则「一只怪物的经验由全队共享」——先按每只被击败怪物的挑战等级
-  累加经验（:func:`~.progression.xp_for_cr`；档位 NPC 走自己的表
-  :func:`~.npcs.npc_xp`），再**除以参战人数**平分给每位玩家，写入角色卡的 ``exp`` 字段。
-  除不尽的零头如实记进存档的「经验零头」总账。
-- **战利品**：**逐只**按怪物的挑战等级掷金币与物品（:func:`roll_loot`）后合并，
+  累加经验（:func:`~.progression.xp_for_cr`；档位 NPC 没有正式 CR，走自己的表
+  :func:`~.npcs.npc_xp`），再**除以参战人数**平分给每位玩家，写入角色卡的
+  ``exp`` 字段。除不尽的零头如实记进存档的「经验零头」总账。
+- **战利品**：**逐只**按怪物的档次掷金币与物品（:func:`roll_loot`）后合并，
   结果记进存档进度的 ``战利品`` 字段，由 DM 决定怎么分；其中的装备类物品可以用
   ``update_character`` 的 ``equipment`` 字段直接收进装备栏。
 - **升级**：分完经验后逐个检查阈值（:func:`~.progression.can_level_up`），
   达标的自动 :func:`~.progression.level_up`，并把生命上限 / 熟练加值 / 法术位的变化
   写进结算文案。
 
-设计约定：
+设计约定（严格 5e 口径）：
 
-- 战果数据来自 :attr:`~.combat.CombatState.defeated`（敌人倒下时由
-  :func:`~.combat.record_defeat` 记下），因此**逃跑 / 被擒**的敌人只要 DM 用
-  ``update_enemy`` 标记了退场也会一并计入；被治疗救回来的敌人会由
-  :func:`~.combat.forget_defeat` 撤出战果。
+- **只有被打倒的敌人才算战果**：战果数据来自 :attr:`~.combat.CombatState.defeated`，
+  只在敌人**生命归零**时由 :func:`~.combat.record_defeat` 记下。逃跑 / 被擒 /
+  投降（DM 用 ``update_enemy`` 标记退场）**不结算**经验与战利品；
+  被治疗救回来的敌人由 :func:`~.combat.forget_defeat` 撤出战果。
 - 参战人数优先取本场先攻顺序里的玩家；这场没人（比如战斗刚开始就崩了）就退回存档里
   的全体玩家；**已经阵亡的角色不参与分配**（5e 规则），倒地濒死的仍然参与。
 - 本模块负责写盘（角色卡 + 进度 + 事件日志），但**不清除战斗状态**——清理由调用方
@@ -33,6 +33,8 @@ from typing import Any
 
 from .card import DndCharacter
 from .combat import CombatState
+from .monsters import SCALE_SUFFIX
+from .npcs import is_npc_key, tier_from_key
 from .progression import can_level_up, level_up, xp_for_cr
 from .save_store import Save, get_character, log_event, set_character, update_progress
 
@@ -219,18 +221,29 @@ def _share_cards(save: Save, state: CombatState) -> list[tuple[str, DndCharacter
     return cards
 
 
-def _roll_all_loot(state: CombatState, rng: Any = None) -> dict[str, Any]:
-    """逐只掷战利品再合并——5e 是「每只怪物各掷一次」，不是整场掷一次。
+def _loot_cr(item: dict[str, Any]) -> float:
+    """这只敌人该按什么档次掷战利品。
 
-    :return: ``{"coins": {...合并后的币数}, "items": [...按 CR 从高到低]}``
+    普通怪物用真实 CR；**档位 NPC 没有 CR**（记0），改按它 key 里的队伍等级
+    折算——3 级队打的老兵掉的东西不该和 1 级队的一样寒酸。
+    """
+    key = str(item.get("monster") or "")
+    if is_npc_key(key):
+        parsed = tier_from_key(key.split(SCALE_SUFFIX, 1)[0])
+        return float(parsed[1]) if parsed is not None else 1.0
+    return _as_float(item.get("cr"))
+
+
+def _roll_all_loot(state: CombatState, rng: Any = None) -> dict[str, Any]:
+    """逐只掷战利品再合并——5e 是「每只怪物各掷一次」，不是整场只掷一次。
+
+    :return: ``{"coins": {...合并后的币数}, "items": [...按档次从高到低]}``
     """
     coins: dict[str, int] = {}
     items: list[str] = []
-    # 高 CR 的排前面，玩家看到清单时先看到值钱的
-    for item in sorted(
-        state.defeated, key=lambda row: _as_float(row.get("cr")), reverse=True
-    ):
-        one = roll_loot(_as_float(item.get("cr")), rng)
+    # 高档次的排前面，玩家看到清单时先看到值钱的
+    for item in sorted(state.defeated, key=_loot_cr, reverse=True):
+        one = roll_loot(_loot_cr(item), rng)
         for name, value in one["coins"].items():
             coins[name] = coins.get(name, 0) + int(value)
         items.extend(one["items"])
@@ -246,7 +259,9 @@ def _defeated_text(state: CombatState) -> str:
         cr_text = str(item.get("cr_text") or "")
         xp = int(item.get("xp") or 0)
         reason = str(item.get("reason") or "")
-        rows.append(f"{name}（CR {cr_text}{'，' + reason if reason else ''}）→ {xp} XP")
+        # 档位 NPC 没有正式 CR，只写「档位」
+        head = "档位" if cr_text == "档位" else f"CR {cr_text}"
+        rows.append(f"{name}（{head}{'，' + reason if reason else ''}）→ {xp} XP")
     return "击败：" + "、".join(rows) + "。"
 
 
@@ -281,7 +296,7 @@ def settle_combat(save: Save, state: CombatState, *, rng: Any = None) -> Settlem
     result.remainder = result.xp - result.share * len(cards)
 
     # 战利品：每只怪各掷一次（5e 口径），不是整场只掷一次
-    top_cr = max((_as_float(item.get("cr")) for item in state.defeated), default=0.0)
+    top = max((_loot_cr(item) for item in state.defeated), default=0.0)
     loot = _roll_all_loot(state, rng) if state.defeated else {"coins": {}, "items": []}
     result.coins = loot["coins"]
     result.items = list(loot["items"])
@@ -302,7 +317,7 @@ def settle_combat(save: Save, state: CombatState, *, rng: Any = None) -> Settlem
 
     if result.coins or result.items:
         current = list(save.progress.get("战利品") or [])
-        entry = f"{result.loot_text}（来自 CR {top_cr:g} 的战利品）"
+        entry = f"{result.loot_text}（最高档次 {top:g}）"
         update_progress(save, 战利品=current + [entry])
 
     return result

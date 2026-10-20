@@ -38,6 +38,9 @@ __all__ = [
 #: 缩放标记：``<基础 key>@cr<目标 CR>``（如 ``goblin@cr3``），落盘后可原样还原
 SCALE_SUFFIX = "@cr"
 
+#: 档位 NPC 的 key 前缀（见 :mod:`.npcs`；这里只做前缀判断，不反向导入）
+NPC_KEY_PREFIX = "npc"
+
 #: 各挑战等级下「标准中型怪物」的参考生命值，用来给怪物做 CR 缩放
 #: （同 CR 的怪之间体格差异很大，这里只取一个中间值当基准）
 _CR_HP_REFERENCE: tuple[tuple[float, int], ...] = (
@@ -186,12 +189,20 @@ class Monster:
     desc: str = ""
     #: 额外别名（除 key / 中文名 / 英文名外还能被认出来的写法）
     aliases: tuple[str, ...] = field(default=())
+    #: 显式熟练加值；``None`` 表示按 CR 换算。档位 NPC 用它（CR 记 0）
+    proficiency_bonus: int | None = None
 
     # —— 派生数值 ——
 
     @property
     def proficiency(self) -> int:
-        """熟练加值。"""
+        """熟练加值。
+
+        显式写了 ``proficiency_bonus`` 就用它（**档位 NPC** 走这条：它们的 CR 记 0，
+        但数值按队伍等级现算，该有的熟练加值不能少）；否则按 CR 换算。
+        """
+        if self.proficiency_bonus is not None:
+            return int(self.proficiency_bonus)
         return proficiency_for_cr(self.cr)
 
     @property
@@ -257,8 +268,14 @@ class Monster:
 
     def summary(self) -> str:
         """一行摘要，用于战斗开始时列出敌人。"""
+        # cr=0 通常意味着「档位 NPC」——数值现算、非图鉴条目，写 CR0 会让 DM 误解
+        cr_part = (
+            "档位（无正式 CR）"
+            if self.cr <= 0 and self.key.startswith(f"{NPC_KEY_PREFIX}/")
+            else f"CR{self.cr_text}"
+        )
         text = (
-            f"【{self.cn}】{self.size}{self.kind} CR{self.cr_text}  "
+            f"【{self.cn}】{self.size}{self.kind} {cr_part}  "
             f"AC {self.ac}  HP {self.hp}({self.hit_dice})  先攻 {self.initiative:+d}  "
             f"速度 {self.speed} 尺"
         )
@@ -269,8 +286,13 @@ class Monster:
 
     def stat_block(self) -> str:
         """完整数据块（DM 查询用）。"""
+        cr_part = (
+            "档位（无正式 CR）"
+            if self.cr <= 0 and self.key.startswith(f"{NPC_KEY_PREFIX}/")
+            else f"CR {self.cr_text}"
+        )
         lines = [
-            f"{self.cn}（{self.en}）  CR {self.cr_text}  {self.size}{self.kind}",
+            f"{self.cn}（{self.en}）  {cr_part}  {self.size}{self.kind}",
             f"AC {self.ac}  HP {self.hp}（{self.hit_dice}）  速度 {self.speed} 尺  "
             f"先攻 {self.initiative:+d}  熟练 {self.proficiency:+d}",
             format_ability_block(self.abilities),

@@ -52,12 +52,14 @@ from ...dnd.equipment import ARMORS, SHIELDS, WEAPONS, get_armor, get_weapon
 from ...dnd.encounter import calibrate_specs
 from ...dnd.monsters import MONSTERS, get_monster, monster_names
 from ...dnd.npcs import (
+    NPC_KEY_PREFIX,
     NPC_TIERS,
     NpcRecord,
     build_npc,
     find_npc,
     get_tier,
     npc_monster,
+    npc_xp,
     npcs_text,
     resolve_monster,
     tier_names,
@@ -473,7 +475,9 @@ def _query_spell(name: str) -> str:
 def _query_npc_tier(name: str) -> str:
     """查人形 NPC 档位：留空列四档，给档位名给出 1/3/5/9 级队伍下的数值。"""
     if not name:
-        lines = ["人形 NPC 档位（写法「名字:档位」，数值按队伍等级现算）："]
+        lines = [
+            "人形 NPC 档位（写法「名字:档位」，数值按队伍等级现算、没有正式 CR）："
+        ]
         for tier in NPC_TIERS:
             lines.append(f"· {tier.cn}：{tier.desc}")
         lines.append("也可以用怪物表里的模板：名字:匪帮首领 / 名字:骑士 / 名字:卫兵……")
@@ -487,7 +491,10 @@ def _query_npc_tier(name: str) -> str:
     for level in (1, 3, 5, 9):
         monster = npc_monster(tier, level)
         if monster is not None:
-            lines.append("· " + monster.summary())
+            key = f"{NPC_KEY_PREFIX}/{tier.key}/{level}"
+            lines.append(
+                f"· {monster.summary()}　（击败可得 {npc_xp(key)} XP）"
+            )
     lines.append("别名：" + "、".join(tier.aliases or ("（无）",)))
     return "\n".join(lines)
 

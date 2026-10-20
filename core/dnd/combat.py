@@ -938,13 +938,16 @@ def roll_damage(expr: str, *, crit: bool = False, rng: Any = None) -> tuple[int,
 def record_defeat(state: CombatState, enemy: Combatant, reason: str = "倒下") -> None:
     """把被击败的敌人记进 :attr:`CombatState.defeated`，供战斗结算算经验 / 战利品。
 
+    **严格 5e**：只有生命归零（被打倒）才调用这里。逃跑 / 被擒 / 投降走
+    :func:`update_enemy` 的退场分支，**不**产生战果。
+
     去重按**敌人 cid**：同模板的多个个体（``地精1`` / ``地精2``）各记一次，
     而同一只被打到 0 血、又被 DM 标记退场时不会重复记账。
 
     经验按来源分两路：
 
     - **档位 NPC**（``npc/<档位>/<等级>``）：走 :func:`~.npcs.npc_xp` 的独立表——
-      它的 ``cr`` 字段是队伍等级而非真实 CR，拿去换算会白送一大截经验；
+      它不是图鉴条目、没有正式 CR，拿 ``cr``（记 0）换算只会得到 10 XP；
     - **普通怪物**：按 :func:`~.progression.xp_for_cr` 由挑战等级推出；模板已查不到时按 CR0 兜底。
     """
     if not enemy.is_enemy or not enemy.monster:
@@ -953,15 +956,20 @@ def record_defeat(state: CombatState, enemy: Combatant, reason: str = "倒下") 
     if any(item.get("cid") == enemy.cid for item in state.defeated):
         return
     monster = resolve_monster(key)
+    tier_npc = is_npc_key(key)
     cr = float(monster.cr) if monster is not None else 0.0
-    xp = npc_xp(key) if is_npc_key(key) else xp_for_cr(cr)
+    xp = npc_xp(key) if tier_npc else xp_for_cr(cr)
+    if tier_npc:
+        cr_text = "档位"
+    else:
+        cr_text = monster.cr_text if monster is not None else "0"
     state.defeated.append(
         {
             "cid": enemy.cid,
             "name": enemy.name,
             "monster": key,
             "cr": cr,
-            "cr_text": monster.cr_text if monster is not None else "0",
+            "cr_text": cr_text,
             "xp": xp,
             "npc": enemy.npc,
             "reason": reason,
@@ -1065,11 +1073,10 @@ def heal_combatant(
 
     target.hp = min(target.max_hp, target.hp + amount)
     if target.hp > 0:
-        was_out = target.out
         target.out = False
-        if was_out:
-            # 治回来了就不能再算战果——否则经验与战利品照发
-            forget_defeat(state, target)
+        # 从 0 血被救回来（或者撤销了退场标记）就不能再算战果——
+        # 否则经验与战利品照发
+        forget_defeat(state, target)
     save_combat(save, state)
     sync_combatant(save, target)
     return f"{target.name} 剩余 {target.hp}/{target.max_hp}。"
@@ -1263,6 +1270,8 @@ def update_enemy(
 
     :param hp: 绝对生命（``"12"``）、增减（``"-5"`` / ``"+8"``）或留空不改。
     :param out: ``是`` / ``否`` 强制标记退场（倒地、逃跑、被擒）。
+        **严格 5e**：经验与战利品只在敌人生命被打到 0 时结算；靠 ``out``
+        标记的退场（逃跑 / 被擒 / 投降）不算战果，会在结算时被排除。
     """
     enemy = find_combatant(state, ref, kind="enemy") or find_combatant(state, ref)
     if enemy is None:
@@ -1291,9 +1300,14 @@ def update_enemy(
     if flag:
         enemy.out = flag not in {"否", "不是", "no", "false", "0", "无"}
         save_combat(save, state)
-        if enemy.out:
-            record_defeat(state, enemy, reason=str(note or "退场"))
+        # 严格 5e：只有**被打倒**（生命归零）的敌人才结算经验与战利品，
+        # 逃跑 / 被擒 / 投降都不算战果。因此这里不记 defeated；
+        # 若敌人还活着（hp > 0）却要退场，还要把之前记过的撤掉。
+        if enemy.hp > 0:
+            forget_defeat(state, enemy)
         notes.append(f"{enemy.name} {'已退场' if enemy.out else '回到战斗'}。")
+        if enemy.hp > 0:
+            notes.append("（它是自己退场的，按 5e 规则不结算经验与战利品。）")
         if enemy.npc:
             update_npc(save, enemy.npc, status="退场" if enemy.out else "存活")
 
