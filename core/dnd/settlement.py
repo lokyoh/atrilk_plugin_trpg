@@ -104,6 +104,35 @@ def coins_text(coins: dict[str, int]) -> str:
     return " · ".join(f"{name} {value}" for name, value in coins.items()) or "无"
 
 
+def split_loot(
+    coins: dict[str, int], items: list[str], heads: int
+) -> tuple[dict[str, int], list[list[str]], dict[str, int]]:
+    """把一份共有战利品按人头摊开，**顺手说清余数归谁**。
+
+    5e 没有强制规定金币怎么分，但「掷出来是共有的一袋」就得有个口径，否则
+    多人局四个人看到同一句「银 240 · 金 12」，谁也不知道自己该拿多少，最后
+    只能在群聊里吵。这里用最朴素的均分：按人先后顺序轮流领，除不尽的零头
+    归**第一个**参战者（先到先得，且总量不变）。
+
+    :return: ``(每人币数, 每人轮到的物品列表, 余数归属)``；``heads <= 0`` 全空。
+    """
+    n = max(0, int(heads))
+    if n <= 0:
+        return {}, [], {}
+    per_coin, leftover = {}, {}
+    for name, total in (coins or {}).items():
+        value = max(0, int(total))
+        share, rest = divmod(value, n)
+        per_coin[name] = share
+        if rest:
+            leftover[name] = rest
+    # 物品按先后顺序轮流领（同一件物品不给两人）
+    per_items: list[list[str]] = [[] for _ in range(n)]
+    for index, item in enumerate(items or []):
+        per_items[index % n].append(item)
+    return per_coin, per_items, leftover
+
+
 def roll_loot(cr: float, rng: Any = None) -> dict[str, Any]:
     """按 CR 掷一只怪物的战利品。
 
@@ -145,13 +174,15 @@ class SettlementResult:
 
     #: 本场总经验
     xp: int = 0
-    #: 参与分成的玩家数
+    #: 参与经验分成的玩家数（**不含阵亡者**：5e 规定阵亡者不获得经验）
     share_count: int = 0
+    #: 参与战利品分配的玩家数（**含阵亡者**：他也参与了这场，装备能捡）
+    loot_count: int = 0
     #: 每人分到的经验
     share: int = 0
     #: 除不尽的零头（已记入存档「经验零头」总账）
     remainder: int = 0
-    #: 每人分到的金币与物品（同一份，全队共享）
+    #: 掷出来的金币与物品（同一份，全队共享——每人份数见 ``share_text``）
     coins: dict[str, int] = field(default_factory=dict)
     items: list[str] = field(default_factory=list)
     #: 逐人的经验变化与升级文案：``user_id -> [文本, ...]``
@@ -182,6 +213,35 @@ class SettlementResult:
         if self.items:
             parts.append("物品 " + "、".join(self.items))
         return "；".join(parts) or "没有搜出任何东西。"
+
+    @property
+    def share_text(self) -> str:
+        """多人局里每人能拿多少（单人局或无战利品时为空串）。
+
+        共有的一袋金币不写清每人份数，四个人看到的是同一句总额，最后只能在
+        群聊里吵。这里把均分口径直接算出来写清——物品按先后轮流领，除不尽的
+        零头归第一个参战者。
+        """
+        if self.loot_count <= 1 or not (self.coins or self.items):
+            return ""
+        per_coin, per_items, leftover = split_loot(
+            self.coins, self.items, self.loot_count
+        )
+        mine = "、".join(f"{name} {value}" for name, value in per_coin.items() if value)
+        lines = [f"均分后每人一份（{self.loot_count} 人，按先后顺序）："]
+        if mine:
+            lines.append(f"  金币 {mine}")
+        if self.items:
+            # 逐人列出，别用顿号糊成一条——那看不出谁拿哪件
+            for index, part in enumerate(per_items, start=1):
+                if part:
+                    lines.append(f"  第 {index} 位：{'、'.join(part)}")
+            if any(not part for part in per_items):
+                lines.append("  （轮不到东西的人不参与这次分配）")
+        if leftover:
+            extra = "、".join(f"{name} {value}" for name, value in leftover.items())
+            lines.append(f"  （除不尽的零头归第一个参战者：{extra}）")
+        return "\n".join(lines)
 
     @property
     def usable_items(self) -> list[str]:
@@ -217,8 +277,14 @@ class SettlementResult:
         if self.defeated_text:
             lines.append(self.defeated_text)
         lines.append(self.xp_text)
-        if self.share_count:
+        # 按战利品本身判断有没有，而不是挂在经验上——全员阵亡时经验分不掉，
+        # 但东西照样掷出来了，得让人知道怎么分
+        if self.coins or self.items:
             lines.append(f"战利品：{self.loot_text}")
+            # 多人局写清每人份数：共有的一袋不写明白，四个人只能自己在群里吵
+            share = self.share_text
+            if share:
+                lines.append(share)
         for chunks in self.lines.values():
             lines.extend(chunks)
         if self.note:
@@ -331,6 +397,8 @@ def settle_combat(
     result.share_count = len(cards)
     result.share = result.xp // len(cards) if cards else 0
     result.remainder = result.xp - result.share * len(cards)
+    # 战利品按**全体参战**分（含阵亡者：他也在场，装备能捡），跟经验口径不同
+    result.loot_count = len(_participants(save, state))
 
     # 战利品：每只怪各掷一次（5e 口径），不是整场只掷一次
     top = max((_loot_cr(item) for item in state.defeated), default=0.0)
