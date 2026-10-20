@@ -30,6 +30,7 @@ from ATRI.log import log
 from ... import settings
 from ...dnd.battlemap import map_digest
 from ...dnd.billing import bind_save, record_result
+from ...dnd.chapter import chapter_summary, current_card
 from ...dnd.combat import (
     advance_turn,
     all_enemies_out,
@@ -46,6 +47,7 @@ from ...dnd.combat import (
     save_combat,
     use_resource,
 )
+from ...dnd.epoch import ENDINGS
 from ...dnd.judge import dnd_judge
 from ...dnd.memory import memory_text
 from ...dnd.names import player_name
@@ -69,7 +71,6 @@ from ...dnd.save_store import (
     save_save,
     set_character,
 )
-from ...dnd.chapter import chapter_summary, current_card
 from ...dnd.settlement import settle_combat
 from ...dnd.world_bible import bible_text
 from ...dnd.world_brief import build_world_brief
@@ -328,21 +329,44 @@ def _chapter_brief(save) -> str:
 
     用 :func:`~...dnd.chapter.chapter_summary` 的 DM 侧形态，所以这一段里
     **包含难度数值与 fail_forward**——那是 DM 该知道、玩家不该看到的。
-    后面接世界演化轨的 DM 侧形态（势力位置、痕迹、未结期限）。
+    后面接世界演化轨的 DM 侧形态（势力位置、痕迹、未结期限），
+    再接纪元轨（称号、结局、上一纪元的代价）。
     """
     try:
         text = chapter_summary(save, for_player=False)
     except Exception as e:  # 章节状态读不出来不该拦住切换场景
         log.warning(f"读章节进度失败：{str_traceback(e)}")
         return ""
+    extra = ""
     try:
         from ...dnd.evolution import evolution_text, load_evolution
 
         extra = evolution_text(load_evolution(save), for_player=False)
     except Exception as e:  # 世界演化是增强，读不出来不该拦住
         log.warning(f"读世界演化失败：{str_traceback(e)}")
-        extra = ""
+    try:
+        from ...dnd.epoch import epoch_text, load_epoch
+
+        ep = load_epoch(save)
+        extra = "\n\n".join(
+            x
+            for x in (extra, epoch_text(ep, _epoch_facts_of(save, ep), for_player=False))
+            if x
+        )
+    except Exception as e:
+        log.warning(f"读纪元状态失败：{str_traceback(e)}")
     return f"{text}\n\n{extra}".strip() if extra else text
+
+
+def _epoch_facts_of(save, ep) -> object | None:
+    """当前纪元的进度事实（读不出来就返回 ``None``，那一段整块不出现）。"""
+    from ...dnd.chapter import _load
+    from ...dnd.epoch import epoch_facts
+    from ...dnd.evolution import load_evolution
+
+    if ep.ending:
+        return None
+    return epoch_facts(_load(save), load_evolution(save), index=ep.current, length=ep.length)
 
 
 #: 复盘「裁定」一行要收进来的功能（其余是查询 / 叙述 / 世界书类，不必进流水）
@@ -467,9 +491,19 @@ def _mark_wrapping_up(save) -> None:
 def _ending_text(save) -> str:
     """本轮给 DM 的结档状态提示。
 
-    **只在真的要收尾时注入**：玩家发过 ``/跑团.结档``，或者全队已经阵亡。
-    平时这一段整块不出现（省 token），而「不能自行结档」的规矩写在系统提示词里。
+    **只在真的要收尾时注入**：纪元收束达成了结局、玩家发过 ``/跑团.结档``，
+    或者全队已经阵亡。平时这一段整块不出现（省 token），
+    而「不能自行结档」的规矩写在系统提示词里。
     """
+    ending = str((save.progress or {}).get("ending") or "")
+    if ending:
+        title = ENDINGS.get(ending, (ending, ""))[0]
+        summary = ENDINGS.get(ending, ("", ""))[1]
+        return (
+            f"收束判定达成了结局【{title}】：{summary}"
+            "这是这一局的终点——请写一段收尾叙述，把这一纪元（乃至整局）如何落幕讲清楚，"
+            "呼应提示词里给出的那个称号，然后在这一轮或最近几轮里调用 wrap_up 结束本局。"
+        )
     if _party_wiped(save):
         return (
             "全员阵亡：队伍已经没有能行动的玩家了。请写一段收尾叙述，"

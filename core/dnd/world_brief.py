@@ -225,6 +225,39 @@ def _chapter_section(save: Save) -> list[str]:
     return ["## 冒险目标", "", text]
 
 
+def _epoch_section(save: Save) -> list[str]:
+    """纪元与称号：走到第几个纪元、这一路留下了什么称呼。
+
+    玩家侧**不给看代价清单**（那是 DM 的账），只给纪元进度与称号。
+    称号会同时登记进世界圣经，所以它在「世界」那一节里也会作为人物出现——
+    这是有意的：一个被世界记住的名字，理应能在世界档案里查到。
+    """
+    from .epoch import epoch_facts, epoch_text, load_epoch
+
+    ep = load_epoch(save)
+    state = _chapter_state(save)
+    # 一章都没打过、也没发过称号时不显示这一节——手册的取向是「宁缺毋滥」，
+    # 「当前第 1 纪元：目标 0/0」对玩家没有任何信息量。
+    if not ep.ending and not ep.epithets and state.completed <= 0:
+        return []
+    facts = None
+    if not ep.ending:
+        from .evolution import load_evolution
+
+        facts = epoch_facts(state, load_evolution(save), index=ep.current, length=ep.length)
+    text = epoch_text(ep, facts, for_player=True)
+    if not text.strip():
+        return []
+    return ["## 纪元与称号", "", text]
+
+
+def _chapter_state(save: Save):
+    """取存档里的章节状态（薄封装，避免顶层直接摸 ``progress``）。"""
+    from .chapter import _load
+
+    return _load(save)
+
+
 def _bible_section(save: Save) -> list[str]:
     """世界圣经：实体登记与不易变的事实（**只取可公开的部分**）。
 
@@ -285,6 +318,7 @@ def _party_section(save: Save) -> list[str]:
 _BUILDERS = (
     _world_section,
     _chapter_section,
+    _epoch_section,
     _evolution_section,
     _bible_section,
     _party_section,

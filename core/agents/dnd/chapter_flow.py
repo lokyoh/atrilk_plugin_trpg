@@ -33,15 +33,18 @@ from ...dnd.chapter import (
     ChapterCard,
     ChapterState,
     Recipe,
-    advance_chapter as _advance,
     chapter_summary,
     complete_chapter,
     current_card,
+    next_chapter_no,
     set_branches,
     start_chapter,
     take_branch,
     validate_card,
     weave_branches,
+)
+from ...dnd.chapter import (
+    advance_chapter as _advance,
 )
 from ...dnd.encounter_budget import (
     Performance,
@@ -66,8 +69,8 @@ __all__ = [
     "ensure_opening_chapter",
     "offer_branches",
     "sync_world",
-    "world_place_names",
     "weave_chapter",
+    "world_place_names",
 ]
 
 #: 进度回调
@@ -124,7 +127,12 @@ def sync_world(save: Save, chapter: int) -> int:
     与 ``advance_chapter`` 两处都调它也没关系——这正是把它做成幂等的原因。
     读世界圣经失败时按「没有势力」处理，不该拦住算难度。
     """
-    from ...dnd.evolution import advance_world, load_evolution, pressure_bonus, store_evolution
+    from ...dnd.evolution import (
+        advance_world,
+        load_evolution,
+        pressure_bonus,
+        store_evolution,
+    )
 
     state = load_evolution(save)
     entities: list[object] = []
@@ -168,12 +176,11 @@ def chapter_plan(
     from ...dnd.combat import party_level
 
     rec = recipe or Recipe.from_dict((save.progress or {}).get("_recipe") or {})
-    state = _state_of(save)
     perf, factor = _perf_of(save, enabled=rec.adapt, difficulty=difficulty)
 
     level = party_level(save)
     size = max(1, len(save.player_ids) or 4)
-    chapter_no = state.completed + 1
+    chapter_no = next_chapter_no(save)
     points = rec.story_points
     pressure = sync_world(save, chapter_no)
 
@@ -207,7 +214,7 @@ def chapter_plan(
 
 def _state_of(save: Save) -> ChapterState:
     """取存档里的章节状态（薄封装，避免上层直接摸 ``progress``）。"""
-    from ...dnd.chapter import _load  # noqa: PLC0415 —— 内部读取，签名稳定
+    from ...dnd.chapter import _load
 
     return _load(save)
 
@@ -297,7 +304,7 @@ def branch_choices_text(save: Save) -> str:
     state = _state_of(save)
     if not state.branches:
         return ""
-    lines = [f"【第 {state.completed + 1} 章】接下来可以走的方向："]
+    lines = [f"【第 {next_chapter_no(save)} 章】接下来可以走的方向："]
     for index, branch in enumerate(state.branches, start=1):
         arc = ARC_LABELS.get(branch.arc, branch.arc)
         lines.append(f"{index}. {arc}（{ '、'.join(branch.locations) or '地点待定' }）")
@@ -321,6 +328,8 @@ class WeaveOutcome:
     problems: list[str] = field(default_factory=list)
     #: 重试次数（0 = 一次就过）
     attempts: int = 0
+    #: 本次开章跨过的纪元结算（没跨边界时为 ``None``）
+    epoch: object | None = None
     usages: list[UsageEntry] = field(default_factory=list)
 
     @property
@@ -333,12 +342,26 @@ class WeaveOutcome:
             assert card is not None
             done = "；".join(self.problems) if self.problems else ""
             tail = f"（{done}）" if done else ""
-            return f"第 {card.title or '未命名'}章已就绪{tail}"
+            head = f"第 {card.title or '未命名'}章已就绪{tail}"
+            if self.epoch is not None:
+                head = f"{head}\n{self.epoch.summary()}"
+            return head
         return "这一章暂时织不出来：" + "；".join(self.problems or ["未知原因"])
 
 
-def _agent_inputs(save: Save, branch: ChapterBranch, plan: ChapterPlan) -> dict[str, object]:
-    """拼给 :class:`~.gen_chapter.ChapterAgent` 的输入。"""
+def _agent_inputs(
+    save: Save,
+    branch: ChapterBranch,
+    plan: ChapterPlan,
+    *,
+    carry: str = "",
+) -> dict[str, object]:
+    """拼给 :class:`~.gen_chapter.ChapterAgent` 的输入。
+
+    :param carry: 上一章的 ``fail_forward``（余波）。**由调用方在结束上一章之前
+        取好传进来**—— :func:`~...dnd.chapter.complete_chapter` 会把当前卡清空，
+        事后再读就只剩空字符串了。
+    """
     state = _state_of(save)
     world_text = load_doc(save.world_key, "world", MAIN_DOC_KEY) or ""
 
@@ -354,8 +377,8 @@ def _agent_inputs(save: Save, branch: ChapterBranch, plan: ChapterPlan) -> dict[
             f"（平均 {plan.perf.rounds_avg:.1f} 回合，倒地 {plan.perf.knockdowns} 次，"
             f"长休 {plan.perf.long_rests} 次）"
         )
-    if state.card.fail_forward:
-        context.append("上一章没收尾的事：" + state.card.fail_forward)
+    if carry:
+        context.append("上一章没收尾的事：" + carry)
 
     difficulty = f"目标 CR {plan.target_cr}；本章经验预算 {plan.xp_budget} XP"
     return {
@@ -383,16 +406,34 @@ async def weave_chapter(
     :returns: :class:`WeaveOutcome`；``card is None`` 表示织不出来
         （模型连续给了非法输出，或分支引用不存在）。
     """
+    from .epoch_flow import close_chapter, settle_epoch
+
     outcome = WeaveOutcome()
     branch_card = take_branch(save, ref)
     if branch_card is None:
         outcome.problems = [f"没有这个分支：{ref}"]
         return outcome
 
+    # 上一章的余波要在结束它**之前**取：complete_chapter 会把当前卡清空，
+    # 事后再读就只剩空字符串了（这条上下文之前恒为空，就是这个顺序问题）。
+    state = _state_of(save)
+    carry = state.card.fail_forward
+    # 开新章 = 先把旧章收掉。这是 completed 唯一的生产写入点，也是
+    # 难度序号轨 / 威胁层级 / 世界演化 / 纪元结算能推进的前提。
+    closed = close_chapter(save, difficulty=difficulty)
+    # 章数跨过纪元边界就在这里结算——**不是**织下一章时，
+    # 否则第 4 章的结算会晚到第 5 章才发生。
+    epoch = await settle_epoch(save, difficulty=difficulty, on_progress=on_progress)
+    if epoch.settled:
+        outcome.epoch = epoch
+        outcome.usages.extend(epoch.usages)
+    if closed is not None:
+        log.debug(f"已结束上一章：{closed.title or closed.id}")
+
     plan = chapter_plan(save, recipe=recipe, difficulty=difficulty)
     world_names = world_place_names(save.world_key)
     state = _state_of(save)
-    inputs = _agent_inputs(save, _branch_of(branch_card), plan)
+    inputs = _agent_inputs(save, _branch_of(branch_card), plan, carry=carry)
 
     card = branch_card
     problems: list[str] = []
@@ -522,6 +563,10 @@ def advance_chapter(
 
     :param card: 下一章的卡；留空则只结束当前章、不开新章。
     :returns: 新的当前章卡；``card`` 为空时返回 ``None``。
+
+    **不在这里做纪元结算**：这一函数是同步的，而结算要调模型命名称号。
+    纪元结算统一在 :func:`~.weave_chapter` 里跟着「开新章」一起发生，
+    所以走本函数开章时要自己补一次 :func:`~.epoch_flow.settle_epoch`。
     """
     # 难度要在 complete_chapter 之前算：那一步会把已完成章数推进，
     # 之后 chapter_plan 拿到的就是新一章的章号，预算也随之重算。

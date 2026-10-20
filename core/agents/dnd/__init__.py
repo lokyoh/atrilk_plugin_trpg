@@ -4,6 +4,7 @@
 
 - :mod:`.gen_world`：世界地图生成（``world``）
 - :mod:`.gen_chapter`：章节卡生成（``chapter``）——取代原先的「世界起点与推力」
+- :mod:`.gen_epoch`：纪元称号命名（``epithet``）——按纪元内的实际行为起名
 - :mod:`.gen_area`：地区详细生成（``area``）
 - :mod:`.gen_place`：地形地貌详细生成（``place``）
 - :mod:`.gen_city`：城镇据点详细生成（``city``）
@@ -18,6 +19,7 @@
 
 - :mod:`.entry`：入场编排（``run_entry_flow`` 生成新世界；``run_world_refresh`` 补齐残缺世界）
 - :mod:`.chapter_flow`：章节线编排（算难度 → 织候选走向 → 选定后织正文 → 推进下一章）
+- :mod:`.epoch_flow`：纪元编排（收束判定 → 代价 → 称号 → 称号进圣经）
 - :mod:`.on_demand`：按需补齐区域 / 地点 / 场景（缺什么生成什么，按存档的世界作用域）
 - :mod:`.game`：本轮行动编排（``submit_action`` / ``run_dm_round``）与场景切换（``open_scene``）
 
@@ -27,7 +29,8 @@
 - :mod:`.tools`：DM 可调用的 DND 功能
 - :mod:`.rules`：内置规则条目（插件资源 ``res/rule.md`` 的查询封装）
 
-:data:`AGENTS` 汇总全部 agent 实例，供调用方按名取用。
+:data:`AGENTS` 汇总全部 **DM 可用** 的 agent 实例，供调用方按名取用；
+内部 agent（称号命名）另放 :data:`_INTERNAL_AGENTS`，不进 DM 工具清单。
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ from .entry import (
     run_entry_flow,
     run_world_refresh,
 )
+from .epoch_flow import EpochOutcome, close_chapter, epoch_deeds, settle_epoch
 from .game import (
     TurnResult,
     build_scene_for_save,
@@ -63,6 +67,7 @@ from .game import (
 from .gen_area import AreaAgent, AreaResult, area_agent, parse_area
 from .gen_city import CityAgent, city_agent
 from .gen_dungeon import DungeonAgent, dungeon_agent
+from .gen_epoch import EpithetAgent, EpithetResult, epithet_agent
 from .gen_place import PlaceAgent, place_agent
 from .gen_scene import SceneAgent, scene_agent
 from .gen_chapter import ChapterAgent, ChapterResult, chapter_agent
@@ -89,6 +94,9 @@ __all__ = [
     "DungeonMasterAgent",
     "EntryOptions",
     "EntryReport",
+    "EpithetAgent",
+    "EpithetResult",
+    "EpochOutcome",
     "PlaceAgent",
     "SceneAgent",
     "SceneBuilderAgent",
@@ -104,10 +112,13 @@ __all__ = [
     "chapter_agent",
     "chapter_plan",
     "city_agent",
+    "close_chapter",
     "dm_agent",
     "dungeon_agent",
     "ensure_opening_chapter",
     "ensure_scene",
+    "epoch_deeds",
+    "epithet_agent",
     "get_agent",
     "is_started",
     "normalize_kind",
@@ -124,6 +135,7 @@ __all__ = [
     "scene_agent",
     "scene_builder_agent",
     "scene_text",
+    "settle_epoch",
     "slice_block",
     "submit_action",
     "weave_chapter",
@@ -143,7 +155,20 @@ AGENTS = {
     dm_agent.name: dm_agent,
 }
 
+#: 只在内部使用的 agent（不进 :data:`AGENTS`，也不由 DM 直接调用）。
+#: 称号生成走 :func:`~.epoch_flow.settle_epoch`，不在 DM 的工具清单里——
+#: DM 工具清单有 4300 字符硬上限，而称号是每几章才发生一次的编排动作。
+_INTERNAL_AGENTS = {
+    epithet_agent.name: epithet_agent,
+}
+
 
 def get_agent(name: str):
-    """按名取 agent 实例，未注册时抛出 :class:`KeyError`。"""
-    return AGENTS[name]
+    """按名取 agent 实例，未注册时抛出 :class:`KeyError`。
+
+    内部 agent（:data:`_INTERNAL_AGENTS`）也能按名取到——它们只是不进
+    DM 的工具清单，并不是不存在。
+    """
+    if name in AGENTS:
+        return AGENTS[name]
+    return _INTERNAL_AGENTS[name]

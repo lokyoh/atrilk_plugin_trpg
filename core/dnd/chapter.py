@@ -38,8 +38,9 @@ from __future__ import annotations
 
 import random
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 from ATRI.log import log as _log
 
@@ -285,6 +286,8 @@ class ChapterState:
     card: ChapterCard = field(default_factory=ChapterCard)
     #: 待选分支
     branches: list[ChapterBranch] = field(default_factory=list)
+    #: 已被选中、但还没落卡的章节骨架（见 :func:`take_branch`）
+    pending: ChapterCard = field(default_factory=ChapterCard)
     #: 已勾上的条件（存 ``目标序号``）
     checked: list[int] = field(default_factory=list)
     #: 已收集的线索 key
@@ -295,6 +298,10 @@ class ChapterState:
     recent_arcs: list[str] = field(default_factory=list)
     #: 上一章的表现系数，供DM 与手册展示
     last_factor: float = 0.0
+    #: 每章收尾时记下的 ``[已勾数, 总数]``（顺序记，第 N 章在下标 N-1）。
+    #: 纪元收束判定要「这个纪元的目标完成率」，跨章累加就得有历史，
+    #: 否则只能看到最后一章的勾选情况。
+    progresses: list[list[int]] = field(default_factory=list)
     #: 累计完成的章节标题（一行一个，进手册）
     history: list[str] = field(default_factory=list)
 
@@ -303,11 +310,13 @@ class ChapterState:
             "completed": self.completed,
             "card": self.card.to_dict(),
             "branches": [b.to_dict() for b in self.branches],
+            "pending": self.pending.to_dict(),
             "checked": list(self.checked),
             "clues": list(self.clues),
             "used_elements": list(self.used_elements),
             "recent_arcs": list(self.recent_arcs),
             "last_factor": self.last_factor,
+            "progresses": [list(x) for x in self.progresses],
             "history": list(self.history),
         }
 
@@ -318,11 +327,17 @@ class ChapterState:
             completed=int(d.get("completed") or 0),
             card=ChapterCard.from_dict(d.get("card") or {}),
             branches=[ChapterBranch.from_dict(b) for b in (d.get("branches") or [])],
+            pending=ChapterCard.from_dict(d.get("pending") or {}),
             checked=[int(x) for x in (d.get("checked") or [])],
             clues=[str(x) for x in (d.get("clues") or [])],
             used_elements=[str(x) for x in (d.get("used_elements") or [])],
             recent_arcs=[str(x) for x in (d.get("recent_arcs") or [])],
             last_factor=float(d.get("last_factor") or 0.0),
+            progresses=[
+                [int(x[0]), int(x[1])]
+                for x in (d.get("progresses") or [])
+                if isinstance(x, (list, tuple)) and len(x) >= 2
+            ],
             history=[str(x) for x in (d.get("history") or [])],
         )
 
@@ -409,7 +424,7 @@ def _fresh_card_id(world_key: str, chapter_no: int) -> str:
         from .world_store import new_chapter_id
 
         return new_chapter_id(world_key or "main", f"ch{max(1, int(chapter_no))}")
-    except Exception:  # noqa: BLE001 —— 自检场景没有存储层
+    except Exception:
         return f"ch{max(1, int(chapter_no))}_{uuid.uuid4().hex[:4]}"
 
 
@@ -759,6 +774,18 @@ def current_card_key(save: Any) -> str:
     return _load(save).card.id
 
 
+def next_chapter_no(save: Any) -> int:
+    """**下一个要开的章**的序号（1 起）。
+
+    刻意区别于 ``completed + 1``：当前那张卡还没结束时，玩家玩的是这一章，
+    而 DM 在 ``offer_chapters`` 里看到的是**下一章**的候选走向。
+    两处都用这个函数，候选走向的编号、章节摘要的标题、
+    以及入库时的 ``chapter_no`` 才不会各说各话。
+    """
+    state = _load(save)
+    return state.completed + 1 + (1 if state.card.id else 0)
+
+
 def set_branches(save: Any, branches: Iterable[ChapterBranch]) -> int:
     """写入待选分支，返回数量。"""
     state = _load(save)
@@ -773,6 +800,12 @@ def take_branch(save: Any, ref: str) -> ChapterCard | None:
     这里**只填程序知道的部分**（骨架、钩子地点、难度预算）；
     标题、目标、人物、完成条件要由模型补齐后再调
     :func:`start_chapter` 落卡。
+
+    **刻意不覆盖 :attr:`ChapterState.card`**：选中走向不等于新章开张，
+    当前那张卡（含它的 ``fail_forward``）要一直留到编排层显式结束它为止——
+    早先把骨架直接写进 ``card``，于是「上一章没收尾的事」这条上下文恒为空，
+    而完成章数也永远停在 0（没人调 :func:`complete_chapter`）。
+    选中的骨架暂存在 :attr:`ChapterState.pending`。
     """
     state = _load(save)
     if not state.branches:
@@ -800,7 +833,7 @@ def take_branch(save: Any, ref: str) -> ChapterCard | None:
         parallel=picked.parallel,
         story_points=3,
     )
-    state.card = card
+    state.pending = card
     state.branches = []
     _store(save, state)
     return card
@@ -846,12 +879,13 @@ def start_chapter(
             # 沉淀只登记「本章卡上写着、但圣经里还没有」的专有名词；
             # 校验已经拦过不在世界里的地名，所以这里不会凭空造出世界没有的东西
             deposit_entities(world_key, card, chapter_no=state.completed + 1)
-        except Exception:  # noqa: BLE001 —— 入库是锦上添花，不能拖垮这一章
+        except Exception:
             _log.warning(f"章节卡入库失败（已降级为只存档引用）：{card.id}")
 
     state.card = snapshot_card(card)
     state.checked = []
     state.branches = []
+    state.pending = ChapterCard()
     for name in {*card.locations, *card.npcs}:
         if name not in state.used_elements:
             state.used_elements.append(name)
@@ -903,9 +937,7 @@ def _auto_cleared(card: ChapterCard, state: ChapterState) -> list[int]:
     for index, obj in enumerate(card.objectives):
         if not obj.auto:
             continue
-        if obj.kind == "clue" and (not obj.ref or obj.ref in got):
-            hit.append(index)
-        elif obj.kind == "item" and obj.ref and obj.ref in got:
+        if (obj.kind == "clue" and (not obj.ref or obj.ref in got)) or (obj.kind == "item" and obj.ref and obj.ref in got):
             hit.append(index)
     return hit
 
@@ -939,6 +971,9 @@ def complete_chapter(save: Any, *, factor: float = 0.0, note: str = "") -> Chapt
     finished = state.card
     state.completed += 1
     state.last_factor = float(factor)
+    # 这一章的完成条件进度要留下来：纪元收束判定要看「整个纪元勾了多少」，
+    # 只看最后一章等于把前面三章的成果抹掉。
+    state.progresses.append([len(state.checked), len(finished.objectives)])
     state.history.append(
         str(note).strip()
         or finished.title
