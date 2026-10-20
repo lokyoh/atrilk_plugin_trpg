@@ -20,6 +20,7 @@ from ..trpg.dice import Advantage, DiceError, roll
 from ..trpg.rule import JudgeResult, KeywordRule, KeywordRuleJudge, Verdict
 from .attributes import ABILITY_MAP
 from .card import DndCharacter
+from .difficulty import dc_for
 from .skills import SKILL_MAP, get_skill
 
 __all__ = [
@@ -194,31 +195,35 @@ class DndRuleJudge(KeywordRuleJudge):
     def _suggest_check(
         text: str, character: DndCharacter
     ) -> tuple[str, int, Advantage] | None:
-        """从叙述里猜一个检定与难度；猜不出返回 ``None``。"""
+        """从叙述里猜一个检定与难度；猜不出返回 ``None``。
+
+        DC 不再一律 15：由 :mod:`.difficulty` 按「技能基准难度 + 叙述里的难度
+        描述词」定档——偷偷潜行（容易）与徒手破门（困难）不该同档。
+        """
         # 叙述中直接出现的技能名优先
         for name, skill in ((s.cn, s) for s in SKILL_MAP.values()):
             if name in text:
-                return skill.key, 15, Advantage.NORMAL
+                return skill.key, dc_for(text, skill.key), Advantage.NORMAL
         for ability in ABILITY_MAP.values():
             if ability.cn in text:
-                return ability.key, 15, Advantage.NORMAL
+                return ability.key, dc_for(text, ability.key), Advantage.NORMAL
 
-        rules: tuple[tuple[str, str, int], ...] = (
-            (r"(潜行|偷偷|隐蔽|摸过去)", "stealth", 15),
-            (r"(说服|劝|请求)", "persuasion", 15),
-            (r"(欺骗|撒谎|假装)", "deception", 15),
-            (r"(威吓|威胁|恐吓)", "intimidation", 15),
-            (r"(观察|查看|察觉|留意)", "perception", 15),
-            (r"(搜索|检查|调查|研究)", "investigation", 15),
-            (r"(攀爬|跳|游泳|推|拉|举起)", "athletics", 15),
-            (r"(悄悄|平衡|翻滚|挣脱)", "acrobatics", 15),
-            (r"(野外|追踪|辨识方向)", "survival", 15),
-            (r"(历史|传说|典故)", "history", 15),
-            (r"(魔法|符文|法术)", "arcana", 15),
+        rules: tuple[tuple[str, str], ...] = (
+            (r"(潜行|偷偷|隐蔽|摸过去)", "stealth"),
+            (r"(说服|劝|请求)", "persuasion"),
+            (r"(欺骗|撒谎|假装)", "deception"),
+            (r"(威吓|威胁|恐吓)", "intimidation"),
+            (r"(观察|查看|察觉|留意)", "perception"),
+            (r"(搜索|检查|调查|研究)", "investigation"),
+            (r"(攀爬|跳|游泳|推|拉|举起)", "athletics"),
+            (r"(悄悄|平衡|翻滚|挣脱)", "acrobatics"),
+            (r"(野外|追踪|辨识方向)", "survival"),
+            (r"(历史|传说|典故)", "history"),
+            (r"(魔法|符文|法术)", "arcana"),
         )
-        for pattern, key, dc in rules:
+        for pattern, key in rules:
             if re.search(pattern, text):
-                return key, dc, Advantage.NORMAL
+                return key, dc_for(text, key), Advantage.NORMAL
         return None
 
     def rules_text(self) -> str:
@@ -249,6 +254,10 @@ def parse_skill_request(text: str) -> tuple[str, int, Advantage] | None:
 
     支持写法：``察觉``、``力量检定``、``察觉DC15``、``力量豁免 DC 20``、
     ``察觉 优势``、``隐匿劣势``。
+
+    玩家没写 DC 时不一律按 15：先按技能的基准难度
+    （见 :data:`~.difficulty.SKILL_BASE_DC`，察言观色这类偏容易、开门撬锁
+    这类偏难），再按指令里有没有「悄悄」「徒手」之类的难度词调整。
     """
     raw = (text or "").strip()
     if not raw or len(raw) > 24:
@@ -261,11 +270,14 @@ def parse_skill_request(text: str) -> tuple[str, int, Advantage] | None:
         advantage = Advantage.DISADVANTAGE
 
     dc_match = re.search(r"(?:dc|难度|DC)\s*(\d{1,2})", raw, re.IGNORECASE)
-    dc = int(dc_match.group(1)) if dc_match else 15
-    if dc_match is None:
+    #: 玩家显式写的 DC 优先；没写则按技能基准 + 难度词算（``None`` = 待定）
+    explicit_dc: int | None = None
+    if dc_match:
+        explicit_dc = int(dc_match.group(1))
+    else:
         plain_dc = re.search(r"(?<![\d.])(\d{1,2})(?![\d.])", raw)
         if plain_dc:
-            dc = int(plain_dc.group(1))
+            explicit_dc = int(plain_dc.group(1))
 
     body = re.sub(r"(?:dc|难度)\s*\d{1,2}", "", raw, flags=re.IGNORECASE)
     body = re.sub(r"\d{1,2}", "", body)
@@ -275,12 +287,18 @@ def parse_skill_request(text: str) -> tuple[str, int, Advantage] | None:
     if not body or body in {"骰子", "掷骰", "roll"}:
         return None
 
+    #: 没写 DC 时，按命中的技能 / 属性定基准难度
+    def _resolve(key: str) -> tuple[str, int, Advantage]:
+        if explicit_dc is not None:
+            return key, max(1, min(30, explicit_dc)), advantage
+        return key, dc_for(raw, key), advantage
+
     for skill in SKILL_MAP.values():
         if body in (skill.cn, skill.key, skill.en.lower()):
-            return skill.key, dc, advantage
+            return _resolve(skill.key)
     for ability in ABILITY_MAP.values():
         if body in (ability.cn, ability.key, ability.abbr.lower(), ability.en.lower()):
-            return ability.key, dc, advantage
+            return _resolve(ability.key)
 
     # 「力量（运动）」这类带属性的技能写法
     bracket = re.match(
@@ -288,7 +306,7 @@ def parse_skill_request(text: str) -> tuple[str, int, Advantage] | None:
     )
     if bracket:
         try:
-            return get_skill(bracket.group(2)).key, dc, advantage
+            return _resolve(get_skill(bracket.group(2)).key)
         except KeyError:
             pass
     return None

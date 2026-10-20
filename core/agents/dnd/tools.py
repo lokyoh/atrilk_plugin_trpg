@@ -61,6 +61,12 @@ from ...dnd.conditions import (
     normalize_conditions,
     save_auto_fail,
 )
+from ...dnd.difficulty import (
+    DC_BANDS,
+    DEFAULT_BASE_DC,
+    SKILL_BASE_DC,
+    describe_dc,
+)
 from ...dnd.encounter import calibrate_specs
 from ...dnd.equipment import ARMORS, SHIELDS, WEAPONS, get_armor, get_weapon
 from ...dnd.memory import (
@@ -273,6 +279,9 @@ def _resolve_check(card, kind: str, dc: int, advantage: Advantage):
     技能名走 :func:`~..dnd.skills.get_skill`（支持「生存 / 求生」这类同义异写）；
     属性名支持中文 / 内部键 / 英文 / 缩写。认不出一律抛
     :class:`KeyError`，由调用方转成给 DM 看的提示。
+
+    ``dc <= 0`` 表示 DM 留空：按 :func:`~..dnd.difficulty.dc_for` 以技能基准难度
+    自动定档，而不是一律 15。
     """
     text = str(kind or "").strip()
     if not text:
@@ -282,13 +291,15 @@ def _resolve_check(card, kind: str, dc: int, advantage: Advantage):
 
     for ability in ABILITIES:
         if name in (ability.cn, ability.key, ability.abbr.lower(), ability.en.lower()):
+            value = dc if dc > 0 else DEFAULT_BASE_DC
             if is_save:
-                return card.check_save(ability, dc, advantage=advantage)
-            return card.check_ability(ability, dc, advantage=advantage)
+                return card.check_save(ability, value, advantage=advantage)
+            return card.check_ability(ability, value, advantage=advantage)
     if not is_save:
         # 技能名（含别名，如「生存」= survival、「游说」= persuasion）
         skill = get_skill(name)
-        return card.check_skill(skill, dc, advantage=advantage)
+        value = dc if dc > 0 else SKILL_BASE_DC.get(skill.key, DEFAULT_BASE_DC)
+        return card.check_skill(skill, value, advantage=advantage)
     raise KeyError(text)
 
 
@@ -304,7 +315,7 @@ class CheckTool(AgentTool):
             "检定对象：技能名（如 察觉、隐匿、生存、游说、体操）或属性名"
             "（如 力量），豁免写作「力量豁免」",
         ),
-        ToolArg("dc", "int", "难度值，默认 15"),
+        ToolArg("dc", "int", "难度值，留空由系统按技能基准 + 难度词自动定档"),
         ToolArg("advantage", "str", "普通 / 优势 / 劣势，默认普通"),
         ToolArg(
             "player",
@@ -317,7 +328,7 @@ class CheckTool(AgentTool):
     async def call(
         context: AgentContext,
         kind: str = "",
-        dc: Any = 15,
+        dc: Any = 0,
         advantage: Any = "普通",
         player: str = "",
         **kwargs: Any,
@@ -327,7 +338,7 @@ class CheckTool(AgentTool):
             return "没找到该玩家的角色卡，无法检定"
         try:
             result = _resolve_check(
-                card, kind, _parse_int(dc, 15), _parse_advantage(advantage)
+                card, kind, _parse_int(dc, 0), _parse_advantage(advantage)
             )
         except KeyError as e:
             # 把可用清单一起回给 DM：模型下一次调用就能自己纠对写法
@@ -569,6 +580,44 @@ def _condition_effect_brief(effect: Any) -> str:
     return "；".join(parts) or "（无机械效果，纯叙事状态）"
 
 
+def _query_difficulty(name: str) -> str:
+    """查 5e 难度档位与各技能基准 DC（DM 定 check 的 dc 时用）。"""
+    text = str(name or "").strip()
+    if not text:
+        lines = ["5e 难度档位（DC）："]
+        examples = {
+            "非常简单": "大衣的扣子",
+            "容易": "爬上矮墙",
+            "中等": "攀爬普通屋顶、徒手推开木门",
+            "困难": "跳过一丈宽的壕沟、把门连框拆下",
+            "非常困难": "徒手折断铁栅",
+            "极其困难": "一击劈开石墙",
+        }
+        for label, dc in DC_BANDS:
+            lines.append(f"· {label} DC {dc}：{examples.get(label, '')}")
+        lines.append(
+            "\n系统会按「技能基准 DC + 叙述里的难度词」自动定档："
+            "偷偷 / 小心 / 轻松 → 降一档，徒手 / 拼尽全力 / 硬闯 → 升一档；"
+            "玩家显式写 dc=N 时以他为准。定完档记得在叙述里说清难在哪。"
+        )
+        return "\n".join(lines)
+    from ...dnd.skills import get_skill
+
+    try:
+        skill = get_skill(text)
+    except KeyError:
+        return (
+            f"没有叫「{text}」的技能。留空可列出全部难度档位，"
+            "技能表用 query_data（table=skill）查。"
+        )
+    base = SKILL_BASE_DC.get(skill.key, DEFAULT_BASE_DC)
+    return (
+        f"{skill.cn}（{skill.label}）的基准难度：{describe_dc(base)} DC {base}。\n"
+        "难一档是「非常困难」，容易一档是「容易」；"
+        "描述词（如偷偷、徒手、拼尽全力）会在这之上调整。"
+    )
+
+
 def _query_condition(name: str) -> str:
     """查状态条件：留空列全部，给名字出结算效果（支持同义写法 / 力竭）。"""
     text = str(name or "").strip()
@@ -615,6 +664,7 @@ _DATA_TABLES = {
     "spell": _query_spell,
     "npc_tier": _query_npc_tier,
     "condition": _query_condition,
+    "difficulty": _query_difficulty,
 }
 
 _DATA_ALIASES = {
@@ -651,6 +701,10 @@ _DATA_ALIASES = {
     "conditions": "condition",
     "状态": "condition",
     "状态条件": "condition",
+    "difficulty": "difficulty",
+    "dc": "difficulty",
+    "难度": "difficulty",
+    "难度表": "difficulty",
     # —— 全局世界库文档 ——
     "world": "world",
     "世界": "world",
@@ -712,7 +766,7 @@ class QueryDataTool(AgentTool):
     max_result_chars = 2500
     description = (
         "查 DND 数据表（race/profession/skill/weapon/armor/monster/spell/condition/"
-        "npc_tier/npc）或世界库文档（world/story/area/city/place/dungeon/scene），"
+        "difficulty/npc_tier/npc）或世界库文档（world/story/area/city/place/dungeon/scene），"
         "table 可写中文"
     )
     args = (
@@ -744,7 +798,7 @@ class QueryDataTool(AgentTool):
         if handler is None:
             return (
                 "未知数据表，可用：race / profession / skill / weapon / armor / monster / "
-                "spell / condition / npc_tier / npc，或世界库文档："
+                "spell / condition / difficulty / npc_tier / npc，或世界库文档："
                 "world / story / area / city / place / dungeon / scene"
             )
         try:
