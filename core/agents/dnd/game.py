@@ -35,8 +35,10 @@ from ...dnd.combat import (
     all_enemies_out,
     clear_combat,
     combat_text,
+    combatant_conditions,
     current_actor,
     effective_ac,
+    is_incapacitated,
     is_out,
     living_enemies,
     load_combat,
@@ -645,9 +647,7 @@ def _player_status_line(save, state) -> str:
     card = get_character(save, actor.cid)
     if card is None:
         return ""
-    parts = [
-        f"HP {card.current_hp}/{card.max_hp}　AC {effective_ac(save, actor, state)}"
-    ]
+    parts = [f"HP {card.hp}/{card.max_hp}　AC {effective_ac(save, actor, state)}"]
     # 只在真有问题时提示：低血、临时生命、状态、力竭、法术位
     if card.hp > 0 and card.hp <= max(1, card.max_hp // 3):
         parts.append("⚠️ 血量偏低")
@@ -657,11 +657,16 @@ def _player_status_line(save, state) -> str:
     if conditions:
         parts.append(f"状态：{conditions}")
     slots = card.spell_slots_text()
-    if slots:
+    # 非法术师别显示「（无法术位）」——那是在说他没有法术位，不是说他只剩这些
+    if slots and card.max_spell_slots():
         parts.append(f"法术位 {slots}")
-    left = _remaining_actions(actor)
-    if left:
-        parts.append(f"本回合还可用：{left}")
+    # 倒地 / 失能的人别列「还可用动作」——他根本不能行动，说了就是骗他
+    if not is_out(save, actor) and not is_incapacitated(
+        combatant_conditions(save, actor)
+    ):
+        left = _remaining_actions(actor)
+        if left:
+            parts.append(f"本回合还可用：{left}")
     death = card.death_save_text()
     if death:
         parts.append(death)
@@ -676,20 +681,22 @@ def _remaining_actions(actor) -> str:
     """这一回合**还剩下什么可做**（比「已用」更直接可用）。
 
     玩家看到「本回合已用：动作」时得自己推「那我现在还能干嘛」；直接把剩余的
-    说出来省一次心算。移动按剩余距离给——困难地形吃掉的那部分照实显示。
+    说出来省一次心算。移动按剩余距离给，且单独成句——混进动作列表里会被读成
+    「移动是一个可以选的动作」，而它其实是额度。
     """
     left = [
         label
         for key, label in _RESOURCE_LABELS
         if not getattr(actor, f"{key}_used", False)
     ]
+    text = "、".join(left)
     if not actor.moved:
-        left.append("移动")
+        text = f"{text}、移动" if text else "移动"
     else:
         rest = actor.speed - actor.move_used
         if rest > 0:
-            left.append(f"移动 {rest} 尺")
-    return "、".join(left)
+            text = f"{text}（还可移动 {rest} 尺）" if text else f"还可移动 {rest} 尺"
+    return text
 
 
 def _equip_take_request(text: str) -> list[str]:
