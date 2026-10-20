@@ -32,6 +32,7 @@ from ATRI.log import log
 from .world_store import (
     DOC_KINDS,
     MAIN_DOC_KEY,
+    list_worlds,
     load_doc,
     new_world_id,
     save_doc,
@@ -42,6 +43,7 @@ from .world_store import (
 __all__ = [
     "DEFAULT_PRESET",
     "PRESET_ROOT",
+    "ensure_preset",
     "install_preset",
     "list_presets",
     "load_preset_index",
@@ -206,3 +208,22 @@ def install_preset(name: str = DEFAULT_PRESET, *, world_key: str = "") -> str:
 
     log.info(f"预设世界「{name}」已安装：{count} 篇文档 → {key}")
     return key
+
+
+def ensure_preset(name: str = DEFAULT_PRESET) -> str:
+    """保证这个预设世界**已经装过**，返回它的世界键（幂等）。
+
+    与 :func:`install_preset` 的差别只有一个：**已经装过就直接复用**。
+    这是给「一条命令开局」用的——``/跑团.开局 无尽`` 反复发，
+    不该每次都往世界列表里塞一个一模一样的灰烬海。
+
+    识别方式：世界注册表里 ``theme`` 等于 :data:`PRESET_THEME`、
+    且标题与预设解析出来的世界名一致。标题来自同一份文档，
+    所以这条判断与「装的是同一个预设」等价。
+    """
+    title, _intro = _preset_profile(_preset_dir(name))
+    if title:
+        for world in list_worlds():
+            if world.theme == PRESET_THEME and world.title == title:
+                return world.key
+    return install_preset(name)

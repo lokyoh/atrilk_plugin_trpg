@@ -383,6 +383,28 @@ class Recipe:
                 merged[alias] = base[parent] * _ALIAS_WEIGHT_RATIO
         return {k: v for k, v in merged.items() if v > 0}
 
+    def to_dict(self) -> dict[str, Any]:
+        """序列化：写回 ``save.progress["_recipe"]`` 用。
+
+        两件事必须做对：
+
+        1. **写全部字段**，包括取默认值的那些——``from_dict`` 的缺省与 dataclass 的
+           缺省并不完全一致（见那里的说明），少写一个字段就会让那一项静默变成另一个值；
+        2. ``arc_weights`` 要写成**解析后的表**。空 dict 的含义是「用内置权重表」，
+           但 ``from_dict`` 会把内置表读成实际值——不解析就永远往返不回去。
+           存的是**主干骨架**表（不加副骨架），副骨架由 :meth:`merged_weights`
+           在抽骨架时按比例展开，两处不该各存一份。
+        """
+        return {
+            "arc_weights": dict(self.arc_weights) if self.arc_weights else dict(ARC_WEIGHTS),
+            "no_repeat_window": self.no_repeat_window,
+            "element_quota": self.element_quota,
+            "reuse_ratio": self.reuse_ratio,
+            "parallel_every": self.parallel_every,
+            "story_points": self.story_points,
+            "adapt": self.adapt,
+        }
+
     @classmethod
     def from_dict(cls, data: Any) -> Recipe:
         d = data if isinstance(data, dict) else {}
@@ -400,7 +422,10 @@ class Recipe:
             no_repeat_window=max(0, int(d.get("no_repeat_window") or 3)),
             element_quota=max(0, int(d.get("element_quota", 2))),
             reuse_ratio=max(0.0, min(1.0, float(d.get("reuse_ratio", 0.4)))),
-            parallel_every=max(0, int(d.get("parallel_every") or 0)),
+            # 缺省必须与 dataclass 的 ``parallel_every = 6`` 一致。原先写成
+            # ``or 0``，于是「存档里没有这个键」被读成「不要并行支线」——
+            # 而 ``_recipe`` 之前一个写入点都没有，等于并行支线从来没触发过。
+            parallel_every=max(0, int(d.get("parallel_every", 6))),
             story_points=max(1, min(int(d.get("story_points") or 3), 12)),
             adapt=bool(d.get("adapt", True)),
         )

@@ -551,6 +551,11 @@ _GEN_WORDS = {"生成", "重生成", "generate", "regenerate", "new"}
 #: 「装一份内置预设世界」的触发词（零模型调用）
 _PRESET_WORDS = {"预设", "preset", "默认"}
 
+#: 「用无尽玩法开局」的触发词。与 :data:`...dnd.gamemode.MODES` 里的 words
+#: 同源，这里再写一份是为了在**解析参数**阶段就能分辨「玩法词」与「世界名」，
+#: 不必先把世界列表读出来。
+_ENDLESS_WORDS = {"无尽", "endless", "--无尽", "--endless", "-无尽"}
+
 
 @dataclass
 class _StartPending:
@@ -622,6 +627,7 @@ def _world_chooser(worlds, note: str = "") -> str:
         "· 选一个世界开局 → /跑团.开局 <序号>（"
         f"{int(_START_PICK_TTL // 60)} 分钟内有效）",
         "· 生成一个新世界 → /跑团.开局 生成 [主题]（不给主题就随机）",
+        "· 一条命令开无尽局 → /跑团.开局 无尽（装预设世界 + 按无尽节奏跑）",
         "",
         "世界是所有存档共享的；选完之后每一局会自己织自己的章节，互不影响。",
     ]
@@ -685,18 +691,26 @@ def _paused_save(key: str) -> Save | None:
     return None
 
 
-def _open_save(user_id: str, key: str, world_key: str) -> tuple[str, str]:
+def _open_save(
+    user_id: str, key: str, world_key: str, *, mode: str = ""
+) -> tuple[str, str]:
     """建立存档、复制角色卡并绑定本会话，返回 ``(存档 ID, 给玩家的文案)``。
 
     建好存档只是「准备就绪」：**不跑开场白**，等玩家陆续 ``/跑团.加入`` 之后，
     再由任意已加入的玩家发 ``/跑团.开始`` 正式开局（见 :func:`_start_round`）。
+
+    :param mode: 玩法名（见 :mod:`...dnd.gamemode`）。**开局是玩法唯一决定时机**——
+    织法与纪元长度必须在织第一章之前落盘，否则第一章就按默认参数织出来了。
     """
+    from .core.dnd.gamemode import mode_text, start_mode
+
     card = load_card(user_id)
     save = create_save(player_cards=[card] if card is not None else [])
     save.creator_id = str(user_id)
     save.world_key = world_key or "main"
     save.progress["chat_key"] = key
     save.progress["started"] = False  # 等人齐 + /跑团.开始 之后才开局
+    picked = start_mode(save, mode)
     save_save(save)
     set_binding(key, save.save_id)
 
@@ -705,7 +719,7 @@ def _open_save(user_id: str, key: str, world_key: str) -> tuple[str, str]:
 
     text = (
         f"🎲 冒险已就绪：存档 {save.save_id}\n"
-        f"世界「{world_name}」\n"
+        f"世界「{world_name}」· {mode_text(save)}\n"
         "这一局的章节会在**开局时按队伍的实际水平织出来**；"
         "区域 / 城镇 / 自然地点 / 地下城 / 场景同样在用到时按需生成。\n\n"
         "先等大家加入，人齐了再开局：\n"
@@ -714,6 +728,8 @@ def _open_save(user_id: str, key: str, world_key: str) -> tuple[str, str]:
         "· 人齐后由**任意已加入的玩家**发 /跑团.开始 正式开局\n"
         "· /跑团.存档 查看谁已经加入、进度与用量"
     )
+    if picked.key != "standard":
+        text += f"\n\n（{picked.title}模式：{picked.note}）"
     return save.save_id, text
 
 
@@ -804,6 +820,27 @@ async def _start_game(
     worlds = list_worlds()
     pending = _pending_pick(key, user_id)
 
+    # ·「无尽」：一条命令开局。装预设世界（零模型调用，已装则复用）+ 建档 +
+    #   把无尽玩法写进存档。之前要先「开局 预设」再「开局 选世界」，两步。
+    if head.lower() in _ENDLESS_WORDS:
+        from .core.dnd.presets import ensure_preset, list_presets
+
+        if not list_presets():
+            await start_game.finish("插件里没有内置的预设世界（presets/ 是空的）。")
+        _START_PENDING.pop(key, None)
+        try:
+            preset_key = ensure_preset()
+        except Exception as e:
+            log.warning(f"准备无尽模组失败：{str_traceback(e)}")
+            await start_game.finish(f"⚠️ 无尽模组装不上：{e}")
+        info = get_world(preset_key)
+        await matcher.send(
+            f"🌍 使用预设世界「{info.title if info is not None else preset_key}」，"
+            "正在建立无尽模式的存档……"
+        )
+        save_id, text = _open_save(user_id, key, preset_key, mode="endless")
+        await start_game.finish(text)
+
     # ·「预设」：装一份内置世界（不调模型），装完照常出现在世界列表里
     if head in _PRESET_WORDS:
         from .core.dnd.presets import install_preset, list_presets
@@ -864,12 +901,14 @@ async def _start_game(
                 )
 
         # 选中世界：直接建档。章节在建档后由 /跑团.开始 织，所以这里不再多问一轮。
+        # ``/跑团.开局 3 无尽`` 这种写法也认——玩法跟在世界名或序号后面。
         _START_PENDING.pop(key, None)
+        mode = "endless" if rest.lower() in _ENDLESS_WORDS else ""
         await matcher.send(
             f"🌍 使用世界「{world.title}」，正在建立存档"
             "（之后等大家加入再 /跑团.开始 开局）……"
         )
-        save_id, text = _open_save(user_id, key, world.key)
+        save_id, text = _open_save(user_id, key, world.key, mode=mode)
         await start_game.finish(text)
 
     # · 裸 /跑团.开局：还没有世界就直接生成；有世界则展示世界选择

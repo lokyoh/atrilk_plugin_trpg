@@ -216,13 +216,23 @@ def _chapter_section(save: Save) -> list[str]:
 
     难度数值、威胁层级、fail_forward 这些**不进手册**：
     手册是发给玩家的，不该剧透DM 侧的难度设计。
+
+    非默认玩法会多一行说明（「无尽模式：支线更密、三章一次收束」）——
+    玩家该知道自己这一局是按哪套节奏在跑，否则「怎么这么快又结算了」没法解释。
     """
     from .chapter import chapter_summary
+    from .gamemode import mode_of, mode_text
 
     text = chapter_summary(save, for_player=True)
     if not text.strip():
         return []
-    return ["## 冒险目标", "", text]
+    lines = ["## 冒险目标", ""]
+    mode = mode_of(save)
+    if mode.key != "standard":
+        lines.append(mode_text(save))
+        lines.append("")
+    lines.append(text)
+    return lines
 
 
 def _epoch_section(save: Save) -> list[str]:
