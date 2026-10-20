@@ -35,8 +35,6 @@ from .save_store import Save, get_character, save_dir
 from .world_bible import KIND_LABELS, load_bible
 from .world_store import (
     MAIN_DOC_KEY,
-    StoryInfo,
-    get_story,
     get_world,
     load_doc,
 )
@@ -192,41 +190,21 @@ def _world_section(save: Save) -> list[str]:
     return lines
 
 
-def _story_section(save: Save) -> list[str]:
-    """本局故事：名称、简介、世界起点与推力。"""
-    if not save.story_key:
-        return []
-    story = get_story(save.world_key, save.story_key)
-    content = load_doc(save.world_key, "story", save.story_key) or ""
-    if story is None and not content:
-        return []
+def _chapter_section(save: Save) -> list[str]:
+    """冒险目标：当前章节的目标、完成条件、已知线索与已完成章节。
 
-    lines = ["## 故事背景"]
-    title = story.title if isinstance(story, StoryInfo) else ""
-    if not title:
-        title = _label_value(content, "故事名称") or save.story_key
-    intro = story.intro if isinstance(story, StoryInfo) else ""
-    if not intro:
-        intro = _label_value(content, "一句话简介")
-    if title:
-        lines.append(f"**{title}**")
-    if intro:
-        lines.append(intro)
-    if len(lines) == 1:
-        return []
+    章节卡取代了原来的故事推力，所以手册这一节从「故事背景」变成了
+    「现在该干什么」——玩家最需要知道的是**下一步问什么**。
 
-    # 只取「世界起点」这类开篇设定，不碰后续章节（避免剧透）
-    sections = _sections(content)
-    start = _find(sections, "世界起点", "起点")
-    for label, value in _labeled_lines(start):
-        if label in ("时间背景", "整体格局", "近期大事", "未解悬念", "玩家切入点"):
-            lines.append(f"- **{label}**：{_first_paragraph(value, 240)}")
-    if len(lines) <= 2:
-        fallback = _first_paragraph(content)
-        if fallback:
-            lines.append("")
-            lines.append(fallback)
-    return lines
+    难度数值、威胁层级、fail_forward 这些**不进手册**：
+    手册是发给玩家的，不该剧透DM 侧的难度设计。
+    """
+    from .chapter import chapter_summary
+
+    text = chapter_summary(save, for_player=True)
+    if not text.strip():
+        return []
+    return ["## 冒险目标", "", text]
 
 
 def _bible_section(save: Save) -> list[str]:
@@ -284,7 +262,9 @@ def _party_section(save: Save) -> list[str]:
 
 
 #: 各分节的构建器（按展示顺序）
-_BUILDERS = (_world_section, _story_section, _bible_section, _party_section)
+#: 手册各节的拼装顺序。章节节取代了原来的故事节——
+#: 章节卡既然接手了「玩家该干什么」，手册就该讲这个，而不是讲背景故事。
+_BUILDERS = (_world_section, _chapter_section, _bible_section, _party_section)
 
 
 # --------------------------------------------------------------------------- #

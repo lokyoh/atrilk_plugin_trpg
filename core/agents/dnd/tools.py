@@ -129,9 +129,8 @@ from ...dnd.storage import load_card, save_card
 from ...dnd.world_store import (
     DOC_KIND_LABELS,
     DOC_KINDS,
-    get_story,
+    list_chapters,
     list_docs,
-    list_stories,
     load_doc,
     read_doc,
 )
@@ -145,6 +144,7 @@ __all__ = [
     "AttackTool",
     "AwaitPlayersTool",
     "CastSpellTool",
+    "CheckChapterTool",
     "CheckTool",
     "EndCombatTool",
     "EnemyAttackTool",
@@ -152,6 +152,8 @@ __all__ = [
     "MoveSceneTool",
     "MoveTool",
     "NarrateTool",
+    "NoteChapterTool",
+    "OfferChaptersTool",
     "QueryDataTool",
     "ReadSceneTool",
     "RecallTool",
@@ -160,6 +162,7 @@ __all__ = [
     "RollDiceTool",
     "SecretRollTool",
     "StartCombatTool",
+    "TakeChapterTool",
     "UpdateBattlefieldTool",
     "UpdateCharacterTool",
     "UpdateEnemyTool",
@@ -715,8 +718,9 @@ _DATA_ALIASES = {
     "world": "world",
     "世界": "world",
     "世界地图": "world",
-    "story": "story",
-    "剧情": "story",
+    "chapter": "chapter",
+    "章节": "chapter",
+    "章节卡": "chapter",
     "area": "area",
     "区域": "area",
     "city": "city",
@@ -737,22 +741,28 @@ def _query_world_doc(context: AgentContext, kind: str, name: str) -> str:
     save = load_save(context.save_id) if context.save_id else None
     world_key = save.world_key if save is not None else "main"
 
-    if kind == "story":
-        # 故事的键是自动生成的 ID，按「键或标题」展示与查找更友好。
-        stories = list_stories(world_key)
+    if kind == "chapter":
+        # 章节卡的键是自动生成的 ID（形如 ch3_20261021_ab12），按标题找更符合使用习惯
+        cards = list_chapters(world_key)
         if not name:
-            if not stories:
-                return "这个世界里还没有故事文档"
-            return "故事文档：" + "；".join(
-                f"{s.title}" + (f"（{s.intro}）" if s.intro else "") for s in stories
+            if not cards:
+                return "这个世界里还没有章节卡"
+            return "章节卡：" + "；".join(
+                f"{c.title}（{c.arc_label}"
+                + (f"· CR {c.target_cr}" if c.target_cr else "")
+                + "）"
+                for c in cards
             )
-        story = get_story(world_key, name)
-        if story is None:
-            return f"没有找到故事「{name}」。现有：" + (
-                "、".join(s.title for s in stories) or "（空）"
+        picked = next(
+            (c for c in cards if name in (c.key, c.title)),
+            None,
+        )
+        if picked is None:
+            return f"没有找到章节卡「{name}」。现有：" + (
+                "、".join(c.title or c.key for c in cards) or "（空）"
             )
-        text = load_doc(world_key, "story", story.key)
-        return text or f"故事「{story.title}」的文档是空的"
+        text = load_doc(world_key, "chapter", picked.key)
+        return text or f"章节卡「{picked.title}」的文档是空的"
 
     keys = list_docs(world_key, kind).get(kind, [])
     if not name:
@@ -772,7 +782,7 @@ class QueryDataTool(AgentTool):
     max_result_chars = 2500
     description = (
         "查 DND 数据表（race/profession/skill/weapon/armor/monster/spell/condition/"
-        "difficulty/npc_tier/npc）或世界库文档（world/story/area/city/place/dungeon/scene），"
+        "difficulty/npc_tier/npc）或世界库文档（world/chapter/area/city/place/dungeon/scene），"
         "table 可写中文"
     )
     args = (
@@ -805,7 +815,7 @@ class QueryDataTool(AgentTool):
             return (
                 "未知数据表，可用：race / profession / skill / weapon / armor / monster / "
                 "spell / condition / difficulty / npc_tier / npc，或世界库文档："
-                "world / story / area / city / place / dungeon / scene"
+                "world / chapter / area / city / place / dungeon / scene"
             )
         try:
             return handler(text)
@@ -2522,6 +2532,111 @@ class RecallTool(AgentTool):
 
 
 # --------------------------------------------------------------------------- #
+# 章节
+# --------------------------------------------------------------------------- #
+
+
+class OfferChaptersTool(AgentTool):
+    """织出下一章的候选走向（纯程序，不调模型）。"""
+
+    function_name = "offer_chapters"
+    description = "织出下一章的候选走向（纯程序）给玩家挑；开局会自动织一次"
+    args = (
+        ToolArg("count", "int", "几个走向，默认 3，最多 5"),
+        ToolArg("difficulty", "str", "easy/medium/hard/deadly，默认 medium"),
+    )
+
+    @staticmethod
+    async def call(
+        context: AgentContext, count: Any = 3, difficulty: Any = "medium", **kwargs: Any
+    ) -> str:
+        from .chapter_flow import branch_choices_text, offer_branches
+
+        save = load_save(context.save_id) if context.save_id else None
+        if save is None:
+            return "当前没有存档，无法织章节"
+        if load_combat(save) is not None:
+            return "战斗还没结束，先 end_combat 再开新章"
+        want = max(1, min(_parse_int(count, 3), 5))
+        offer_branches(save, difficulty=str(difficulty or "medium"), branch_count=want)
+        return branch_choices_text(save)
+
+
+class TakeChapterTool(AgentTool):
+    """把选中的走向织成完整的章节卡（会调模型写正文）。"""
+
+    function_name = "take_chapter"
+    description = "选定一个走向，织成这一章的任务卡（会调模型）并挂进存档"
+    args = (ToolArg("ref", "str", "走向的序号（1 起）或标题"),)
+
+    @staticmethod
+    async def call(context: AgentContext, ref: Any = "", **kwargs: Any) -> str:
+        from .chapter_flow import weave_chapter
+
+        save = load_save(context.save_id) if context.save_id else None
+        if save is None:
+            return "当前没有存档，无法织章节"
+        if load_combat(save) is not None:
+            return "战斗还没结束，先 end_combat 再开新章"
+        outcome = await weave_chapter(save, str(ref or ""))
+        if not outcome.ok:
+            return outcome.summary()
+        tail = f"（校验提醒：{'；'.join(outcome.problems)}）" if outcome.problems else ""
+        return outcome.summary() + tail
+
+
+class CheckChapterTool(AgentTool):
+    """勾 / 取消一条完成条件。"""
+
+    function_name = "check_chapter"
+    description = "勾 / 取消一条完成条件（描述性目标由你判定）"
+    args = (
+        ToolArg("index", "int", "条件序号，从 1 起"),
+        ToolArg("done", "bool", "true 勾上 / false 取消，默认 true"),
+    )
+
+    @staticmethod
+    async def call(
+        context: AgentContext, index: Any = 0, done: Any = True, **kwargs: Any
+    ) -> str:
+        from ...dnd.chapter import auto_sync_objectives, check_objective, chapter_summary
+
+        save = load_save(context.save_id) if context.save_id else None
+        if save is None:
+            return "当前没有存档"
+        auto_sync_objectives(save)
+        pos = _parse_int(index, 0) - 1
+        if pos < 0:
+            return "条件序号从 1 起"
+        checked = check_objective(save, pos, done=bool(done))
+        return f"{'已勾上' if done else '已取消'}第 {pos + 1} 条（{checked} 条已完成）\n" + (
+            chapter_summary(save, for_player=False)
+        )
+
+
+class NoteChapterTool(AgentTool):
+    """记一条线索（客观完成条件会自动勾上）。"""
+
+    function_name = "note_chapter"
+    description = "记一条线索或物件名；线索 / 物品类的完成条件会自动勾上"
+    args = (ToolArg("clue", "str", "线索或物件的名字，20 字以内"),)
+
+    @staticmethod
+    async def call(context: AgentContext, clue: Any = "", **kwargs: Any) -> str:
+        from ...dnd.chapter import auto_sync_objectives, note_clue
+
+        save = load_save(context.save_id) if context.save_id else None
+        if save is None:
+            return "当前没有存档"
+        body = str(clue or "").strip()
+        if not body:
+            return "线索内容为空"
+        note_clue(save, body)
+        done, total = auto_sync_objectives(save)
+        return f"已记下线索「{body}」；完成条件进度 {done}/{total}"
+
+
+# --------------------------------------------------------------------------- #
 # 结档
 # --------------------------------------------------------------------------- #
 
@@ -2578,6 +2693,10 @@ DM_TOOLS: tuple[type[AgentTool], ...] = (
     RestTool,
     RememberTool,
     RecallTool,
+    OfferChaptersTool,
+    TakeChapterTool,
+    CheckChapterTool,
+    NoteChapterTool,
     AwaitPlayersTool,
     WrapUpTool,
     NarrateTool,

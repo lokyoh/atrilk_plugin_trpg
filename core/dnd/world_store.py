@@ -1,9 +1,13 @@
 """全局共享世界文档库（多世界）。
 
-入场流程（``.agents/new_plusin_lktrpg.md`` 的 DM Agent 入场流程）生成的世界 / 剧情 /
-区域 / 城镇 / 地点 / 地下城 / 场景文档，统一放在这里。库支持**多个世界**：
+入场流程（``.agents/new_plusin_lktrpg.md`` 的 DM Agent 入场流程）生成的世界 / 区域 /
+城镇 / 地点 / 地下城 / 场景文档，统一放在这里。库支持**多个世界**：
 每个世界有自己独立的文档库与索引，多份存档（:mod:`.save_store`）可以共用
-同一个世界；同一个世界里可以有**多个故事**（``story`` 文档）。
+同一个世界。
+
+库里的文档分两层：**世界骨架**（world / area / city / place / dungeon / scene）
+在任何存档之间共享，换一局、换一条路线都不变；**章节卡**（``chapter``）是剧本层，
+织出来就落在这个世界里，所以织过的章可以复玩。
 
 落盘形态为「markdown 文件 + JSON 索引 + 世界注册表」：
 
@@ -16,7 +20,7 @@
             docs/<kind>/<key>.md        # 每个文档一个 markdown 文件
 
 ``kind`` 取 :data:`DOC_KINDS`；每个世界的主文档（世界地图）键固定为 ``main``，
-故事文档键由 :func:`new_story_id` 生成。
+章节卡键由 :func:`new_chapter_id` 生成（并复用卡自身的 id，所以重复保存幂等）。
 """
 
 from __future__ import annotations
@@ -38,29 +42,27 @@ __all__ = [
     "REGISTRY_FILENAME",
     "WORLDS_DIRNAME",
     "WORLD_DIRNAME",
-    "StoryInfo",
     "WorldDoc",
     "WorldInfo",
     "clean_name",
     "delete_doc",
     "doc_path",
     "docs_dir",
-    "get_story",
     "get_world",
     "get_world_map",
     "index_path",
     "list_docs",
-    "list_stories",
     "list_worlds",
     "load_doc",
     "load_index",
-    "new_story_id",
     "new_world_id",
     "read_doc",
     "registry_path",
     "save_doc",
     "set_world_map",
-    "story_text",
+    "list_chapters",
+    "new_chapter_id",
+    "ChapterRefInfo",
     "upsert_world",
     "world_dir",
     "world_root",
@@ -70,23 +72,23 @@ __all__ = [
 #: 文档种类
 DOC_KINDS: tuple[str, ...] = (
     "world",
-    "story",
     "area",
     "city",
     "place",
     "dungeon",
     "scene",
+    "chapter",
 )
 
 #: 文档种类 -> 中文名
 DOC_KIND_LABELS: dict[str, str] = {
     "world": "世界",
-    "story": "剧情",
     "area": "区域",
     "city": "城镇",
     "place": "地点",
     "dungeon": "地下城",
     "scene": "场景",
+    "chapter": "章节",
 }
 
 WORLD_DIRNAME = "world"
@@ -432,38 +434,19 @@ def list_docs(world_key: str, kind: str | None = None) -> dict[str, list[str]]:
 
 
 # --------------------------------------------------------------------------- #
-# 世界内故事：多个 story 文档，键 + 名称 + 一句话简介
+# 名称归一
 # --------------------------------------------------------------------------- #
-
-
-@dataclass(slots=True)
-class StoryInfo:
-    """世界内一个故事的注册信息（来自该世界索引的 ``story`` 条目）。"""
-
-    key: str
-    title: str = ""
-    intro: str = ""
-
-
-def list_stories(world_key: str) -> list[StoryInfo]:
-    """某个世界里的全部故事（按创建顺序；标题已剥掉首尾包裹符）。"""
-    index = load_index(world_key)
-    return [
-        StoryInfo(
-            key=str(key),
-            title=clean_name(str(entry.get("title") or key)),
-            intro=clean_name(str(entry.get("intro") or "")),
-        )
-        for key, entry in index["docs"]["story"].items()
-    ]
-
 
 #: 名称首尾常见的包裹符号（Markdown 强调、书名号、引号等）
 _WRAP_CHARS = "*_`《》「」『』“”\"'<>"
 
 
 def clean_name(value: str) -> str:
-    """剥掉名称首尾的包裹符号并去空白；比较与展示前统一用它归一。"""
+    """剥掉名称首尾的包裹符号并去空白；比较与展示前统一用它归一。
+
+    索引里存下的标题常带``**`` 之类的强调符（模型生成时很容易带），
+    玩家按纯文本查世界时也得能查到，所以查找与展示前都先归一。
+    """
     text = str(value or "").strip()
     while len(text) >= 2 and text[0] in _WRAP_CHARS and text[-1] in _WRAP_CHARS:
         inner = text[1:-1].strip()
@@ -473,47 +456,62 @@ def clean_name(value: str) -> str:
     return text
 
 
-def get_story(world_key: str, ref: str) -> StoryInfo | None:
-    """按键或标题取某个世界里的故事；找不到返回 ``None``。
+# --------------------------------------------------------------------------- #
+# 章节卡（剧本层，织出来就落在世界里）
+# --------------------------------------------------------------------------- #
 
-    匹配前会剥掉查询词与标题首尾的包裹符号（如 ``**名字**``），因此索引里
-    已存的带强调符标题也能用纯文本找到。
+
+@dataclass(slots=True)
+class ChapterRefInfo:
+    """世界内一张章节卡的注册信息（来自该世界索引的 ``chapter`` 条目）。"""
+
+    key: str
+    title: str = ""
+    arc: str = ""
+    #: 织出这张卡的难度档与章节序号（写进索引元信息，方便按难度挑卡）
+    chapter_no: int = 0
+    target_cr: str = ""
+    updated_at: float = 0.0
+
+    @property
+    def arc_label(self) -> str:
+        from .chapter import ARC_LABELS
+
+        return ARC_LABELS.get(self.arc, self.arc)
+
+
+def list_chapters(world_key: str) -> list[ChapterRefInfo]:
+    """某个世界里的全部章节卡（按更新时间倒序；最新织的在前）。"""
+    index = load_index(world_key)
+    items: list[ChapterRefInfo] = []
+    for key, entry in index["docs"]["chapter"].items():
+        items.append(
+            ChapterRefInfo(
+                key=str(key),
+                title=clean_name(str(entry.get("title") or key)),
+                arc=str(entry.get("arc") or ""),
+                chapter_no=int(entry.get("chapter_no") or 0),
+                target_cr=str(entry.get("target_cr") or ""),
+                updated_at=float(entry.get("updated_at") or 0.0),
+            )
+        )
+    items.sort(key=lambda c: c.updated_at, reverse=True)
+    return items
+
+
+def new_chapter_id(world_key: str, prefix: str = "ch") -> str:
+    """在世界里生成一个不冲突的章节键，形如 ``ch1_20261021_a1b2``。
+
+    带章节序号前缀是为了让人一眼看出这是第几章的卡，也方便按序排。
     """
-    ref = clean_name(ref)
-    if not ref:
-        return None
-    for story in list_stories(world_key):
-        if ref in (story.key, story.title):
-            return story
-    return None
-
-
-def new_story_id(world_key: str) -> str:
-    """在世界里生成一个不冲突的故事键，形如 ``story_20261019_a1b2``。"""
-    stamp = time.strftime("%Y%m%d")
-    existing = set(load_index(world_key)["docs"]["story"])
+    stamp = time.strftime("%Ym%d")
+    tag = _safe_key(prefix) or "ch"
+    existing = set(load_index(world_key)["docs"]["chapter"])
     for _ in range(20):
-        candidate = f"story_{stamp}_{uuid.uuid4().hex[:4]}"
+        candidate = f"{tag}_{stamp}_{uuid.uuid4().hex[:4]}"
         if candidate not in existing:
             return candidate
-    return f"story_{stamp}_{uuid.uuid4().hex[:8]}"
-
-
-def story_text(world_key: str, story_key: str = "") -> str:
-    """取某个世界的故事正文：先按给定键，再退回 ``main`` / 世界里的第一个故事。
-
-    旧存档只有默认世界里的 ``story/main``；新存档记录着自己的故事键。
-    """
-    for key in (str(story_key or "").strip(), MAIN_DOC_KEY):
-        if key:
-            text = load_doc(world_key, "story", key)
-            if text:
-                return text
-    for story in list_stories(world_key):
-        text = load_doc(world_key, "story", story.key)
-        if text:
-            return text
-    return ""
+    return f"{tag}_{stamp}_{uuid.uuid4().hex[:8]}"
 
 
 # --------------------------------------------------------------------------- #

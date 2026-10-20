@@ -137,13 +137,15 @@ def _preset_profile(directory: Path) -> tuple[str, str]:
 
 
 def _seed_bible(key: str, index: dict[str, Any]) -> None:
-    """装完库后播种世界圣经：世界文档 + 故事 / 场景里的实体。
+    """装完库后播种世界圣经：世界文档与场景里的实体。
 
-    全部是程序提取（地区 / 地标 / 国都 / 特殊地区、故事小标题、场景在场者），
+    全部是程序提取（地区 / 地标 / 国都 / 特殊地区、场景在场者），
     零模型成本——装完的预设世界和「现生成」的一样，开局即有圣经可用。
+
+    章节卡不再这里播种：它是**游玩过程中**织出来才落库的，
+    开局时世界库里一章都没有。
     """
     from ..agents.dnd.gen_scene import parse_scene_npcs
-    from ..agents.dnd.gen_story import parse_story_entities
     from .world_bible import entities_from_json, register_entities, seed_from_world
 
     seed_from_world(key)
@@ -153,9 +155,6 @@ def _seed_bible(key: str, index: dict[str, Any]) -> None:
         source="world",
     )
     docs = index.get("docs") or {}
-    for story_key in docs.get("story") or {}:
-        text = load_doc(key, "story", str(story_key)) or ""
-        register_entities(key, parse_story_entities(text), source=str(story_key))
     for scene_key in docs.get("scene") or {}:
         text = load_doc(key, "scene", str(scene_key)) or ""
         register_entities(key, parse_scene_npcs(text), source=f"scene:{scene_key}")

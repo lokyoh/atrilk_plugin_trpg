@@ -105,8 +105,27 @@ _STORY_RULES = """## 剧情主持
 
 
 # --------------------------------------------------------------------------- #
-# 战斗主持
+# 章节主持
 # --------------------------------------------------------------------------- #
+
+_CHAPTER_RULES = """## 章节
+- 提示词里的【冒险构架】是**当前这一章**的任务卡：目标、若干条可勾选的完成条件、
+  已知线索、目标 CR 与本章经验预算、没做完会怎样。它不是剧本，只是这一章的边界。
+- **完成条件就是你的记事板**：条件达成时用 check_chapter 勾掉（能自动判的线索 / 物品
+  类由系统自动勾，描述性的要你判）。别在叙述里宣布「本章完成」——那是玩家的决定。
+- **难度是给遭遇用的，不是给玩家看的**：目标 CR 与经验预算决定你派什么怪、几波、
+  多硬；这些数字不进叙述，也不要用「这一章很难」暗示玩家。玩家的失败由 fail_forward
+  兜底——没做完时事情照常往下走，而不是重开本章。
+- 章节没写的地方由你即兴发挥，但要留在这一章的范围里：**别提前抖后面几章的东西**，
+  也别把完成条件指向一个玩家到不了的场景。
+- 一章的目标都勾完了，别自己往下推进：先收尾这一章的余波（谁受损、谁欠了谁），
+  需要开新章时用 offer_chapters / take_chapter。
+"""
+
+
+# --------------------------------------------------------------------------- #
+# 战斗主持
+# --------------------------------------------------------------------------- # #
 
 _COMBAT_RULES = """## 战斗主持
 - 提示词里出现【战斗】块时说明正在逐回合战斗：块里写清了先攻顺序、当前该行动的玩家、各人血量 / AC、行动资源，以及【战场】棋盘与距离。这时只有当前回合的玩家能行动（别人发言会被系统挡回）。
@@ -180,6 +199,15 @@ class DungeonMasterAgent(ThinkingAgent):
             description="当前场景的简介；布局 / 在场者 / 隐藏信息用 get_scene 查",
         ),
         AgentInput(
+            "chapter",
+            "冒险构架",
+            required=False,
+            description=(
+                "当前章节卡：目标、完成条件（可勾选）、已知线索、目标 CR 与"
+                "本章经验预算、没做完会怎样；没有当前章节时为空"
+            ),
+        ),
+        AgentInput(
             "bible",
             "世界圣经",
             required=False,
@@ -229,10 +257,16 @@ class DungeonMasterAgent(ThinkingAgent):
         return tuple(tool for tool in self.tools if tool.function_name not in hidden)
 
     def compose_system(self, values: Mapping[str, Any]) -> str:
-        """拼系统提示词：通用原则 + （战斗规则 | 剧情规则）。"""
+        """拼系统提示词：通用原则 + 章节规则 + （战斗规则 | 剧情规则）。"""
         in_combat = bool(str(values.get("combat", "") or "").strip())
         mode_rules = _COMBAT_RULES if in_combat else _STORY_RULES
-        return f"{_DM_CORE}\n\n{mode_rules}"
+        # 章节规则只在真的有当前章节时拼——每一步都要重发系统提示词，
+        # 没有章节的开局（生成世界的过程中）不该为它付费。
+        blocks = [_DM_CORE]
+        if str(values.get("chapter", "") or "").strip():
+            blocks.append(_CHAPTER_RULES)
+        blocks.append(mode_rules)
+        return "\n\n".join(b for b in blocks if b)
 
     def build_messages(self, values: Mapping[str, Any]) -> LLMMessages:
         """系统提示词（按模式 + 该模式的功能子集）+ 用户输入。"""

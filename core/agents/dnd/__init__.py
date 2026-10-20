@@ -3,7 +3,7 @@
 生成类（入场流程，走工作模型 ``WORK``）：
 
 - :mod:`.gen_world`：世界地图生成（``world``）
-- :mod:`.gen_story`：世界起点与推力设定（``story``）
+- :mod:`.gen_chapter`：章节卡生成（``chapter``）——取代原先的「世界起点与推力」
 - :mod:`.gen_area`：地区详细生成（``area``）
 - :mod:`.gen_place`：地形地貌详细生成（``place``）
 - :mod:`.gen_city`：城镇据点详细生成（``city``）
@@ -16,8 +16,8 @@
 
 流程类：
 
-- :mod:`.entry`：入场编排（``run_entry_flow`` 生成新世界 + 第一个故事；``run_story_flow``
-  往已有世界追加新故事）
+- :mod:`.entry`：入场编排（``run_entry_flow`` 生成新世界；``run_world_refresh`` 补齐残缺世界）
+- :mod:`.chapter_flow`：章节线编排（算难度 → 织候选走向 → 选定后织正文 → 推进下一章）
 - :mod:`.on_demand`：按需补齐区域 / 地点 / 场景（缺什么生成什么，按存档的世界作用域）
 - :mod:`.game`：本轮行动编排（``submit_action`` / ``run_dm_round``）与场景切换（``open_scene``）
 
@@ -34,12 +34,21 @@ from __future__ import annotations
 
 from .build_scene import SceneBuilderAgent, scene_builder_agent
 from .dm import DMAgent, DungeonMasterAgent, dm_agent
+from .chapter_flow import (
+    ChapterPlan,
+    advance_chapter,
+    branch_choices_text,
+    chapter_plan,
+    ensure_opening_chapter,
+    offer_branches,
+    weave_chapter,
+)
 from .entry import (
     DEFAULT_OPTIONS,
     EntryOptions,
     EntryReport,
     run_entry_flow,
-    run_story_flow,
+    run_world_refresh,
 )
 from .game import (
     TurnResult,
@@ -56,12 +65,7 @@ from .gen_city import CityAgent, city_agent
 from .gen_dungeon import DungeonAgent, dungeon_agent
 from .gen_place import PlaceAgent, place_agent
 from .gen_scene import SceneAgent, scene_agent
-from .gen_story import (
-    StoryAgent,
-    StoryResult,
-    parse_story_profile,
-    story_agent,
-)
+from .gen_chapter import ChapterAgent, ChapterResult, chapter_agent
 from .gen_world import (
     WorldAgent,
     WorldMapResult,
@@ -78,6 +82,7 @@ __all__ = [
     "DM_TOOLS",
     "AreaAgent",
     "AreaResult",
+    "ChapterAgent",
     "CityAgent",
     "DMAgent",
     "DungeonAgent",
@@ -87,43 +92,48 @@ __all__ = [
     "PlaceAgent",
     "SceneAgent",
     "SceneBuilderAgent",
-    "StoryAgent",
-    "StoryResult",
+    "ChapterPlan",
+    "ChapterResult",
     "TurnResult",
     "WorldAgent",
     "WorldMapResult",
+    "advance_chapter",
     "area_agent",
+    "branch_choices_text",
     "build_scene_for_save",
+    "chapter_agent",
+    "chapter_plan",
     "city_agent",
     "dm_agent",
     "dungeon_agent",
+    "ensure_opening_chapter",
     "ensure_scene",
     "get_agent",
     "is_started",
     "normalize_kind",
     "open_scene",
+    "offer_branches",
     "parse_area",
-    "parse_story_profile",
     "parse_world_map",
     "parse_world_profile",
     "place_agent",
     "run_dm_round",
     "run_entry_flow",
     "run_opening",
-    "run_story_flow",
+    "run_world_refresh",
     "scene_agent",
     "scene_builder_agent",
     "scene_text",
     "slice_block",
-    "story_agent",
     "submit_action",
+    "weave_chapter",
     "world_agent",
 ]
 
 #: 全部 agent 实例，按 :attr:`~..base.TrpgAgent.name` 索引
 AGENTS = {
     world_agent.name: world_agent,
-    story_agent.name: story_agent,
+    chapter_agent.name: chapter_agent,
     area_agent.name: area_agent,
     place_agent.name: place_agent,
     city_agent.name: city_agent,

@@ -69,10 +69,11 @@ from ...dnd.save_store import (
     save_save,
     set_character,
 )
+from ...dnd.chapter import chapter_summary, current_card
 from ...dnd.settlement import settle_combat
 from ...dnd.world_bible import bible_text
 from ...dnd.world_brief import build_world_brief
-from ...dnd.world_store import read_doc, story_text
+from ...dnd.world_store import read_doc
 from ...trpg.rule import Verdict
 from ...trpg.text import strip_player_hints
 from ..base import AgentError
@@ -322,6 +323,19 @@ def _progress_text(save) -> str:
     return "\n".join(lines)
 
 
+def _chapter_brief(save) -> str:
+    """当前章节的构架文本（给 DM 与场景构建器看）。
+
+    用 :func:`~...dnd.chapter.chapter_summary` 的 DM 侧形态，所以这一段里
+    **包含难度数值与 fail_forward**——那是 DM 该知道、玩家不该看到的。
+    """
+    try:
+        return chapter_summary(save, for_player=False)
+    except Exception as e:  # 章节状态读不出来不该拦住切换场景
+        log.warning(f"读章节进度失败：{str_traceback(e)}")
+        return ""
+
+
 #: 复盘「裁定」一行要收进来的功能（其余是查询 / 叙述 / 世界书类，不必进流水）
 _STORY_RULING_TOOLS = (
     "roll_dice",
@@ -478,14 +492,15 @@ def _finish_save(save, chat_id: str, *, note: str = "本局就此结档。") -> 
 async def build_scene_for_save(save, generic: str) -> str | None:
     """用场景构建器把**通用场景**改造成**本局专属场景**；失败返回 ``None``。
 
-    这是链路上**唯一**允许看故事的地方：本局专属化只发生在存档的场景副本里，
-    世界库那份通用场景原样不动——所以换一条故事线跑，同一个世界的骨架还是同一副。
+    这是链路上**唯一**允许看章节卡的地方：本局专属化只发生在存档的场景副本里，
+    世界库那份通用场景原样不动——所以换一个存档、换一条路线跑，
+    同一个世界的骨架还是同一副。
     """
     try:
         with bind_save(save.save_id):
             result = await scene_builder_agent.run(
                 scene=generic,
-                story=story_text(save.world_key, save.story_key),
+                adventure=_chapter_brief(save),
                 party=_party_text(save),
                 progress=_progress_text(save),
                 history=events_text(save, 10),
@@ -1167,6 +1182,7 @@ async def run_dm_round(
                 scene=scene,
                 npcs=roster,
                 bible=bible,
+                chapter=_chapter_brief(save),
                 ending=_ending_text(save),
                 combat=combat_block,
                 history=history,
@@ -1311,6 +1327,9 @@ async def run_opening(*, save_id: str, chat_id: str = "") -> TurnResult:
 
     ``/跑团.开局`` 只建存档、不跑开场；等玩家陆续 ``/跑团.加入`` 之后，由任意
     已加入的玩家发 ``/跑团.开始`` 调到这里正式开局。
+
+    开局前会先织出**第一章**：这是章节线唯一「不问玩家」的自动一步——第一张卡
+    由 DM 依章节规则选定走向（``take_chapter("1")``），之后再每一章都由玩家挑。
     """
     save = load_save(save_id)
     if save is None:
@@ -1318,6 +1337,19 @@ async def run_opening(*, save_id: str, chat_id: str = "") -> TurnResult:
             Verdict.NEED_INFO,
             message="这局冒险的存档不见了，发送 /跑团.开局 重新开启。",
         )
+    if current_card(save) is None:
+        from .chapter_flow import ensure_opening_chapter, weave_chapter
+
+        try:
+            await ensure_opening_chapter(save)
+            outcome = await weave_chapter(save, "1")
+        except Exception as e:
+            # 织不出章节不该拦住开局：DM 照样能主持，只是这一局没有任务卡
+            log.warning(f"开局织第一章失败（继续开局）：{str_traceback(e)}")
+            outcome = None
+        if outcome is not None and outcome.problems:
+            log.warning(f"开局第一章有校验提醒：{outcome.problems}")
+        save_save(save)
     actions = {str(uid): {"action": "", "resolution": ""} for uid in save.player_ids}
     result = await run_dm_round(
         save_id=save.save_id, actions=actions, chat_id=chat_id, opening=True
