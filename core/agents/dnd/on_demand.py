@@ -31,7 +31,6 @@ from ...dnd.world_store import (
     load_doc,
     read_doc,
     save_doc,
-    story_text,
 )
 from .gen_area import area_agent, parse_area
 from .gen_city import city_agent
@@ -181,10 +180,12 @@ def _register_area(world_key: str, region: str, content: str) -> None:
     register_entities(world_key, seeded, source=region)
 
 
-async def ensure_area(
-    world_key: str, story_key: str, region: str, world_text: str = ""
-) -> str | None:
-    """确保世界里存在某区域的区域文档，返回其正文；失败返回 ``None``。"""
+async def ensure_area(world_key: str, region: str, world_text: str = "") -> str | None:
+    """确保世界里存在某区域的区域文档，返回其正文；失败返回 ``None``。
+
+    区域属于**世界**，不属于某一局的故事：生成时只喂世界档案与邻居地区的设定，
+    绝不把故事文档塞进来（否则生成的区域会带上这一局的剧情，换条故事线就矛盾）。
+    """
     region = str(region or "").strip()
     if not region:
         return None
@@ -193,22 +194,45 @@ async def ensure_area(
         return existing.content
 
     world = world_text or load_doc(world_key, "world", "main") or ""
-    story = story_text(world_key, story_key)
     region_text = slice_block(world, "地区", region) or world
-    neighbors = "、".join(get_world_map(world_key)[1].get(region, []))
+    neighbor_names = get_world_map(world_key)[1].get(region, [])
+    neighbors = "、".join(neighbor_names)
     content = await _run_agent(
         area_agent,
         f"区域「{region}」",
         world_key,
         region=region_text,
         neighbors=neighbors,
-        world=story,
+        world=_world_context(world, neighbor_names),
     )
     if content is None:
         return None
     save_doc(world_key, "area", region, content, title=region)
     _register_area(world_key, region, content)
     return content
+
+
+def _world_context(world_text: str, neighbors: list[str]) -> str:
+    """给区域生成器的「世界上下文」：世界档案头 + 相邻地区的设定（不含剧情）。
+
+    只取与世界本身有关的部分——名称和一句话简介定基调，相邻地区定衔接风格；
+    故事文档一律不进这里。取不到就返回空串（该项输入本就可留空）。
+    """
+    lines: list[str] = []
+    head: list[str] = []
+    for line in (world_text or "").splitlines():
+        if line.startswith("## ") or line.startswith("```"):
+            break
+        if line.strip():
+            head.append(line.strip())
+    if head:
+        lines.extend(head)
+    for name in neighbors or []:
+        block = slice_block(world_text, "地区", name)
+        if block:
+            lines.append("")
+            lines.append(block)
+    return "\n".join(lines).strip()
 
 
 async def _ensure_detailed(
@@ -262,7 +286,6 @@ async def _make_scene(
 
 async def ensure_scene(
     world_key: str,
-    story_key: str,
     location: str,
     *,
     kind: str = "",
@@ -272,6 +295,10 @@ async def ensure_scene(
 
     逐级补齐：场景 → 详细文档（城镇 / 自然地点 / 地下城）→ 区域。
     无法定位时返回 ``None``。
+
+    写回世界库的这几级都**不带故事**：世界库里的区域 / 地点 / 场景是世界的骨架，
+    哪条故事线来跑都该是同一副骨架；本局的专属化由 :func:`~.game.build_scene_for_save`
+    在存档副本里做，不回头污染世界库。
     """
     name = str(location or "").strip()
     if not name:
@@ -314,7 +341,7 @@ async def ensure_scene(
         # 谁都不知道玩家要去哪：先把第一个区域铺开，从中挑一个地点
         region_name = regions[0]
     if region_name:
-        area_text = await ensure_area(world_key, story_key, region_name, world_text)
+        area_text = await ensure_area(world_key, region_name, world_text)
         if area_text:
             picked = _first_location(area_text, kind_key)
             if picked is not None:

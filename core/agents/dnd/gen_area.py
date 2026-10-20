@@ -191,7 +191,7 @@ class AreaAgent(TrpgAgent):
             "world",
             "世界上下文",
             required=False,
-            description="世界地区描述文档或世界推力设定，供保持一致，可留空",
+            description="世界名称 / 一句话简介与相邻地区的设定，供保持一致，可留空",
         ),
         AgentInput(
             "bible",

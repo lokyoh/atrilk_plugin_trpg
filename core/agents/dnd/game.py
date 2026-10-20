@@ -476,7 +476,11 @@ def _finish_save(save, chat_id: str, *, note: str = "本局就此结档。") -> 
 
 
 async def build_scene_for_save(save, generic: str) -> str | None:
-    """用场景构建器把**通用场景**改造成**本局专属场景**；失败返回 ``None``。"""
+    """用场景构建器把**通用场景**改造成**本局专属场景**；失败返回 ``None``。
+
+    这是链路上**唯一**允许看故事的地方：本局专属化只发生在存档的场景副本里，
+    世界库那份通用场景原样不动——所以换一条故事线跑，同一个世界的骨架还是同一副。
+    """
     try:
         with bind_save(save.save_id):
             result = await scene_builder_agent.run(
@@ -505,7 +509,7 @@ async def open_scene(
     :return: ``(场景键, 场景正文)``；无法定位地点时返回 ``None``。
     """
     resolved = await ensure_scene(
-        save.world_key, save.story_key, location, kind=kind, region=region
+        save.world_key, location, kind=kind, region=region
     )
     if resolved is None:
         return None
