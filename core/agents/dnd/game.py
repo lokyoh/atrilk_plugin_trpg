@@ -41,7 +41,6 @@ from ...dnd.combat import (
     living_enemies,
     load_combat,
     peek_following,
-    resources_text,
     save_combat,
     use_resource,
 )
@@ -660,15 +659,37 @@ def _player_status_line(save, state) -> str:
     slots = card.spell_slots_text()
     if slots:
         parts.append(f"法术位 {slots}")
-    if actor.moved:
-        parts.append(f"已移动 {actor.move_used}/{actor.speed} 尺")
-    used = resources_text(actor)
-    if used:
-        parts.append(f"本回合已用：{used}")
+    left = _remaining_actions(actor)
+    if left:
+        parts.append(f"本回合还可用：{left}")
     death = card.death_save_text()
     if death:
         parts.append(death)
     return "　".join(parts)
+
+
+#: 玩家会看到的回合资源（顺序即展示顺序，与 combat.TURN_RESOURCES 对齐）
+_RESOURCE_LABELS = (("action", "动作"), ("bonus", "附赠动作"), ("reaction", "反应"))
+
+
+def _remaining_actions(actor) -> str:
+    """这一回合**还剩下什么可做**（比「已用」更直接可用）。
+
+    玩家看到「本回合已用：动作」时得自己推「那我现在还能干嘛」；直接把剩余的
+    说出来省一次心算。移动按剩余距离给——困难地形吃掉的那部分照实显示。
+    """
+    left = [
+        label
+        for key, label in _RESOURCE_LABELS
+        if not getattr(actor, f"{key}_used", False)
+    ]
+    if not actor.moved:
+        left.append("移动")
+    else:
+        rest = actor.speed - actor.move_used
+        if rest > 0:
+            left.append(f"移动 {rest} 尺")
+    return "、".join(left)
 
 
 def _equip_take_request(text: str) -> list[str]:
