@@ -25,16 +25,6 @@ from ...dnd.battlemap import (
     set_terrain,
 )
 from ...dnd.card import DndCharacter
-from ...dnd.conditions import (
-    CONDITION_MAP,
-    CONDITIONS,
-    attack_advantage,
-    combine_advantage,
-    condition_text,
-    merge_effects,
-    normalize_conditions,
-    save_auto_fail,
-)
 from ...dnd.combat import (
     apply_damage as combat_damage,
 )
@@ -61,8 +51,18 @@ from ...dnd.combat import (
     update_enemy,
     use_resource,
 )
-from ...dnd.equipment import ARMORS, SHIELDS, WEAPONS, get_armor, get_weapon
+from ...dnd.conditions import (
+    CONDITION_MAP,
+    CONDITIONS,
+    attack_advantage,
+    combine_advantage,
+    condition_text,
+    merge_effects,
+    normalize_conditions,
+    save_auto_fail,
+)
 from ...dnd.encounter import calibrate_specs
+from ...dnd.equipment import ARMORS, SHIELDS, WEAPONS, get_armor, get_weapon
 from ...dnd.monsters import MONSTERS, get_monster, monster_names
 from ...dnd.npcs import (
     NPC_KEY_PREFIX,
@@ -89,7 +89,6 @@ from ...dnd.progression import (
     xp_progress_text,
 )
 from ...dnd.race import RACES, get_race
-from ...dnd.settlement import settle_combat
 from ...dnd.save_store import (
     append_scene_change,
     find_character,
@@ -101,6 +100,7 @@ from ...dnd.save_store import (
     save_round,
     set_character,
 )
+from ...dnd.settlement import settle_combat
 from ...dnd.skills import SKILLS, get_skill
 from ...dnd.spells import (
     SPELLS,
@@ -322,7 +322,8 @@ class CheckTool(AgentTool):
             # 把可用清单一起回给 DM：模型下一次调用就能自己纠对写法
             return (
                 f"无法识别检定对象：{e}\n"
-                "可用的技能：" + "、".join(s.cn for s in SKILLS)
+                "可用的技能："
+                + "、".join(s.cn for s in SKILLS)
                 + "\n可用的属性（写作「力量豁免」即为豁免检定）："
                 + "、".join(a.cn for a in ABILITIES)
             )
@@ -517,9 +518,7 @@ def _query_npc_tier(name: str) -> str:
         monster = npc_monster(tier, level)
         if monster is not None:
             key = f"{NPC_KEY_PREFIX}/{tier.key}/{level}"
-            lines.append(
-                f"· {monster.summary()}　（击败可得 {npc_xp(key)} XP）"
-            )
+            lines.append(f"· {monster.summary()}　（击败可得 {npc_xp(key)} XP）")
     lines.append("别名：" + "、".join(tier.aliases or ("（无）",)))
     return "\n".join(lines)
 
@@ -581,9 +580,7 @@ def _query_condition(name: str) -> str:
     normalized = normalize_conditions(text)
     cond = None
     for item in normalized:
-        cond = CONDITION_MAP.get(
-            next((c.key for c in CONDITIONS if c.cn == item), "")
-        )
+        cond = CONDITION_MAP.get(next((c.key for c in CONDITIONS if c.cn == item), ""))
         if cond is not None:
             break
     if cond is None:
@@ -826,10 +823,17 @@ class UpdateCharacterTool(AgentTool):
             if effect_text:
                 message += f"\n效果：{effect_text}"
             # 失能类状态（震慑 / 麻痹 / 昏迷 / 石化 / 失能）会中断专注（5e）
-            if card.concentrating and merge_effects(card.conditions).breaks_concentration:
+            if (
+                card.concentrating
+                and merge_effects(card.conditions).breaks_concentration
+            ):
                 message += "；" + card.break_concentration("陷入失能")
         elif field in {"concentrating", "concentration", "专注"}:
-            if text.lower() in _CONDITION_CLEAR_WORDS or text in {"中断", "放弃", "停止"}:
+            if text.lower() in _CONDITION_CLEAR_WORDS or text in {
+                "中断",
+                "放弃",
+                "停止",
+            }:
                 message = card.break_concentration("主动放弃") or "当前没有在维持专注"
             else:
                 spell, note = card.start_concentration(text)
@@ -1236,8 +1240,10 @@ class StartCombatTool(AgentTool):
         lines.append(
             "**开战的第一段叙述必须先把战场讲清楚**：地形与光线是什么样的、掩体与障碍在"
             "哪、双方各自站在什么位置、彼此相距多远（就照上面的【战场】说），然后再写谁先"
-            "动手。之后每次攻击 / 施法系统都会校验距离与视线：够不着会被打回，先用 move "
-            "靠近；掩体已经自动算进 AC；敌人行动前先确认它是否在触及 / 射程内。"
+            "动手。距离与坐标**一律照【战场】里的数字写**，不要按场景描述另算一个数——"
+            "玩家会拿它和系统判定对照，说错就会显得前后矛盾。之后每次攻击 / 施法系统都会校验"
+            "距离与视线：够不着会被打回，先用 move 靠近；掩体已经自动算进 AC；"
+            "敌人行动前先确认它是否在触及 / 射程内。"
         )
         lines.append(
             "按上面的顺序叙述：标记「现在」的那位就是本轮该行动的玩家。"
@@ -1946,7 +1952,11 @@ class CastSpellTool(AgentTool):
                 lines.append(
                     f"· {_target_name(item)}："
                     + _spell_damage(
-                        save, state, item, damage, damage_type=spell_obj.damage_type_text
+                        save,
+                        state,
+                        item,
+                        damage,
+                        damage_type=spell_obj.damage_type_text,
                     )
                 )
             return warn + "\n".join(lines)
@@ -2001,7 +2011,11 @@ class CastSpellTool(AgentTool):
                 lines.append(
                     "  　"
                     + _spell_damage(
-                        save, state, item, damage, damage_type=spell_obj.damage_type_text
+                        save,
+                        state,
+                        item,
+                        damage,
+                        damage_type=spell_obj.damage_type_text,
                     )
                 )
         return warn + "\n".join(lines)

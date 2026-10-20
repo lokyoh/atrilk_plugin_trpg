@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from ATRI.exceptions import str_traceback
 from ATRI.log import log
@@ -44,7 +45,6 @@ from ...dnd.combat import (
 from ...dnd.judge import dnd_judge
 from ...dnd.names import player_name
 from ...dnd.npcs import list_npcs, npcs_text
-from ...dnd.settlement import settle_combat
 from ...dnd.save_store import (
     append_story,
     append_story_ending,
@@ -63,6 +63,7 @@ from ...dnd.save_store import (
     save_round,
     save_save,
 )
+from ...dnd.settlement import settle_combat
 from ...dnd.world_bible import bible_text
 from ...dnd.world_brief import build_world_brief
 from ...dnd.world_store import read_doc, story_text
@@ -567,6 +568,33 @@ _FINAL_PHASE = (
 )
 
 
+def _combat_banner(save, state, narration: str) -> str:
+    """开战那一刻给玩家的系统提示：战斗现状 + 怎么行动（只进玩家消息，不进复盘）。
+
+    DM 的功能调用结果只有 DM 自己看得到，玩家此前只能收到 DM 的叙述——进入战斗时
+    往往不知道已经切成回合制、现在轮到谁、能做什么。这里补一份系统级提示：
+    先攻顺序、站位与距离照 ``combat_text`` 给，操作说明单独两行。
+    """
+    lines = ["⚔️ 战斗开始！先攻顺序与站位如下，之后每回合系统都会提示轮到谁："]
+    for line in combat_text(save, state, with_map=False).splitlines():
+        # 「地图布局与上一轮相同」是给 DM 的地图节流说明，开战第一帧没有上一轮
+        if line.startswith("（地图布局"):
+            continue
+        lines.append(line)
+    actor = current_actor(state)
+    if actor is not None:
+        lines.append(
+            f"🎯 现在轮到【{_player_label(save, actor.cid)}】行动：@我 描述你要做什么——"
+            "攻击 / 移动 / 施法 / 躲避 / 掩护队友 / 使用道具都可以；"
+            "命中与伤害由系统掷骰，状态与抗性自动结算。"
+        )
+    lines.append(
+        "📏 每回合 = 1 个动作 + 1 个附赠动作 + 1 次移动 + 1 次反应（系统自动记账）；"
+        "武器够不着会先被打回，靠近再打；倒地 / 阵亡的玩家回合会被系统跳过。"
+    )
+    return f"{narration}\n\n" + "\n".join(lines)
+
+
 def _partial_phase(save, state, user_id: str) -> str:
     """逐人结算时告诉 DM：现在只处理这一名玩家，别提前收束整轮。"""
     waiting = [uid for uid in (state.waiting or []) if uid in state.actions]
@@ -919,6 +947,13 @@ async def run_dm_round(
             save_combat(save, combat)
         _following, next_player = peek_following(save, combat)
         state.waiting = [next_player.cid] if next_player is not None else []
+        # 玩家侧提示：开战那一条给完整的战斗现状 + 操作说明，往后每轮只报下一位
+        if context.data.get("combat_started"):
+            narration = _combat_banner(save, combat, narration)
+        elif next_player is not None:
+            narration += (
+                f"\n\n⏭️ 下一回合轮到【{_player_label(save, next_player.cid)}】。"
+            )
     elif combat is not None:
         # 敌人全部退场：先结算经验与战利品，再自动结束战斗，等待名单交回 DM
         report = settle_combat(save, combat)
