@@ -56,6 +56,14 @@ from .battlemap import (
     terrain_at,
 )
 from .card import DndCharacter
+from .conditions import (
+    attack_advantage,
+    combine_advantage,
+    condition_text,
+    is_incapacitated,
+    normalize_conditions,
+    resolve_damage,
+)
 from .equipment import get_weapon
 from .monsters import Monster
 from .progression import xp_for_cr
@@ -82,10 +90,15 @@ __all__ = [
     "all_enemies_out",
     "apply_damage",
     "attack",
+    "auto_crit_on_hit",
     "can_target",
+    "can_act",
     "clear_combat",
     "combat_path",
     "combat_text",
+    "combatant_conditions",
+    "combatant_exhaustion",
+    "combatant_state_text",
     "cover_text",
     "current_actor",
     "effective_ac",
@@ -159,6 +172,11 @@ class Combatant:
     speed: int = 30
     #: 本回合已经走过的距离（尺）
     move_used: int = 0
+    #: 当前状态（中毒、倒地、束缚……）；**玩家的状态以角色卡为准**，
+    #: 这里只记敌人的（DM 用 ``update_enemy`` 维护）
+    conditions: list[str] = field(default_factory=list)
+    #: 力竭等级（0~6）；玩家同样以角色卡为准
+    exhaustion: int = 0
 
     @property
     def is_enemy(self) -> bool:
@@ -198,6 +216,8 @@ class Combatant:
             "y": self.y,
             "speed": self.speed,
             "move_used": self.move_used,
+            "conditions": list(self.conditions),
+            "exhaustion": self.exhaustion,
         }
 
     @classmethod
@@ -222,6 +242,12 @@ class Combatant:
             y=_int_or(data.get("y"), -1),
             speed=_int_or(data.get("speed"), 30) or 30,
             move_used=_int_or(data.get("move_used"), 0),
+            conditions=[
+                str(item)
+                for item in (data.get("conditions") or [])
+                if str(item).strip()
+            ],
+            exhaustion=max(0, min(6, _int_or(data.get("exhaustion"), 0))),
         )
 
 
@@ -440,6 +466,62 @@ def player_status(save: Save, combatant: Combatant) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# 状态条件（玩家的状态以角色卡为准，敌人的记在战斗状态里）
+# --------------------------------------------------------------------------- #
+
+
+def combatant_conditions(save: Save, combatant: Combatant) -> list[str]:
+    """参战者当前的状态列表（规范名）。"""
+    if combatant.kind == "player":
+        card = get_character(save, combatant.cid)
+        return normalize_conditions(card.conditions) if card is not None else []
+    return normalize_conditions(combatant.conditions)
+
+
+def combatant_exhaustion(save: Save, combatant: Combatant) -> int:
+    """参战者的力竭等级（0~6）。"""
+    if combatant.kind == "player":
+        card = get_character(save, combatant.cid)
+        return int(card.exhaustion or 0) if card is not None else 0
+    return int(combatant.exhaustion or 0)
+
+
+def combatant_state_text(save: Save, combatant: Combatant) -> str:
+    """参战者的状态速览（给战斗现状 / 结算文案用）；没有状态返回空串。"""
+    if combatant.kind == "player":
+        card = get_character(save, combatant.cid)
+        if card is None:
+            return ""
+        return card.conditions_text()
+    return condition_text(combatant.conditions, exhaustion=combatant.exhaustion)
+
+
+def can_act(save: Save, combatant: Combatant) -> bool:
+    """能否自行行动：已退场 / 已倒下的不行，处于失能类状态（震慑 / 麻痹 /
+    昏迷 / 石化 / 失能）的也不行——但它仍然可以被攻击（麻痹时还会被自动暴击）。
+    """
+    if is_out(save, combatant):
+        return False
+    return not is_incapacitated(combatant_conditions(save, combatant))
+
+
+def auto_crit_on_hit(
+    save: Save, target: Combatant, *, melee: bool, distance: int
+) -> bool:
+    """命中是否自动按暴击算（5e：5 尺内命中麻痹 / 昏迷的目标即暴击）。
+
+    法术攻击同样适用（「命中即暴击」看的是攻击种类，不是武器）。
+    """
+    if not melee or distance < 0 or distance > 5:
+        return False
+    return bool({"麻痹", "昏迷"} & set(combatant_conditions(save, target)))
+
+
+#: 内部别名（历史写法）
+_auto_crit = auto_crit_on_hit
+
+
+# --------------------------------------------------------------------------- #
 # 行动经济（软提示：只记账 + 提醒，最终由 DM 裁决）
 # --------------------------------------------------------------------------- #
 
@@ -583,8 +665,18 @@ def _walk(
             round_no += 1
         combatant = order[index]
         if combatant.is_enemy:
-            if not is_out(save, combatant):
-                enemies.append(combatant)
+            if is_out(save, combatant):
+                continue
+            if not can_act(save, combatant):
+                # 失能类状态（震慑 / 麻痹 / 昏迷……）：人还在场上（照样能被打），
+                # 但这一动轮空——由 DM 在叙述里带一句
+                if commit:
+                    names = "、".join(combatant_conditions(save, combatant))
+                    state.pending.append(
+                        f"⏳ {combatant.name} 处于{names or '失能'}，本轮无法行动"
+                    )
+                continue
+            enemies.append(combatant)
             continue
         # —— 玩家：倒地濒死的先自动掷死亡豁免，然后跳过 ——
         card = get_character(save, combatant.cid)
@@ -774,9 +866,12 @@ def _normalize_specs(specs: list) -> list[EnemySpec]:
 
 
 def _card_speed(card: DndCharacter) -> int:
-    """角色的速度（尺 / 回合）；种族数据缺失时按 30 尺。"""
-    race = card.race_obj
-    return int(getattr(race, "speed", 30) or 30)
+    """角色的速度（尺 / 回合）；含状态修正（力竭减半 / 束缚归零），
+    种族数据缺失时按 30 尺。"""
+    try:
+        return int(card.speed())
+    except Exception:  # 种族数据损坏之类：退回 30 尺，别让开战失败
+        return 30
 
 
 def start_combat(
@@ -993,13 +1088,18 @@ def apply_damage(
     target: Combatant,
     amount: int,
     *,
+    damage_type: str = "",
     crit: bool = False,
+    rng: Any = None,
 ) -> str:
     """对参战者造成伤害并落盘。
 
+    - **抗性结算**：按目标（玩家 = 角色卡抗性 + 状态抗性；敌人 = 怪物表抗性 +
+      生物类型默认抗性）过一遍伤害类型，抗性减半 / 免疫归零 / 易伤翻倍；
     - 敌人：改 ``Combatant.hp``（随 ``combat.json`` 一起保存）；
-    - 玩家：先扣临时生命，再扣角色卡的生命值并写回存档；生命归零转**倒地濒死**，
-      倒地后继续挨打会累计死亡豁免失败次数（暴击 2 次；单次伤害达到生命上限即死）。
+    - 玩家：先扣临时生命，再扣角色卡的生命值并写回存档；生命归零转**倒地濒危**，
+      倒地后继续挨打会累计死亡豁免失败次数（暴击 2 次；单次伤害达到生命上限即死）；
+    - **专注**：玩家受伤后若正在维持法术，自动掷体质豁免（DC = max(10, 伤害//2)）。
     """
     amount = max(0, int(amount))
     if target.kind == "player":
@@ -1011,13 +1111,17 @@ def apply_damage(
         absorbed = min(card.temp_hp, amount)
         card.temp_hp -= absorbed
         incoming = amount - absorbed
+        # 抗性 / 免疫 / 易伤（角色卡固定抗性 + 狂暴等状态抗性）
+        incoming, res_note = card.apply_resistance(incoming, damage_type)
         before = card.hp
         card.current_hp = max(0, card.hp - incoming)
         notes = [f"{target.name} 剩余 {card.hp}/{card.max_hp}"]
         if absorbed:
             notes.append(f"临时生命吸收 {absorbed}")
+        if res_note:
+            notes.append(res_note)
         if before <= 0 and incoming > 0:
-            # 已经倒地（濒死 / 稳定）又挨打：死亡豁免失败 +1（暴击 +2），达上限即死
+            # 已经倒地（濒危 / 稳定）又挨打：死亡豁免失败 +1（暴击 +2），达上限即死
             if incoming >= card.max_hp:
                 notes.append(card.die_instantly())
             else:
@@ -1025,16 +1129,29 @@ def apply_damage(
         elif card.hp <= 0:
             card.mark_downed()
             notes.append(
-                f"倒地，进入濒死（死亡豁免 {card.death_saves_success} 成功 / "
+                f"倒地，进入濒危（死亡豁免 {card.death_saves_success} 成功 / "
                 f"{card.death_saves_failures} 失败）"
             )
             if incoming - before >= card.max_hp:
                 notes.append(card.die_instantly())
+        # 受伤后维持专注的体质豁免；生命归零 = 昏迷，直接断专注（5e）
+        if incoming > 0 and card.concentrating:
+            if card.hp <= 0:
+                notes.append(card.break_concentration("生命归零"))
+            else:
+                _kept, conc_text = card.concentration_save(incoming, rng=rng)
+                notes.append(conc_text)
         set_character(save, card)
         return "；".join(notes) + "。"
 
+    # —— 敌人：按怪物表抗性结算，再扣 Combatant.hp ——
+    monster = resolve_monster(target.monster)
+    resistances = monster.all_resistances if monster is not None else ()
+    amount, res_note = resolve_damage(amount, damage_type, resistances)
     target.hp = max(0, target.hp - amount)
     note = f"{target.name} 剩余 {target.hp}/{target.max_hp}"
+    if res_note:
+        note += f"（{res_note}）"
     if target.hp <= 0:
         target.out = True
         record_defeat(state, target)
@@ -1144,18 +1261,34 @@ def attack(
         advantage = Advantage.DISADVANTAGE
         warn += "（目标超出常规射程，本次攻击带劣势）\n"
 
+    # 目标状态带来的优势 / 劣势（倒地、隐形、目盲、束缚……）；攻击者自己的状态
+    # （中毒、力竭……）由角色卡的检定函数自动合并，两边相遇时自然抵消
+    is_melee = weapon is None or weapon.ranged_normal == 0
+    state_adv, state_reason = attack_advantage(
+        [], combatant_conditions(save, target), melee=is_melee, distance=gate.distance
+    )
+    advantage = combine_advantage(advantage, state_adv)
+    if state_reason:
+        warn += f"（{state_reason}）\n"
+
     if weapon is not None:
         result: CheckResult = card.check_attack(
             weapon, target_ac, advantage=advantage, rng=rng
         )
         damage_expr = weapon.damage_with_bonus(card.damage_bonus(weapon))
+        damage_type = weapon.damage_type
         label = weapon.cn
     else:
         bonus = card.proficiency + card.modifier("str")
+        # 徒手也走角色卡的状态合并（中毒 / 力竭的劣势不能漏）
+        final_adv, state_note = card.resolve_attack_advantage(advantage)
         result = roll_check(
-            bonus, target_ac, kind="徒手攻击", advantage=advantage, rng=rng
+            bonus, target_ac, kind="徒手攻击", advantage=final_adv, rng=rng
         )
+        if state_note:
+            result.kind += state_note
         damage_expr = str(max(1, 1 + card.modifier("str")))
+        damage_type = "钝击"
         label = "徒手"
 
     lines = [
@@ -1168,10 +1301,17 @@ def attack(
         lines.append(f"未命中 {target.name}。")
         return warn + "\n".join(lines), False
 
-    damage, detail = roll_damage(damage_expr, crit=result.nat20, rng=rng)
-    crit_text = "（暴击，伤害骰翻倍）" if result.nat20 else ""
+    # 5e：5 尺内命中麻痹 / 昏迷的目标即暴击（伤害骰照翻倍）
+    auto_crit = _auto_crit(save, target, melee=is_melee, distance=gate.distance)
+    crit = result.nat20 or auto_crit
+    damage, detail = roll_damage(damage_expr, crit=crit, rng=rng)
+    crit_text = "（暴击，伤害骰翻倍）" if crit else ""
     lines.append(f"命中 {target.name}！{detail}{crit_text}")
-    lines.append(apply_damage(save, state, target, damage, crit=result.nat20))
+    lines.append(
+        apply_damage(
+            save, state, target, damage, damage_type=damage_type, crit=crit, rng=rng
+        )
+    )
     return warn + "\n".join(lines), True
 
 
@@ -1197,6 +1337,9 @@ def enemy_attack(
         )
     if is_out(save, enemy):
         return f"{enemy.name} 已经倒下了，不能行动。", False
+    if not can_act(save, enemy):
+        names = "、".join(combatant_conditions(save, enemy)) or "失能"
+        return f"{enemy.name} 处于{names}，本轮无法行动。", False
 
     monster = resolve_monster(enemy.monster)
     if monster is None:
@@ -1232,6 +1375,15 @@ def enemy_attack(
     if gate.disadvantage and advantage is not Advantage.DISADVANTAGE:
         advantage = Advantage.DISADVANTAGE
 
+    # 双方状态带来的优势 / 劣势（敌人中毒 / 玩家倒地 / 隐形……），相遇抵消
+    state_adv, state_reason = attack_advantage(
+        combatant_conditions(save, enemy),
+        combatant_conditions(save, target),
+        melee=attack_obj.ranged_normal == 0,
+        distance=gate.distance,
+    )
+    advantage = combine_advantage(advantage, state_adv)
+
     target_ac = effective_ac(save, target, state)
     bonus = monster.attack_bonus(attack_obj)
     result = roll_check(
@@ -1246,14 +1398,31 @@ def enemy_attack(
         f"（目标 {target.name} AC {target_ac}{cover_text(state, target)}"
         + (f"，距离 {gate.distance} 尺）" if gate.distance >= 0 else "）")
     ]
+    if state_reason:
+        lines.append(f"（{state_reason}）")
     if not result.success:
         lines.append(f"未命中 {target.name}。")
         return "\n".join(lines), False
 
-    damage, detail = roll_damage(attack_obj.damage, crit=result.nat20, rng=rng)
-    crit_text = "（暴击，伤害骰翻倍）" if result.nat20 else ""
+    # 5e：5 尺内命中麻痹 / 昏迷的目标即暴击（伤害骰照翻倍）
+    auto_crit = _auto_crit(
+        save, target, melee=attack_obj.ranged_normal == 0, distance=gate.distance
+    )
+    crit = result.nat20 or auto_crit
+    damage, detail = roll_damage(attack_obj.damage, crit=crit, rng=rng)
+    crit_text = "（暴击，伤害骰翻倍）" if crit else ""
     lines.append(f"命中 {target.name}！{detail} {attack_obj.damage_type}{crit_text}")
-    lines.append(apply_damage(save, state, target, damage, crit=result.nat20))
+    lines.append(
+        apply_damage(
+            save,
+            state,
+            target,
+            damage,
+            damage_type=attack_obj.damage_type,
+            crit=crit,
+            rng=rng,
+        )
+    )
     return "\n".join(lines), True
 
 
@@ -1265,6 +1434,7 @@ def update_enemy(
     hp: str = "",
     out: str = "",
     note: str = "",
+    conditions: str = "",
 ) -> str:
     """按 DM 的裁决直接改敌人状态（陷阱、环境伤害、逃跑、投降、被擒……）。
 
@@ -1272,12 +1442,26 @@ def update_enemy(
     :param out: ``是`` / ``否`` 强制标记退场（倒地、逃跑、被擒）。
         **严格 5e**：经验与战利品只在敌人生命被打到 0 时结算；靠 ``out``
         标记的退场（逃跑 / 被擒 / 投降）不算战果，会在结算时被排除。
+    :param conditions: 状态列表（``"中毒、束缚"``）；传 ``"清空"`` 移除全部状态。
     """
     enemy = find_combatant(state, ref, kind="enemy") or find_combatant(state, ref)
     if enemy is None:
         return f"没找到「{ref}」。场上敌人：{_name_list([c for c in state.order if c.is_enemy])}"
 
     notes: list[str] = []
+    cond_text = str(conditions or "").strip()
+    if cond_text:
+        if cond_text in {"清空", "清除", "无", "none"}:
+            enemy.conditions = []
+            notes.append(f"{enemy.name} 的状态已清空。")
+        else:
+            enemy.conditions = normalize_conditions(cond_text)
+            if enemy.conditions:
+                notes.append(f"{enemy.name} 当前状态：{'、'.join(enemy.conditions)}。")
+            else:
+                notes.append(f"{enemy.name} 的状态没有变化。")
+        save_combat(save, state)
+
     text = str(hp or "").strip()
     if text:
         if text.startswith(("+", "-")):
@@ -1318,8 +1502,11 @@ def update_enemy(
 
     if not notes:
         hp_now, hp_max = effective_hp(save, enemy)
-        return f"{enemy.name} 状态：{hp_now}/{hp_max}　AC {enemy.ac}" + (
-            f"　{enemy.note}" if enemy.note else ""
+        state_text = combatant_state_text(save, enemy)
+        return (
+            f"{enemy.name} 状态：{hp_now}/{hp_max}　AC {enemy.ac}"
+            + (f"　{state_text}" if state_text else "")
+            + (f"　{enemy.note}" if enemy.note else "")
         )
     return "".join(notes)
 
@@ -1472,18 +1659,21 @@ def combat_text(save: Save, state: CombatState, *, with_map: bool = True) -> str
         role = "玩家" if combatant.kind == "player" else "敌人"
         mark = " ← 现在" if current is not None and combatant.cid == current.cid else ""
         status = ""
+        state_text = combatant_state_text(save, combatant)
+        if state_text:
+            status = f"　状态：{state_text}"
         if combatant.kind == "player":
             text = player_status(save, combatant)
             if text:
-                status = f"　{text}"
+                status += f"　{text}"
             elif combatant.out:
-                status = "　已退场" + (
+                status += "　已退场" + (
                     f"（{combatant.note}）" if combatant.note else ""
                 )
         elif combatant.out:
-            status = "　已退场" + (f"（{combatant.note}）" if combatant.note else "")
+            status += "　已退场" + (f"（{combatant.note}）" if combatant.note else "")
         elif hp_now <= 0:
-            status = "　已倒下"
+            status += "　已倒下"
         turn_used = ""
         if combatant.kind == "player" and (
             current is None or combatant.cid == current.cid

@@ -41,6 +41,13 @@ SCALE_SUFFIX = "@cr"
 #: 档位 NPC 的 key 前缀（见 :mod:`.npcs`；这里只做前缀判断，不反向导入）
 NPC_KEY_PREFIX = "npc"
 
+#: 生物类型级的默认伤害抗性（与条目自带的 :attr:`Monster.resistances` 叠加）。
+#: 5e 里不死生物与构装生物普遍对毒素免疫；元素按元素类型另有抗性。
+KIND_RESISTANCES: dict[str, tuple[str, ...]] = {
+    "亡灵": ("毒素:免疫",),
+    "构装": ("毒素:免疫",),
+}
+
 #: 各挑战等级下「标准中型怪物」的参考生命值，用来给怪物做 CR 缩放
 #: （同 CR 的怪之间体格差异很大，这里只取一个中间值当基准）
 _CR_HP_REFERENCE: tuple[tuple[float, int], ...] = (
@@ -191,6 +198,27 @@ class Monster:
     aliases: tuple[str, ...] = field(default=())
     #: 显式熟练加值；``None`` 表示按 CR 换算。档位 NPC 用它（CR 记 0）
     proficiency_bonus: int | None = None
+    #: 伤害抗性条目，形如 ``"火焰"``（抗性）、``"毒素:免疫"``、``"钝击:易伤"``、
+    #: ``"挥砍:抗性(非魔法)"``；结算见 :func:`~.conditions.resolve_damage`。
+    #: 生物类型级默认抗性（亡灵抗毒等）见 :data:`KIND_RESISTANCES`，与此处叠加。
+    resistances: tuple[str, ...] = ()
+
+    # —— 派生数值 ——
+
+    @property
+    def all_resistances(self) -> tuple[str, ...]:
+        """生物类型默认抗性 + 本条目的抗性（去重保序）。"""
+        merged = list(KIND_RESISTANCES.get(self.kind, ()))
+        for item in self.resistances:
+            if item not in merged:
+                merged.append(item)
+        return tuple(merged)
+
+    def resistances_text(self) -> str:
+        """抗性表的人类可读文本；没有抗性返回空串。"""
+        from .conditions import resistances_text
+
+        return resistances_text(self.all_resistances)
 
     # —— 派生数值 ——
 
@@ -313,6 +341,9 @@ class Monster:
             )
         if self.attacks:
             lines.append("攻击：" + "；".join(self.attack_lines()))
+        resist = self.resistances_text()
+        if resist:
+            lines.append(f"伤害抗性 / 免疫：{resist}")
         if self.traits:
             lines.append("特性：" + "；".join(self.traits))
         if self.senses:
@@ -527,6 +558,7 @@ MONSTERS: tuple[Monster, ...] = (
     ),
     Monster(
         key="skeleton",
+        resistances=("钝击:易伤",),
         cn="骷髅",
         en="Skeleton",
         cr=0.25,
@@ -848,6 +880,7 @@ MONSTERS: tuple[Monster, ...] = (
     ),
     Monster(
         key="gargoyle",
+        resistances=("钝击:抗性(非魔法)", "穿刺:抗性(非魔法)", "挥砍:抗性(非魔法)"),
         cn="石像鬼",
         en="Gargoyle",
         cr=2,
@@ -895,6 +928,7 @@ MONSTERS: tuple[Monster, ...] = (
     # —— CR 3 ——
     Monster(
         key="mummy",
+        resistances=("钝击:免疫(非魔法)", "穿刺:免疫(非魔法)", "挥砍:免疫(非魔法)"),
         cn="木乃伊",
         en="Mummy",
         cr=3,
@@ -950,6 +984,7 @@ MONSTERS: tuple[Monster, ...] = (
     ),
     Monster(
         key="werewolf",
+        resistances=("钝击:免疫(非魔法)", "穿刺:免疫(非魔法)", "挥砍:免疫(非魔法)"),
         cn="狼人",
         en="Werewolf",
         cr=3,
@@ -1024,6 +1059,7 @@ MONSTERS: tuple[Monster, ...] = (
     ),
     Monster(
         key="ghost",
+        resistances=("强酸", "火焰", "闪电", "雷鸣", "寒冷:免疫", "暗蚀:免疫", "钝击:抗性(非魔法)", "穿刺:抗性(非魔法)", "挥砍:抗性(非魔法)"),
         cn="幽灵",
         en="Ghost",
         cr=4,
@@ -1034,7 +1070,7 @@ MONSTERS: tuple[Monster, ...] = (
         hit_dice="10d8",
         speed=40,
         abilities={"str": 7, "dex": 17, "con": 10, "int": 10, "wis": 12, "cha": 17},
-        attacks=(MonsterAttack("枯萎之触", "dex", "4d6+3", "死灵"),),
+        attacks=(MonsterAttack("枯萎之触", "dex", "4d6+3", "暗蚀"),),
         traits=(
             "虚体移动：可穿过生物与物件",
             "恐怖面容：看到它的活物感知豁免 DC13，失败恐慌",
@@ -1075,6 +1111,7 @@ MONSTERS: tuple[Monster, ...] = (
     ),
     Monster(
         key="fire_elemental",
+        resistances=("火焰:免疫", "寒冷:易伤", "钝击:抗性(非魔法)", "穿刺:抗性(非魔法)", "挥砍:抗性(非魔法)"),
         cn="火元素",
         en="Fire Elemental",
         cr=5,
@@ -1107,6 +1144,7 @@ MONSTERS: tuple[Monster, ...] = (
     ),
     Monster(
         key="vampire_spawn",
+        resistances=("钝击:抗性(非魔法)", "穿刺:抗性(非魔法)", "挥砍:抗性(非魔法)"),
         cn="吸血鬼衍体",
         en="Vampire Spawn",
         cr=5,
@@ -1142,6 +1180,7 @@ MONSTERS: tuple[Monster, ...] = (
     # —— CR 6 ~ 10 ——
     Monster(
         key="young_white_dragon",
+        resistances=("寒冷:免疫",),
         cn="青年白龙",
         en="Young White Dragon",
         cr=6,
@@ -1275,6 +1314,7 @@ MONSTERS: tuple[Monster, ...] = (
     ),
     Monster(
         key="young_blue_dragon",
+        resistances=("闪电:免疫",),
         cn="青年蓝龙",
         en="Young Blue Dragon",
         cr=9,

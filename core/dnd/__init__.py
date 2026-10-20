@@ -73,6 +73,24 @@ from .combat import (
     update_enemy,
     use_resource,
 )
+from .conditions import (
+    CONDITION_ALIASES,
+    CONDITION_MAP,
+    CONDITIONS,
+    DAMAGE_LEVELS,
+    DAMAGE_TYPES,
+    Condition,
+    ConditionEffect,
+    attack_advantage,
+    condition_text,
+    is_incapacitated,
+    merge_effects,
+    normalize_conditions,
+    resistances_text,
+    resolve_damage,
+    save_auto_fail,
+    speed_scale,
+)
 from .creation import (
     CHOICE_STEPS,
     CREATION_STEPS,

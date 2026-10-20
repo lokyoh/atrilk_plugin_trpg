@@ -18,12 +18,23 @@ from typing import Any
 from ...dnd.attributes import ABILITIES, get_ability
 from ...dnd.battlemap import (
     battlefield_text,
+    distance_feet,
     has_map,
     normalize_terrain,
     range_check,
     set_terrain,
 )
 from ...dnd.card import DndCharacter
+from ...dnd.conditions import (
+    CONDITION_MAP,
+    CONDITIONS,
+    attack_advantage,
+    combine_advantage,
+    condition_text,
+    merge_effects,
+    normalize_conditions,
+    save_auto_fail,
+)
 from ...dnd.combat import (
     apply_damage as combat_damage,
 )
@@ -31,8 +42,10 @@ from ...dnd.combat import (
     attack as combat_attack,
 )
 from ...dnd.combat import (
+    auto_crit_on_hit,
     clear_combat,
     combat_text,
+    combatant_conditions,
     effective_ac,
     enemy_attack,
     find_combatant,
@@ -184,7 +197,7 @@ _CONDITION_CLEAR_WORDS = {"", "无", "无状态", "清空", "none", "clear"}
 
 
 def _split_conditions(value: str) -> list[str]:
-    """把「中毒、倒地」这类写法拆成状态列表。"""
+    """把「中毒、倒地」这类写法拆成状态列表（保留原写法，不做归一）。"""
     return [part.strip() for part in re.split(r"[、,，;；/]+", value) if part.strip()]
 
 
@@ -331,7 +344,7 @@ class GetRuleTool(AgentTool):
         ToolArg(
             "topic",
             "str",
-            "规则主题关键词，如 优势、死亡豁免、法术位、先攻、暴击",
+            "规则主题关键词，如 优势、死亡豁免、法术位、先攻、暴击、状态、专注、抗性、休息",
         ),
     )
 
@@ -511,6 +524,78 @@ def _query_npc_tier(name: str) -> str:
     return "\n".join(lines)
 
 
+def _condition_effect_brief(effect: Any) -> str:
+    """把一个 :class:`ConditionEffect` 翻译成一行人类可读的结算效果。"""
+    parts: list[str] = []
+    for label, adv in (
+        ("自身攻击", effect.own_attack),
+        ("被攻击", effect.vs_attack),
+        ("属性 / 技能检定", effect.own_check),
+        ("豁免", effect.own_save),
+    ):
+        if adv is Advantage.ADVANTAGE:
+            parts.append(f"{label}有优势")
+        elif adv is Advantage.DISADVANTAGE:
+            parts.append(f"{label}有劣势")
+    for ability in effect.auto_fail_saves:
+        parts.append(f"{get_ability(ability).cn}豁免自动失败")
+    for ability in effect.check_adv_abilities:
+        parts.append(f"{get_ability(ability).cn}检定优势")
+    for ability in effect.save_adv_abilities:
+        parts.append(f"{get_ability(ability).cn}豁免优势")
+    if effect.incapacitated:
+        parts.append("无法行动也无法反应")
+    if effect.breaks_concentration:
+        parts.append("中断当前专注")
+    if effect.speed_zero:
+        parts.append("速度降为 0")
+    elif effect.speed_scale != 1.0:
+        parts.append(f"速度 ×{effect.speed_scale:g}")
+    if effect.hp_max_scale != 1.0:
+        parts.append(f"生命上限 ×{effect.hp_max_scale:g}")
+    if effect.resistances:
+        parts.append("伤害抗性：" + "、".join(effect.resistances))
+    parts.extend(effect.notes)
+    return "；".join(parts) or "（无机械效果，纯叙事状态）"
+
+
+def _query_condition(name: str) -> str:
+    """查状态条件：留空列全部，给名字出结算效果（支持同义写法 / 力竭）。"""
+    text = str(name or "").strip()
+    if not text:
+        lines = ["状态条件（update_character 的 conditions 字段可直接设置）："]
+        for cond in CONDITIONS:
+            lines.append(f"· {cond.cn}（{cond.en}）：{cond.desc}")
+        lines.append(
+            "· 力竭（Exhaustion，1~6 级累加）：属性检定劣势 → 速度减半 → "
+            "攻击与全部豁免劣势 → 生命上限减半 → 速度归零 → 死亡"
+        )
+        return "\n".join(lines)
+    if text in {"力竭", "疲劳", "exhaustion", "exhausted"}:
+        return (
+            "力竭（Exhaustion）按等级累加：\n"
+            "1 级：属性检定劣势；2 级：速度减半；3 级：攻击检定与全部豁免劣势；"
+            "4 级：生命上限减半；5 级：速度降为 0；6 级：死亡。\n"
+            "完成一次长休可降低 1 级。"
+        )
+    normalized = normalize_conditions(text)
+    cond = None
+    for item in normalized:
+        cond = CONDITION_MAP.get(
+            next((c.key for c in CONDITIONS if c.cn == item), "")
+        )
+        if cond is not None:
+            break
+    if cond is None:
+        known = "、".join(c.cn for c in CONDITIONS)
+        raise KeyError(f"未知状态：{text}（可用：{known}；力竭写「力竭」）")
+    effect = merge_effects([cond.cn])
+    return (
+        f"{cond.cn}（{cond.en}）\n{cond.desc}\n"
+        f"结算效果：{_condition_effect_brief(effect)}"
+    )
+
+
 #: 数据表名（含中文别名）-> 查询函数
 _DATA_TABLES = {
     "race": _query_race,
@@ -521,6 +606,7 @@ _DATA_TABLES = {
     "monster": _query_monster,
     "spell": _query_spell,
     "npc_tier": _query_npc_tier,
+    "condition": _query_condition,
 }
 
 _DATA_ALIASES = {
@@ -553,6 +639,10 @@ _DATA_ALIASES = {
     "名单": "npc",
     "人物": "npc",
     "熟人": "npc",
+    "condition": "condition",
+    "conditions": "condition",
+    "状态": "condition",
+    "状态条件": "condition",
     # —— 全局世界库文档 ——
     "world": "world",
     "世界": "world",
@@ -613,8 +703,9 @@ class QueryDataTool(AgentTool):
     function_name = "query_data"
     max_result_chars = 2500
     description = (
-        "查 DND 数据表（race/profession/skill/weapon/armor/monster/spell/npc_tier/npc）"
-        "或世界库文档（world/story/area/city/place/dungeon/scene），table 可写中文"
+        "查 DND 数据表（race/profession/skill/weapon/armor/monster/spell/condition/"
+        "npc_tier/npc）或世界库文档（world/story/area/city/place/dungeon/scene），"
+        "table 可写中文"
     )
     args = (
         ToolArg("table", "str", "表名 / 文档类型"),
@@ -645,7 +736,7 @@ class QueryDataTool(AgentTool):
         if handler is None:
             return (
                 "未知数据表，可用：race / profession / skill / weapon / armor / monster / "
-                "spell / npc_tier / npc，或世界库文档："
+                "spell / condition / npc_tier / npc，或世界库文档："
                 "world / story / area / city / place / dungeon / scene"
             )
         try:
@@ -664,19 +755,21 @@ class UpdateCharacterTool(AgentTool):
 
     function_name = "update_character"
     description = (
-        "改玩家角色卡并落盘（生命 / 状态 / 死亡豁免 / 经验 / 等级 / 姓名 / 备注 / 特性 / 标签 / 法术 / 装备）"
+        "改玩家角色卡并落盘（生命 / 状态 / 专注 / 死亡豁免 / 经验 / 等级 / 姓名 / "
+        "备注 / 特性 / 标签 / 法术 / 装备）"
     )
     args = (
         ToolArg(
             "field",
             "str",
-            "hp / temp_hp / conditions / 死亡豁免 / exhaustion / exp / level / name / "
-            "notes / features / tags / spells / equipment",
+            "hp / temp_hp / conditions / concentrating / 死亡豁免 / exhaustion / exp / "
+            "level / name / notes / features / tags / spells / equipment",
         ),
         ToolArg(
             "value",
             "str",
             "新值；hp 可写「满血」；conditions/spells/equipment 用、分隔（可写「清空」）；"
+            "concentrating 写法术名（换专注会顶替旧法术）或「中断」；"
             "features/tags 追加；死亡豁免可写 清空/复活/稳定/死亡/成功N/失败N",
         ),
         ToolArg("player", "str", "改谁：角色名或 user_id；单人可留空"),
@@ -725,8 +818,25 @@ class UpdateCharacterTool(AgentTool):
                 card.conditions = []
                 message = "状态已清空"
             else:
-                card.conditions = _split_conditions(text)
-                message = "状态已设为：" + "、".join(card.conditions)
+                # 自由文本进、规范名出：「俯伏」→「倒地」、「恐惧」→「恐慌」；
+                # 认不出的原样保留成自定义备注
+                card.conditions = normalize_conditions(text)
+                message = "状态已设为：" + ("、".join(card.conditions) or "（空）")
+            effect_text = condition_text(card.conditions, exhaustion=card.exhaustion)
+            if effect_text:
+                message += f"\n效果：{effect_text}"
+            # 失能类状态（震慑 / 麻痹 / 昏迷 / 石化 / 失能）会中断专注（5e）
+            if card.concentrating and merge_effects(card.conditions).breaks_concentration:
+                message += "；" + card.break_concentration("陷入失能")
+        elif field in {"concentrating", "concentration", "专注"}:
+            if text.lower() in _CONDITION_CLEAR_WORDS or text in {"中断", "放弃", "停止"}:
+                message = card.break_concentration("主动放弃") or "当前没有在维持专注"
+            else:
+                spell, note = card.start_concentration(text)
+                if spell is None:
+                    message = f"没认出发术「{text}」，专注没有变化"
+                else:
+                    message = f"开始维持「{spell.cn}」的专注{note}"
         elif field in {"死亡豁免", "death_save", "death_saves"}:
             key = text.lower()
             if key in {"复活", "revive", "复苏"}:
@@ -854,8 +964,9 @@ class UpdateCharacterTool(AgentTool):
                     message += f"；没认出这些写法（已按原名收下）：{'、'.join(unknown)}"
         else:
             return (
-                "不支持的字段，可用：hp / temp_hp / conditions / 死亡豁免 / exhaustion / "
-                "exp / level / name / notes / features / tags / spells / equipment"
+                "不支持的字段，可用：hp / temp_hp / conditions / concentrating / "
+                "死亡豁免 / exhaustion / exp / level / name / notes / features / "
+                "tags / spells / equipment"
             )
 
         if save is not None:
@@ -1306,12 +1417,20 @@ class UpdateEnemyTool(AgentTool):
     """直接改敌人状态（陷阱、环境、逃跑、投降、被擒……）。"""
 
     function_name = "update_enemy"
-    description = "直接改敌人状态：生命增减 / 退场 / 附注（陷阱、环境伤害、投降等）"
+    description = (
+        "直接改敌人状态：生命增减 / 退场 / 附注 / 挂状态"
+        "（陷阱、环境伤害、中毒、被束缚、投降等）"
+    )
     args = (
         ToolArg("name", "str", "敌人名，如 地精1"),
         ToolArg("hp", "str", "新值（12）或增减（-5），留空不改"),
         ToolArg("out", "str", "是否退场：是 / 否"),
         ToolArg("note", "str", "附注（可选）"),
+        ToolArg(
+            "conditions",
+            "str",
+            "状态列表，如「中毒、束缚」；写「清空」移除全部状态（可选）",
+        ),
     )
 
     @staticmethod
@@ -1321,6 +1440,7 @@ class UpdateEnemyTool(AgentTool):
         hp: Any = "",
         out: Any = "",
         note: Any = "",
+        conditions: Any = "",
         **kwargs: Any,
     ) -> str:
         save = load_save(context.save_id) if context.save_id else None
@@ -1336,6 +1456,7 @@ class UpdateEnemyTool(AgentTool):
             hp=str(hp or ""),
             out=str(out or ""),
             note=str(note or ""),
+            conditions=str(conditions or ""),
         )
 
 
@@ -1413,7 +1534,7 @@ def _spell_range_feet(text: str) -> int:
     取括号里的尺数当可及距离。
     """
     raw = str(text or "")
-    if "触碰" in raw or "接触" in raw:
+    if any(word in raw for word in ("触碰", "接触", "触及")):
         return 5
     if any(word in raw for word in ("视线", "特殊", "不限", "见描述")):
         return -1
@@ -1474,6 +1595,33 @@ def _target_save_bonus(save, target: Any, ability: str) -> int:
     return monster.save_bonus(ability) if monster is not None else 0
 
 
+def _target_save(save, target: Any, ability: str, dc: int) -> Any:
+    """目标的豁免检定：自动套用目标身上的状态。
+
+    - 束缚给敏捷豁免劣势、力竭 3 级起全部豁免劣势（中毒不影响豁免）；
+    - 麻痹 / 震慑 / 昏迷 / 石化的力量与敏捷豁免**自动失败**。
+    """
+    if isinstance(target, DndCharacter):
+        return target.check_save(ability, dc)
+    if getattr(target, "kind", "") == "player":
+        card = get_character(save, target.cid)
+        if card is not None:
+            return card.check_save(ability, dc)
+    conds = combatant_conditions(save, target)
+    effect = merge_effects(conds)
+    result = roll_check(
+        _target_save_bonus(save, target, ability),
+        dc,
+        kind=f"{get_ability(ability).cn}豁免",
+        advantage=effect.own_save,
+    )
+    if save_auto_fail(conds, ability):
+        # 状态导致的自动失败：照掷骰（给玩家看点数），但结果强制为失败
+        result.auto_critical = False
+        result.forced_failure = True
+    return result
+
+
 def _target_down(save, target: Any) -> bool:
     if isinstance(target, DndCharacter):
         return target.hp <= 0
@@ -1483,21 +1631,57 @@ def _target_down(save, target: Any) -> bool:
     return target.out or target.hp <= 0
 
 
-def _spell_damage(save, state, target: Any, amount: int) -> str:
-    """对目标结算法术伤害（玩家写回角色卡，战斗外用角色卡）。"""
+def _target_conditions(save, target: Any) -> list[str]:
+    """目标当前的状态列表（玩家读角色卡，敌人读战斗状态）。"""
+    if isinstance(target, DndCharacter):
+        return list(target.conditions)
+    return combatant_conditions(save, target)
+
+
+def _auto_crit(save, target: Any, *, melee: bool, distance: int) -> bool:
+    """命中麻痹 / 昏迷的目标是否自动暴击（目标在战场外（角色卡）时不适用）。"""
+    if isinstance(target, DndCharacter):
+        return False
+    return auto_crit_on_hit(save, target, melee=melee, distance=distance)
+
+
+def _spell_damage(
+    save, state, target: Any, amount: int, damage_type: str = "", *, crit: bool = False
+) -> str:
+    """对目标结算法术伤害（玩家写回角色卡，战斗外用角色卡）。
+
+    与战斗内伤害保持同一套规则：临时生命 → 抗性 / 免疫 / 易伤 → 扣血 →
+    0 血倒地昏迷 → 受伤后掷专注维持豁免。
+    """
     amount = max(0, int(amount))
     if isinstance(target, DndCharacter):
         absorbed = min(target.temp_hp, amount)
         target.temp_hp -= absorbed
-        target.current_hp = max(0, target.hp - (amount - absorbed))
-        set_character(save, target)
+        incoming = amount - absorbed
+        incoming, res_note = target.apply_resistance(incoming, damage_type)
+        before = target.hp
+        target.current_hp = max(0, target.hp - incoming)
         note = f"{target.name} 剩余 {target.hp}/{target.max_hp}"
         if absorbed:
             note += f"（临时生命吸收 {absorbed}）"
-        if target.hp <= 0:
-            note += "，已倒地"
+        if res_note:
+            note += f"（{res_note}）"
+        if before <= 0 and incoming > 0:
+            note += "（" + target.add_death_failure(2 if crit else 1) + "）"
+        elif target.hp <= 0:
+            target.mark_downed()
+            note += "，倒地进入濒危"
+        if incoming > 0 and target.concentrating:
+            if target.hp <= 0:
+                note += "；" + target.break_concentration("生命归零")
+            else:
+                _kept, conc_text = target.concentration_save(incoming)
+                note += f"；{conc_text}"
+        set_character(save, target)
         return note + "。"
-    return combat_damage(save, state, target, amount)
+    return combat_damage(
+        save, state, target, amount, damage_type=damage_type, crit=crit
+    )
 
 
 def _spell_heal(save, state, target: Any, amount: int, *, temp: bool = False) -> str:
@@ -1611,7 +1795,13 @@ class CastSpellTool(AgentTool):
 
         lines = [f"【{card.name}】施展 {spell_obj.label()}{slot_note}"]
         if spell_obj.concentration:
-            lines.append("（需专注：之后受伤害或分心时别忘了掷体质豁免维持）")
+            # 登记专注（5e 同时只能维持一个，新的会顶替旧的）
+            _kept, conc_note = card.start_concentration(spell_obj)
+            set_character(save, card)
+            lines.append(
+                "（需专注：受伤要掷体质豁免维持；同时只能维持一个专注法术）"
+                + (conc_note or "")
+            )
 
         state = load_combat(save)
         # 行动经济（软提示）：按施法时间记下这次占用的动作 / 附赠动作 / 反应
@@ -1693,26 +1883,56 @@ class CastSpellTool(AgentTool):
         if spell_obj.attack:
             lines.append(f"法术攻击 {card.spell_attack_bonus:+d}")
             damage_expr = spell_obj.damage_expr(casting_mod)
+            # 触碰类法术攻击算近战（麻痹 / 昏迷的目标在 5 尺内被命中即暴击）
+            melee_spell = any(
+                word in str(spell_obj.range_text or "")
+                for word in ("触碰", "接触", "触及", "自身")
+            )
+            caster_self = find_combatant(state, str(card.user_id))
             for item in targets:
                 if _target_down(save, item):
                     lines.append(f"· {_target_name(item)} 已经倒下了，跳过。")
                     continue
                 ac = _target_ac(save, state, item)
+                # 目标身上的状态（倒地 / 目盲 / 束缚 / 麻痹…）改优势姿态
+                dist = distance_feet(caster_self, item)
+                t_adv, t_reason = attack_advantage(
+                    [],
+                    _target_conditions(save, item),
+                    melee=melee_spell,
+                    distance=dist,
+                )
+                adv = combine_advantage(_parse_advantage(advantage), t_adv)
                 result = card.check_spell_attack(
                     ac,
                     label=f"{spell_obj.cn}攻击",
-                    advantage=_parse_advantage(advantage),
+                    advantage=adv,
                 )
                 lines.append(f"· {_target_name(item)}：{result.describe()}（AC {ac}）")
+                if t_reason:
+                    lines.append(f"  　（{t_reason}）")
                 if not result.success:
                     lines.append("  　未命中。")
                     continue
-                damage, detail = roll_damage(damage_expr, crit=result.nat20)
-                crit_text = "（暴击，伤害骰翻倍）" if result.nat20 else ""
+                crit = result.nat20 or _auto_crit(
+                    save, item, melee=melee_spell, distance=dist
+                )
+                damage, detail = roll_damage(damage_expr, crit=crit)
+                crit_text = "（暴击，伤害骰翻倍）" if crit else ""
                 lines.append(
                     f"  　命中！{detail} {spell_obj.damage_type_text}{crit_text}"
                 )
-                lines.append("  　" + _spell_damage(save, state, item, damage))
+                lines.append(
+                    "  　"
+                    + _spell_damage(
+                        save,
+                        state,
+                        item,
+                        damage,
+                        damage_type=spell_obj.damage_type_text,
+                        crit=crit,
+                    )
+                )
             return warn + "\n".join(lines)
 
         # —— 自动命中（如魔法飞弹 / 匕首之云）——
@@ -1725,7 +1945,9 @@ class CastSpellTool(AgentTool):
                     continue
                 lines.append(
                     f"· {_target_name(item)}："
-                    + _spell_damage(save, state, item, damage)
+                    + _spell_damage(
+                        save, state, item, damage, damage_type=spell_obj.damage_type_text
+                    )
                 )
             return warn + "\n".join(lines)
 
@@ -1741,8 +1963,8 @@ class CastSpellTool(AgentTool):
             if _target_down(save, item):
                 lines.append(f"· {_target_name(item)} 已经倒下了，跳过。")
                 continue
-            bonus = _target_save_bonus(save, item, spell_obj.save)
-            result = roll_check(bonus, dc, kind=f"{spell_obj.save_text}豁免")
+            # 豁免检定：自动套目标状态（束缚劣势 / 麻痹等自动失败）
+            result = _target_save(save, item, spell_obj.save, dc)
             if not spell_obj.damage:
                 lines.append(
                     f"· {_target_name(item)}：{result.describe()} → "
@@ -1758,7 +1980,16 @@ class CastSpellTool(AgentTool):
                     lines.append(
                         f"· {_target_name(item)}：{result.describe()} → 成功豁免，伤害减半"
                     )
-                    lines.append("  　" + _spell_damage(save, state, item, damage // 2))
+                    lines.append(
+                        "  　"
+                        + _spell_damage(
+                            save,
+                            state,
+                            item,
+                            damage // 2,
+                            damage_type=spell_obj.damage_type_text,
+                        )
+                    )
                 else:
                     lines.append(
                         f"· {_target_name(item)}：{result.describe()} → 成功豁免，不受伤害"
@@ -1767,7 +1998,12 @@ class CastSpellTool(AgentTool):
                 lines.append(
                     f"· {_target_name(item)}：{result.describe()} → 豁免失败，受到全额伤害"
                 )
-                lines.append("  　" + _spell_damage(save, state, item, damage))
+                lines.append(
+                    "  　"
+                    + _spell_damage(
+                        save, state, item, damage, damage_type=spell_obj.damage_type_text
+                    )
+                )
         return warn + "\n".join(lines)
 
 
@@ -1777,20 +2013,31 @@ class CastSpellTool(AgentTool):
 
 
 class RestTool(AgentTool):
-    """结算休息：长休回满生命与法术位，短休回满契约法术位。"""
+    """结算休息：长休回满生命与法术位、恢复一半已耗生命骰；短休可花生命骰回血。"""
 
     function_name = "rest"
     description = (
-        "结算休息：长休回满生命与法术位、清临时生命、力竭 -1；短休回契约法术位"
+        "结算休息：长休回满生命与法术位、清临时生命、力竭 -1、恢复一半已耗生命骰；"
+        "短休回契约法术位，可用 hit_dice 指定花几颗生命骰回血"
     )
     args = (
         ToolArg("kind", "str", "长休 / 短休"),
         ToolArg("player", "str", "为谁结算；留空 = 全员"),
+        ToolArg(
+            "hit_dice",
+            "str",
+            "短休时花几颗生命骰回血（每颗 = 1d生命骰 + 体质调整值，至少 0）；"
+            "长休忽略这项",
+        ),
     )
 
     @staticmethod
     async def call(
-        context: AgentContext, kind: Any = "长休", player: Any = "", **kwargs: Any
+        context: AgentContext,
+        kind: Any = "长休",
+        player: Any = "",
+        hit_dice: Any = "0",
+        **kwargs: Any,
     ) -> str:
         save = load_save(context.save_id) if context.save_id else None
         if save is None:
@@ -1839,6 +2086,13 @@ class RestTool(AgentTool):
                     notes.append(
                         f"法术位回满（{card.spell_slots_text()}，原 {before}）"
                     )
+                # 5e：长休恢复「已耗生命骰的一半（至少 1 颗）」
+                back = card.regain_hit_dice(max(1, card.hit_dice_total // 2))
+                if card.hit_dice_used or back:
+                    notes.append(
+                        f"生命骰恢复 {back} 颗（剩 {card.hit_dice_left}/"
+                        f"{card.hit_dice_total}）"
+                    )
                 if card.conditions:
                     notes.append("状态未自动清除：" + "、".join(card.conditions))
             else:
@@ -1850,14 +2104,41 @@ class RestTool(AgentTool):
                     cls = card.profession_obj
                     if cls is not None and cls.caster_kind == "pact":
                         notes.append("契约法术位已回满")
+                # 短休花生命骰：每颗 = 1d生命骰 + 体质调整值（每颗至少回 0）
+                want = _parse_int(str(hit_dice or "0"), 0)
+                if want > 0:
+                    spent = card.spend_hit_dice(want)
+                    if spent == 0:
+                        notes.append("没有可花费的生命骰了")
                     else:
+                        con_mod = card.modifier("con")
+                        profession = card.profession_obj
+                        die = int(getattr(profession, "hit_die", 8) or 8)
+                        total = 0
+                        details: list[str] = []
+                        for _ in range(spent):
+                            result = roll(f"1d{die}", label="生命骰")
+                            gain = max(0, result.total + con_mod)
+                            total += gain
+                            details.append(f"{result.total}{con_mod:+d}")
+                        healed = min(total, card.max_hp - card.hp)
+                        was_down = card.is_downed
+                        card.current_hp = card.hp + healed
                         notes.append(
-                            "生命骰消耗与治疗由你裁决（可用 update_character 改 HP）"
+                            f"花 {spent} 颗生命骰回血 {healed}"
+                            f"（{'、'.join(details)}；剩 {card.hit_dice_left} 颗）"
                         )
+                        if was_down and card.hp > 0:
+                            card.clear_death_state()
+                            notes.append("从倒地中恢复（死亡豁免清零）")
+                else:
+                    notes.append("生命骰消耗与治疗由你裁决（可用 hit_dice 指定颗数）")
             set_character(save, card)
             lines.append(f"· {card.name or card.user_id}：" + "；".join(notes))
         if long_rest:
             lines.append("（中毒 / 疾病 / 诅咒等是否解除由你判断）")
+        else:
+            lines.append("（短休不回复法术位——契约魔法除外；状态不会自动清除）")
         return "\n".join(lines)
 
 

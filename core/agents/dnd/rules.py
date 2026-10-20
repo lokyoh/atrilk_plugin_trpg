@@ -74,10 +74,23 @@ def match_rules(topic: str, limit: int = 3) -> str:
         return "请提供规则主题关键词。\n可用主题：" + rule_topics()
 
     scored: list[tuple[float, str]] = []
-    for title in sections:
+    for title, body in sections.items():
         ratio = SequenceMatcher(None, topic, title).ratio()
         if topic in title or title in topic:
             ratio += 1.0
+        elif topic in body:
+            # 标题没提但正文讲到的（如「专注」在「法术规则」里）也算沾边；
+            # 提得越多的章节排得越前
+            ratio += 0.4 + min(0.5, body.count(topic) * 0.05)
+        # 有条目直接以该词开头且带解释（「- **中毒**：……」）时，这节就是它的主场
+        for line in body.splitlines():
+            stripped = line.lstrip("-*#　 ").strip()
+            if not stripped.startswith(topic):
+                continue
+            rest = stripped[len(topic) :].lstrip("*").lstrip()
+            if rest[:1] in {"：", ":", "（", "(", ""}:
+                ratio += 0.6
+                break
         scored.append((ratio, title))
     scored.sort(key=lambda item: item[0], reverse=True)
 

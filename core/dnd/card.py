@@ -27,6 +27,16 @@ from .attributes import (
     proficiency_bonus,
 )
 from .background import Background, get_background
+from .conditions import (
+    ConditionEffect,
+    combine_advantage,
+    merge_effects,
+    normalize_conditions,
+    resistances_text,
+    resolve_damage,
+    save_auto_fail,
+    speed_scale,
+)
 from .equipment import (
     Weapon,
     compute_armor_class,
@@ -43,6 +53,22 @@ __all__ = ["DEATH_CONDITIONS", "DeathSaveOutcome", "DndCharacter", "ability_roll
 
 #: 系统维护的倒地相关状态文本（``conditions`` 里这几项不是 DM 的自由文本）
 DEATH_CONDITIONS: tuple[str, ...] = ("倒地", "稳定", "死亡")
+
+
+def _join_reason(reason: str, extra: str) -> str:
+    """把两条原因文本并进同一对括号里。"""
+    if not reason:
+        return f"（{extra}）"
+    return reason[:-1] + f"；{extra}）"
+
+#: 种族 / 亚种自带的伤害抗性（建卡时自动写进
+#: :attr:`DndCharacter.damage_resistances`）。龙裔的吐息抗性取决于自选龙种，
+#: 由 DM 在建卡后自行补一条。
+RACE_RESISTANCES: dict[tuple[str, str], tuple[str, ...]] = {
+    ("dwarf", ""): ("毒素",),  # 矮人坚韧：两个亚种都有
+    ("halfling", "stout"): ("毒素",),  # 壮足半身人
+    ("tiefling", ""): ("火焰",),  # 炼狱血脉
+}
 
 
 @dataclass(slots=True)
@@ -124,6 +150,14 @@ class DndCharacter(TrpgCharacter):
     death_saves_failures: int = 0
     #: 0 血但已稳定，不再需要掷死亡豁免（等治疗 / 长休）
     stable: bool = False
+    #: 正在维持的专注法术（法术 key；换专注 / 受伤没过豁免 / 失能时清空）
+    concentrating: str = ""
+    #: 伤害抗性条目，形如 ``"火焰"``（抗性）、``"毒素:免疫"``、``"钝击:易伤"``；
+    #: 种族特性（矮人抗毒、提夫林抗火）在建卡时自动写入，DM 可再增补
+    damage_resistances: list[str] = field(default_factory=list)
+    #: 已消耗的生命骰数（短休花掉的；长休按 5e 回一半，见
+    #: :meth:`regain_hit_dice`）。总数 = 等级，恢复见 :meth:`restore_hit_dice`
+    hit_dice_used: int = 0
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -144,6 +178,41 @@ class DndCharacter(TrpgCharacter):
         self.spell_slots_used = {
             str(k): max(0, int(v)) for k, v in (self.spell_slots_used or {}).items()
         }
+        # 抗性条目规范化：「火焰:免疫」里的全角冒号统一成半角，空条目丢掉
+        self.damage_resistances = [
+            str(item).strip().replace("：", ":")
+            for item in (self.damage_resistances or [])
+            if str(item).strip()
+        ]
+        self.concentrating = str(self.concentrating or "").strip()
+        # 生命骰消耗不能超过等级、也不能为负
+        self.hit_dice_used = max(0, min(self.level, int(self.hit_dice_used or 0)))
+
+    # —— 生命骰（短休花费 / 长休恢复）——
+
+    @property
+    def hit_dice_total(self) -> int:
+        """生命骰总数 = 当前等级。"""
+        return max(1, int(self.level or 1))
+
+    @property
+    def hit_dice_left(self) -> int:
+        """还能花的生命骰数。"""
+        return max(0, self.hit_dice_total - int(self.hit_dice_used or 0))
+
+    def spend_hit_dice(self, count: int) -> int:
+        """花掉 ``count`` 颗生命骰；返回实际花掉的颗数（不够就只花有的）。"""
+        want = max(0, int(count or 0))
+        spent = min(want, self.hit_dice_left)
+        self.hit_dice_used += spent
+        return spent
+
+    def regain_hit_dice(self, count: int) -> int:
+        """恢复 ``count`` 颗生命骰；返回实际恢复的颗数。"""
+        want = max(0, int(count or 0))
+        back = min(want, int(self.hit_dice_used or 0))
+        self.hit_dice_used -= back
+        return back
 
     # —— 构造 ——
 
@@ -164,10 +233,21 @@ class DndCharacter(TrpgCharacter):
         equipment: list[str] | None = None,
         equipment_package: str = "",
         spells: list[str] | None = None,
+        damage_resistances: list[str] | None = None,
     ) -> DndCharacter:
         """按建卡流程的产出一份角色卡。"""
         race_obj = get_race(race)
         sub_obj = race_obj.resolve_subrace(subrace) if subrace else None
+        resistances = list(damage_resistances or [])
+        # 种族 / 亚种自带的抗性（矮人抗毒、提夫林抗火……）自动补上；
+        # 先查（种族, 亚种）组合，再回退到（种族, 空）的种族级条目
+        sub_key = sub_obj.key if sub_obj else ""
+        for item in RACE_RESISTANCES.get(
+            (race_obj.key, sub_key),
+            RACE_RESISTANCES.get((race_obj.key, ""), ()),
+        ):
+            if item not in resistances:
+                resistances.append(item)
         return cls(
             user_id=str(user_id),
             name=name,
@@ -183,6 +263,7 @@ class DndCharacter(TrpgCharacter):
             equipment_package=equipment_package,
             has_shield=any("盾" in str(item) for item in (equipment or [])),
             spells=[s.key for s in (get_spell(x) for x in (spells or [])) if s],
+            damage_resistances=resistances,
         )
 
     # —— 规则对象 ——
@@ -257,14 +338,19 @@ class DndCharacter(TrpgCharacter):
         """生命值上限。
 
         1 级取生命骰最大值 + 体质调整值；之后每级取生命骰平均值（向上取整）+ 体质调整值。
+        力竭 4 级起生命上限减半。
         """
         profession = self.profession_obj
         con = self.modifier("con")
         if not profession:
-            return max(1, 8 + con)
-        hp = profession.level1_hp + con
-        average = profession.hit_die // 2 + 1
-        hp += (self.level - 1) * (average + con)
+            hp = max(1, 8 + con)
+        else:
+            hp = profession.level1_hp + con
+            average = profession.hit_die // 2 + 1
+            hp += (self.level - 1) * (average + con)
+        scale = merge_effects(self.conditions, exhaustion=self.exhaustion).hp_max_scale
+        if scale < 1.0:
+            hp = max(1, int(hp * scale))
         return max(1, hp)
 
     @property
@@ -301,28 +387,43 @@ class DndCharacter(TrpgCharacter):
         self.conditions = [c for c in self.conditions if c not in DEATH_CONDITIONS]
         self.conditions.append(label)
 
+    def _set_unconscious(self, value: bool) -> None:
+        """挂上 / 取下「昏迷」——0 血的玩家按 5e 就是失去意识的。"""
+        if value:
+            if "昏迷" not in self.conditions:
+                self.conditions.append("昏迷")
+        else:
+            self.conditions = [c for c in self.conditions if c != "昏迷"]
+
     def mark_downed(self) -> None:
         """标记倒地濒死（生命归零，或稳定后又挨打）。"""
         self.stable = False
         self._set_death_condition("倒地")
+        # 0 血 = 昏迷：被攻击有优势、力量 / 敏捷豁免自动失败（5e）
+        self._set_unconscious(True)
 
     def mark_stable(self) -> None:
         """死亡豁免 3 次成功：伤势稳定（仍 0 血昏迷，不再掷豁免）。"""
         self.stable = True
         self._set_death_condition("稳定")
+        self._set_unconscious(True)
 
     def mark_dead(self) -> None:
         """标记死亡（3 次失败 / 致命伤）。"""
         self.stable = False
         self.death_saves_failures = 3
         self._set_death_condition("死亡")
+        self._set_unconscious(False)
+        self.concentrating = ""
 
     def clear_death_state(self) -> None:
         """清空死亡豁免进度与倒地 / 稳定 / 死亡状态（受治疗、复活、DM 裁决用）。"""
         self.stable = False
         self.death_saves_success = 0
         self.death_saves_failures = 0
-        self.conditions = [c for c in self.conditions if c not in DEATH_CONDITIONS]
+        self.conditions = [
+            c for c in self.conditions if c not in DEATH_CONDITIONS and c != "昏迷"
+        ]
 
     def add_death_failure(self, count: int = 1) -> str:
         """倒地状态下再受伤：累计失败（暴击算 2 次）；返回说明文本。"""
@@ -594,6 +695,52 @@ class DndCharacter(TrpgCharacter):
 
     # —— 检定 ——
 
+    def _check_advantage(
+        self,
+        kind: str,
+        explicit: Advantage,
+    ) -> tuple[Advantage, str]:
+        """把状态给的优势 / 劣势叠到调用方显式指定的姿态上。
+
+        :param kind: ``check``（属性 / 技能）/ ``save``（豁免）/ ``attack``（攻击）。
+        :return: ``(最终姿态, 状态原因文本)``。
+        """
+        effect = merge_effects(self.conditions, exhaustion=self.exhaustion)
+        state_adv = {
+            "check": effect.own_check,
+            "save": effect.own_save,
+            "attack": effect.own_attack,
+        }[kind]
+        if state_adv is Advantage.NORMAL:
+            return explicit, ""
+        combined = state_adv
+        if explicit is not Advantage.NORMAL:
+            # 状态与显式指定相遇：优势劣势抵消
+            combined = (
+                state_adv if explicit is state_adv else Advantage.NORMAL
+            )
+        names = [c for c in normalize_conditions(self.conditions) if c]
+        if self.exhaustion:
+            names.append(f"力竭 {self.exhaustion} 级")
+        kind_cn = {"check": "检定", "save": "豁免", "attack": "攻击"}[kind]
+        stance = "优势" if combined is Advantage.ADVANTAGE else (
+            "劣势" if combined is Advantage.DISADVANTAGE else "优劣抵消"
+        )
+        if not names:
+            return combined, ""
+        reason = f"（{'、'.join(names)}：{kind_cn}{stance}）"
+        return combined, reason
+
+    def resolve_attack_advantage(
+        self, explicit: Advantage
+    ) -> tuple[Advantage, str]:
+        """攻击检定的最终优势姿态：把自身状态（中毒 / 力竭 / 恐慌……）与
+        调用方显式指定的姿态合并（相遇抵消），并给出原因文本。
+
+        不走武器的攻击（徒手、推撞、擒抱）用这个方法拿最终姿态。
+        """
+        return self._check_advantage("attack", explicit)
+
     def check_skill(
         self,
         skill: Skill | str,
@@ -602,15 +749,19 @@ class DndCharacter(TrpgCharacter):
         advantage: Advantage = Advantage.NORMAL,
         rng: Random | None = None,
     ) -> CheckResult:
-        """技能检定。"""
+        """技能检定（自动应用中毒 / 恐慌 / 力竭等状态效果）。"""
         skill_obj = get_skill(skill)
-        return roll_check(
+        final, reason = self._check_advantage("check", advantage)
+        result = roll_check(
             self.skill_bonus(skill_obj),
             dc,
             kind=f"{skill_obj.label}检定",
-            advantage=advantage,
+            advantage=final,
             rng=rng,
         )
+        if reason:
+            result.kind += reason
+        return result
 
     def check_ability(
         self,
@@ -622,13 +773,22 @@ class DndCharacter(TrpgCharacter):
     ) -> CheckResult:
         """属性检定（无关联技能的裸检定）。"""
         ability_obj = get_ability(ability)
-        return roll_check(
+        final, reason = self._check_advantage("check", advantage)
+        # 野蛮人狂暴：力量检定与力量豁免有优势
+        effect = merge_effects(self.conditions)
+        if ability_obj.key in effect.check_adv_abilities:
+            final = combine_advantage(final, Advantage.ADVANTAGE)
+            reason = _join_reason(reason, "狂暴：此检定有优势")
+        result = roll_check(
             self.modifier(ability_obj),
             dc,
             kind=f"{ability_obj.cn}检定",
-            advantage=advantage,
+            advantage=final,
             rng=rng,
         )
+        if reason:
+            result.kind += reason
+        return result
 
     def check_save(
         self,
@@ -638,15 +798,28 @@ class DndCharacter(TrpgCharacter):
         advantage: Advantage = Advantage.NORMAL,
         rng: Random | None = None,
     ) -> CheckResult:
-        """豁免检定。"""
+        """豁免检定（自动应用状态效果；麻痹 / 震慑 / 昏迷 / 石化直接失败）。"""
         ability_obj = get_ability(ability)
-        return roll_check(
+        final, reason = self._check_advantage("save", advantage)
+        effect = merge_effects(self.conditions)
+        if ability_obj.key in effect.save_adv_abilities:
+            final = combine_advantage(final, Advantage.ADVANTAGE)
+            reason = _join_reason(reason, "狂暴：此豁免有优势")
+        result = roll_check(
             self.save_bonus(ability_obj),
             dc,
             kind=f"{ability_obj.cn}豁免",
-            advantage=advantage,
+            advantage=final,
             rng=rng,
         )
+        if save_auto_fail(self.conditions, ability_obj.key):
+            # 状态导致的自动失败：照掷骰（给玩家看点数），但结果强制为失败
+            result.auto_critical = False
+            result.forced_failure = True
+            reason = _join_reason(reason, "状态导致自动失败")
+        if reason:
+            result.kind += reason
+        return result
 
     def check_attack(
         self,
@@ -656,16 +829,20 @@ class DndCharacter(TrpgCharacter):
         advantage: Advantage = Advantage.NORMAL,
         rng: Random | None = None,
     ) -> CheckResult:
-        """攻击检定（对抗目标 AC）。"""
+        """攻击检定（对抗目标 AC；自动应用攻击方状态）。"""
         weapon_obj = get_weapon(weapon)
         label = weapon_obj.cn if weapon_obj else str(weapon)
-        return roll_check(
+        final, reason = self._check_advantage("attack", advantage)
+        result = roll_check(
             self.attack_bonus(weapon_obj or weapon),
             target_ac,
             kind=f"{label}攻击",
-            advantage=advantage,
+            advantage=final,
             rng=rng,
         )
+        if reason:
+            result.kind += reason
+        return result
 
     def check_spell_attack(
         self,
@@ -676,13 +853,104 @@ class DndCharacter(TrpgCharacter):
         rng: Random | None = None,
     ) -> CheckResult:
         """法术攻击检定（对抗目标 AC），加值取 :attr:`spell_attack_bonus`。"""
-        return roll_check(
+        final, reason = self._check_advantage("attack", advantage)
+        result = roll_check(
             self.spell_attack_bonus,
             target_ac,
             kind=label,
-            advantage=advantage,
+            advantage=final,
             rng=rng,
         )
+        if reason:
+            result.kind += reason
+        return result
+
+    # —— 专注 ——
+
+    @property
+    def concentrating_spell(self) -> Spell | None:
+        """正在维持的专注法术（认不出返回 ``None``）。"""
+        if not self.concentrating:
+            return None
+        return get_spell(self.concentrating)
+
+    def start_concentration(self, value: Spell | str) -> tuple[Spell | None, str]:
+        """开始维持一个需专注的法术；返回 ``(法术, 说明)``。
+
+        同时只能维持一个：原本在维持的法术被**新法术顶替**而中断（5e），
+        说明文本里会写清被顶掉的是哪个。
+        """
+        spell = get_spell(value)
+        if spell is None:
+            return None, ""
+        previous = self.concentrating_spell
+        self.concentrating = spell.key
+        if previous is not None and previous.key != spell.key:
+            return spell, f"（原专注的「{previous.cn}」被顶替而中断）"
+        return spell, ""
+
+    def break_concentration(self, reason: str = "") -> str:
+        """中断当前专注（受挫 / 失能 / 主动放弃）；返回说明文本。"""
+        spell = self.concentrating_spell
+        self.concentrating = ""
+        if spell is None:
+            return ""
+        tail = f"（{reason}）" if reason else ""
+        return f"专注中断：「{spell.cn}」效果终止{tail}"
+
+    def concentration_save(
+        self, damage: int, *, rng: Random | None = None
+    ) -> tuple[bool, str]:
+        """受伤后掷体质豁免维持专注：DC = max(10, 伤害 // 2)。
+
+        :return: ``(是否维持住, 结算文本)``；没在专注时返回 ``(True, "")``。
+        """
+        spell = self.concentrating_spell
+        if spell is None or int(damage) <= 0:
+            return True, ""
+        dc = max(10, int(damage) // 2)
+        result = self.check_save("con", dc, rng=rng)
+        if result.success:
+            return True, f"{result.describe()}：维持「{spell.cn}」的专注"
+        self.concentrating = ""
+        return False, f"{result.describe()}：专注中断，「{spell.cn}」效果终止"
+
+    # —— 伤害抗性 ——
+
+    def apply_resistance(self, amount: int, damage_type: str = "") -> tuple[int, str]:
+        """按抗性表结算伤害（抗性减半 / 免疫归零 / 易伤翻倍）。
+
+        抗性 = 角色卡上的固定抗性（种族等）+ 当前状态带来的抗性（狂暴的物理抗性）。
+        """
+        entries = list(self.damage_resistances)
+        for item in merge_effects(self.conditions).resistances:
+            if item not in entries:
+                entries.append(item)
+        return resolve_damage(amount, damage_type, entries)
+
+    def resistances_text(self) -> str:
+        """抗性表文本；没有抗性返回空串。"""
+        return resistances_text(self.damage_resistances)
+
+    # —— 状态 ——
+
+    def conditions_text(self) -> str:
+        """当前状态的规范名列表（含力竭等级，仅展示用）。"""
+        names = normalize_conditions(self.conditions)
+        if self.exhaustion:
+            names = [*names, f"力竭 {self.exhaustion} 级"]
+        return "、".join(names)
+
+    def effect(self) -> "ConditionEffect":
+        """当前状态合并后的机械效果。"""
+        return merge_effects(self.conditions, exhaustion=self.exhaustion)
+
+    def speed(self) -> int:
+        """当前速度（含状态修正：力竭减半 / 归零，束缚 / 擒抱归零）。"""
+        race = self.race_obj
+        base = race.speed if race else 30
+        scale = speed_scale(self.conditions, exhaustion=self.exhaustion)
+        return max(0, int(base * scale))
 
     # —— 展示与序列化 ——
 
@@ -727,8 +995,16 @@ class DndCharacter(TrpgCharacter):
             if self.exhaustion:
                 status.append(f"力竭 {self.exhaustion} 级")
             lines.append("状态 " + "、".join(status))
+        resist = self.resistances_text()
+        if resist:
+            lines.append(f"伤害抗性 {resist}")
+        if self.concentrating_spell is not None:
+            lines.append(f"专注维持中：{self.concentrating_spell.cn}")
         if profession:
-            lines.append(f"生命骰 {profession.hit_dice}")
+            dice_text = f"生命骰 {profession.hit_dice}"
+            if self.hit_dice_used:
+                dice_text += f"（已耗 {self.hit_dice_used}，剩 {self.hit_dice_left}）"
+            lines.append(dice_text)
         bg = self.background_obj
         if bg:
             lines.append(f"背景 {bg.cn}")
@@ -780,6 +1056,9 @@ class DndCharacter(TrpgCharacter):
             "death_saves_success",
             "death_saves_failures",
             "stable",
+            "concentrating",
+            "damage_resistances",
+            "hit_dice_used",
         }
         return cls(**{k: v for k, v in data.items() if k in known})
 

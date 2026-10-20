@@ -49,6 +49,9 @@ class CheckResult:
     advantage: Advantage = Advantage.NORMAL
     rolls: list[int] = field(default_factory=list)
     auto_critical: bool = True
+    #: 强制失败（状态导致：麻痹 / 震慑 / 昏迷 / 石化的力量与敏捷豁免）。
+    #: 骰子照掷（给玩家看点数），但结果恒为失败。
+    forced_failure: bool = False
 
     @property
     def nat20(self) -> bool:
@@ -68,6 +71,8 @@ class CheckResult:
     @property
     def success(self) -> bool:
         """是否达成。默认由 d20 自然 20 / 自然 1 直接决定成败。"""
+        if self.forced_failure:
+            return False
         if self.auto_critical:
             if self.nat20:
                 return True
@@ -86,6 +91,8 @@ class CheckResult:
         if self.bonus:
             text += f"{self.bonus:+d}"
         text += f" = {self.total}"
+        if self.forced_failure:
+            return f"{text}（状态导致自动失败）"
         if self.auto_critical and self.nat20:
             return f"{text}（大成功）"
         if self.auto_critical and self.nat1:
