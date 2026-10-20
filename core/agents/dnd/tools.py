@@ -65,6 +65,7 @@ from ...dnd.difficulty import (
     DC_BANDS,
     DEFAULT_BASE_DC,
     SKILL_BASE_DC,
+    dc_for,
     describe_dc,
 )
 from ...dnd.encounter import calibrate_specs
@@ -273,7 +274,7 @@ class SecretRollTool(AgentTool):
         )
 
 
-def _resolve_check(card, kind: str, dc: int, advantage: Advantage):
+def _resolve_check(card, kind: str, dc: int, advantage: Advantage, action: str = ""):
     """把检定对象解析成技能 / 属性 / 豁免并执行。
 
     技能名走 :func:`~..dnd.skills.get_skill`（支持「生存 / 求生」这类同义异写）；
@@ -281,7 +282,8 @@ def _resolve_check(card, kind: str, dc: int, advantage: Advantage):
     :class:`KeyError`，由调用方转成给 DM 看的提示。
 
     ``dc <= 0`` 表示 DM 留空：按 :func:`~..dnd.difficulty.dc_for` 以技能基准难度
-    自动定档，而不是一律 15。
+    自动定档，而不是一律 15。``action`` 是玩家这一轮的行动原文——难度词
+    （「悄悄」「拼尽全力」「翻越城墙」）要从里面认，跟规则判断器那条路径保持一致。
     """
     text = str(kind or "").strip()
     if not text:
@@ -298,7 +300,7 @@ def _resolve_check(card, kind: str, dc: int, advantage: Advantage):
     if not is_save:
         # 技能名（含别名，如「生存」= survival、「游说」= persuasion）
         skill = get_skill(name)
-        value = dc if dc > 0 else SKILL_BASE_DC.get(skill.key, DEFAULT_BASE_DC)
+        value = dc if dc > 0 else dc_for(action or text, skill.key)
         return card.check_skill(skill, value, advantage=advantage)
     raise KeyError(text)
 
@@ -338,7 +340,11 @@ class CheckTool(AgentTool):
             return "没找到该玩家的角色卡，无法检定"
         try:
             result = _resolve_check(
-                card, kind, _parse_int(dc, 0), _parse_advantage(advantage)
+                card,
+                kind,
+                _parse_int(dc, 0),
+                _parse_advantage(advantage),
+                str(context.data.get("action_text", "") or ""),
             )
         except KeyError as e:
             # 把可用清单一起回给 DM：模型下一次调用就能自己纠对写法

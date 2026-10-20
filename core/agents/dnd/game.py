@@ -1129,6 +1129,9 @@ async def run_dm_round(
     context = AgentContext(
         user_id=str(order[0]), save_id=save.save_id, chat_id=str(chat_id)
     )
+    # 玩家行动原文放进 context：check / attack 等工具要靠它定难度档位
+    # （「我悄悄摸过去」比「我走过去」容易），不塞进来就只能拿技能基准难度。
+    context.data["action_text"] = action_text
     try:
         with bind_save(save.save_id):
             result = await dm_agent.run(
