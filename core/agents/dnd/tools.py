@@ -244,7 +244,12 @@ class SecretRollTool(AgentTool):
 
 
 def _resolve_check(card, kind: str, dc: int, advantage: Advantage):
-    """把检定对象解析成技能 / 属性 / 豁免并执行。"""
+    """把检定对象解析成技能 / 属性 / 豁免并执行。
+
+    技能名走 :func:`~..dnd.skills.get_skill`（支持「生存 / 求生」这类同义异写）；
+    属性名支持中文 / 内部键 / 英文 / 缩写。认不出一律抛
+    :class:`KeyError`，由调用方转成给 DM 看的提示。
+    """
     text = str(kind or "").strip()
     if not text:
         raise KeyError("（未提供检定对象）")
@@ -257,9 +262,9 @@ def _resolve_check(card, kind: str, dc: int, advantage: Advantage):
                 return card.check_save(ability, dc, advantage=advantage)
             return card.check_ability(ability, dc, advantage=advantage)
     if not is_save:
-        for skill in SKILLS:
-            if name in (skill.cn, skill.key, skill.en.lower()):
-                return card.check_skill(skill, dc, advantage=advantage)
+        # 技能名（含别名，如「生存」= survival、「游说」= persuasion）
+        skill = get_skill(name)
+        return card.check_skill(skill, dc, advantage=advantage)
     raise KeyError(text)
 
 
@@ -272,7 +277,8 @@ class CheckTool(AgentTool):
         ToolArg(
             "kind",
             "str",
-            "检定对象：技能名（如 察觉、隐匿）或属性名（如 力量），豁免写作「力量豁免」",
+            "检定对象：技能名（如 察觉、隐匿、生存、游说、体操）或属性名"
+            "（如 力量），豁免写作「力量豁免」",
         ),
         ToolArg("dc", "int", "难度值，默认 15"),
         ToolArg("advantage", "str", "普通 / 优势 / 劣势，默认普通"),
@@ -300,7 +306,13 @@ class CheckTool(AgentTool):
                 card, kind, _parse_int(dc, 15), _parse_advantage(advantage)
             )
         except KeyError as e:
-            return f"无法识别检定对象：{e}"
+            # 把可用清单一起回给 DM：模型下一次调用就能自己纠对写法
+            return (
+                f"无法识别检定对象：{e}\n"
+                "可用的技能：" + "、".join(s.cn for s in SKILLS)
+                + "\n可用的属性（写作「力量豁免」即为豁免检定）："
+                + "、".join(a.cn for a in ABILITIES)
+            )
         return f"【{card.name}】{result.describe()}"
 
 
