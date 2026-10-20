@@ -152,6 +152,24 @@ def _first_paragraph(text: str, limit: int = 300) -> str:
 # --------------------------------------------------------------------------- #
 
 
+def _evolution_section(save: Save) -> list[str]:
+    """世界演化：势力位置与地点痕迹（玩家侧形态）。
+
+    这一节进手册的理由：世界演化轨的意义就是「世界在自己往前走」，
+    玩家得**看得见**这件事——回到走过的城镇发现它烧了半条街，
+    那是这一轴唯一的产出；要是只存在存档里没人知道，就白做了。
+
+    玩家侧**不给看**势力档位与期限的到期后果（那是 DM 的账），
+    所以用 ``for_player=True``。
+    """
+    from .evolution import evolution_text, load_evolution
+
+    text = evolution_text(load_evolution(save), for_player=True)
+    if not text.strip():
+        return []
+    return ["## 近况", "", text]
+
+
 def _world_section(save: Save) -> list[str]:
     """世界档案：名称、简介、地区。"""
     world = get_world(save.world_key)
@@ -264,7 +282,13 @@ def _party_section(save: Save) -> list[str]:
 #: 各分节的构建器（按展示顺序）
 #: 手册各节的拼装顺序。章节节取代了原来的故事节——
 #: 章节卡既然接手了「玩家该干什么」，手册就该讲这个，而不是讲背景故事。
-_BUILDERS = (_world_section, _chapter_section, _bible_section, _party_section)
+_BUILDERS = (
+    _world_section,
+    _chapter_section,
+    _evolution_section,
+    _bible_section,
+    _party_section,
+)
 
 
 # --------------------------------------------------------------------------- #

@@ -40,6 +40,8 @@ __all__ = [
     "PERFORMANCE_WEIGHTS",
     "Performance",
     "ThreatTier",
+    "active_tier",
+    "active_tiers",
     "chapter_cr",
     "chapter_cr_text",
     "chapter_xp_budget",
@@ -304,14 +306,31 @@ DEFAULT_TIERS: tuple[tuple[int, ThreatTier], ...] = (
 )
 
 
-def active_tier(chapter: int, tiers: Iterable[tuple[int, ThreatTier]] = DEFAULT_TIERS) -> ThreatTier | None:
-    """取该章节生效的最高威胁层级。"""
+def active_tiers(
+    chapter: int, tiers: Iterable[tuple[int, ThreatTier]] = DEFAULT_TIERS
+) -> list[ThreatTier]:
+    """取该章节**全部**生效的威胁层级（按生效章号升序）。
+
+    **层级是叠加的，不是互斥的。** 第 13 章同时满足 elite（第 5 章后）、
+    attrition（第 9 章后）与 legendary（第 13 章后）三档——它们加压的方式各不相同
+    （换目标 / 补增援 / 多一次行动），互不冲突，所以要一起生效。
+
+    早先这里只返回最高的一档（:func:`active_tier` 仍是那个行为），
+    结果第 13 章时前两档被静默丢弃——压力凭空少了两层。
+    """
     chapter = max(1, int(chapter))
-    picked: ThreatTier | None = None
+    picked: list[tuple[int, ThreatTier]] = []
     for after, tier in tiers:
         if chapter > after:
-            picked = tier
-    return picked
+            picked.append((after, tier))
+    picked.sort(key=lambda item: item[0])
+    return [tier for _after, tier in picked]
+
+
+def active_tier(chapter: int, tiers: Iterable[tuple[int, ThreatTier]] = DEFAULT_TIERS) -> ThreatTier | None:
+    """取该章节生效的**最高**威胁层级（兼容旧调用；多数场合该用 :func:`active_tiers`）。"""
+    picked = active_tiers(chapter, tiers)
+    return picked[-1] if picked else None
 
 
 def chapter_cr(
@@ -321,6 +340,7 @@ def chapter_cr(
     party_size: int = 4,
     difficulty: str = "medium",
     perf_factor: float = 0.0,
+    world_pressure: float = 0.0,
     ladder_cap: float = 3.0,
     ladder_half_life: float = 6.0,
     tiers: Iterable[tuple[int, ThreatTier]] = DEFAULT_TIERS,
@@ -333,9 +353,14 @@ def chapter_cr(
     - **基础轨**：队伍平均等级（与 :func:`~.encounter.target_cr_for` 的单人口径一致）；
     - **章节轨**：随章节序号爬升，**递减趋近** :paramref:`ladder_cap`
       （指数半衰），所以前期涨得明显、后期每几章才动一点，不会早早撞到天花板变平；
-    - **表现轨**：`perf_factor`（-1~+1），难度越高越收敛。
+    - **表现轨**：`perf_factor`（-1~+1），难度越高越收敛；
+    - **世界演化轨**：:paramref:`world_pressure`（见 :func:`~.evolution.pressure_bonus`），
+      世界自己在往前走的那个部分。
 
     威胁层级**不参与**这里的加法——它是规则层的压力，混进 CR 会让数值失真。
+    但演化轨**要**参与：它是「同一个 NPC 位置变高了」，本来就该换更硬的怪。
+    所以本模块不import :mod:`.evolution`（纯层之间不互相依赖），
+    由编排层 :mod:`..agents.dnd.chapter_flow` 算出再传进来。
 
     **为什么高等级要收敛表现轨**：5e 里等级阈值涨得越来越慢（1→10 级是十倍经验，
     17→20 级只多一半），所以「这一章打得顺不顺」对高等级队伍的影响本就该更小。
@@ -351,7 +376,8 @@ def chapter_cr(
     half = max(0.5, float(ladder_half_life))
     ladder = cap * (1.0 - _exp(-(ch - 1) / half))
     adapt_term = float(perf_factor) if adapt else 0.0
-    return round(max(0.0, base + ladder + adapt_term * _adapt_damp(lv)), 2)
+    pressure = max(0.0, float(world_pressure))
+    return round(max(0.0, base + ladder + pressure + adapt_term * _adapt_damp(lv)), 2)
 
 
 #: 表现轨的收敛：等级 1 不衰减，每级 ×衰减，最低到 :data:`_ADAPT_FLOOR`。
@@ -371,6 +397,7 @@ def chapter_cr_text(
     party_size: int = 4,
     difficulty: str = "medium",
     perf_factor: float = 0.0,
+    world_pressure: float = 0.0,
     tiers: Iterable[tuple[int, ThreatTier]] = DEFAULT_TIERS,
     adapt: bool = True,
 ) -> str:
@@ -383,11 +410,13 @@ def chapter_cr_text(
         party_size=party_size,
         difficulty=difficulty,
         perf_factor=perf_factor,
+        world_pressure=world_pressure,
         tiers=tiers,
         adapt=adapt,
     )
     text = _cr_text(cr)
-    tier = active_tier(chapter, tiers)
-    if tier is not None:
-        text = f"{text}（威胁层级：{tier.name}——{tier.mod}）"
+    tiers_on = active_tiers(chapter, tiers)
+    if tiers_on:
+        detail = "；".join(f"{t.name}——{t.mod}" for t in tiers_on)
+        text = f"{text}（威胁层级：{detail}）"
     return text

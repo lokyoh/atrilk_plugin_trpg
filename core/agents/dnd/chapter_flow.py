@@ -51,6 +51,7 @@ from ...dnd.encounter_budget import (
     summarize_performance,
 )
 from ...dnd.save_store import Save, recent_events
+from ...dnd.threat import ThreatProfile, profile_for
 from ...dnd.world_bible import load_bible
 from ...dnd.world_store import MAIN_DOC_KEY, get_world_map, list_docs, load_doc
 from ..base import UsageEntry
@@ -64,6 +65,7 @@ __all__ = [
     "chapter_plan",
     "ensure_opening_chapter",
     "offer_branches",
+    "sync_world",
     "world_place_names",
     "weave_chapter",
 ]
@@ -101,10 +103,38 @@ class ChapterPlan:
     difficulty: str = "medium"
     #: 织法（从存档的 ``_recipe`` 读，读不到用默认）
     recipe: Recipe = field(default_factory=Recipe)
+    #: 威胁剖面（见 :mod:`~...dnd.threat`）：这一章叠加了哪些后期加压档位
+    threat: ThreatProfile = field(default_factory=ThreatProfile)
+    #: 世界演化轨（见 :mod:`~...dnd.evolution`）：世界自己往前走带来的 CR 加成
+    pressure: int = 0
 
     @property
     def adapts(self) -> bool:
         return bool(self.recipe.adapt)
+
+    @property
+    def threat_tags(self) -> list[str]:
+        return self.threat.tags
+
+
+def sync_world(save: Save, chapter: int) -> int:
+    """把世界演化到第 ``chapter`` 章，返回本档的世界压力加成。
+
+    **幂等**（见 :func:`~...dnd.evolution.advance_world`），所以 ``chapter_plan``
+    与 ``advance_chapter`` 两处都调它也没关系——这正是把它做成幂等的原因。
+    读世界圣经失败时按「没有势力」处理，不该拦住算难度。
+    """
+    from ...dnd.evolution import advance_world, load_evolution, pressure_bonus, store_evolution
+
+    state = load_evolution(save)
+    entities: list[object] = []
+    try:
+        entities = load_bible(save.world_key).entities
+    except (OSError, ValueError) as e:
+        log.warning(f"读世界圣经失败（世界演化轨按无势力处理）：{str_traceback(e)}")
+    advance_world(state, chapter, entities=entities)
+    store_evolution(save, state)
+    return pressure_bonus(state)
 
 
 def _perf_of(save: Save, *, enabled: bool = True, difficulty: str = "medium") -> tuple[Performance, float]:
@@ -132,7 +162,8 @@ def chapter_plan(
 
     难度是**三轨**的（见 :func:`~...dnd.encounter_budget.chapter_cr`）：
     队伍平均等级打底、章节序号爬升、表现系数修正。20 级之后另有威胁层级，
-    走规则层而不动数值。
+    走规则层而不动数值；世界演化轨（:mod:`~...dnd.evolution`）则把势力位置
+    的变化换成一点 CR。
     """
     from ...dnd.combat import party_level
 
@@ -144,6 +175,7 @@ def chapter_plan(
     size = max(1, len(save.player_ids) or 4)
     chapter_no = state.completed + 1
     points = rec.story_points
+    pressure = sync_world(save, chapter_no)
 
     return ChapterPlan(
         chapter_no=chapter_no,
@@ -157,12 +189,19 @@ def chapter_plan(
             party_size=size,
             difficulty=difficulty,
             perf_factor=factor if rec.adapt else 0.0,
+            world_pressure=pressure,
         ),
         xp_budget=chapter_xp_budget(
             level, points, party_size=size, difficulty=difficulty
         ),
         difficulty=difficulty,
         recipe=rec,
+        threat=profile_for(
+            chapter=chapter_no,
+            level=level,
+            party_size=size,
+        ),
+        pressure=pressure,
     )
 
 

@@ -453,10 +453,17 @@ def los_blocked(state: Any, a: Any, b: Any) -> tuple[bool, tuple[int, int] | Non
 
 
 def cover_bonus(state: Any, target: Any) -> int:
-    """目标所在格提供的掩体 AC 加值。"""
+    """目标所在格提供的掩体 AC 加值。
+
+    **场地规则修正**（``state.arena_cover_delta``）一并算上：
+    「灯火限制」「涨潮」这类规则会让掩体变差——负数就是扣 AC。
+    修正值存在战斗状态上，所以本模块不用反向依赖 :mod:`.threat`。
+    """
     if not has_map(state) or not has_position(target):
         return 0
-    return terrain_at(state, target.x, target.y).cover
+    bonus = terrain_at(state, target.x, target.y).cover
+    delta = int(getattr(state, "arena_cover_delta", 0) or 0)
+    return max(0, bonus + delta)
 
 
 # --------------------------------------------------------------------------- #

@@ -328,12 +328,21 @@ def _chapter_brief(save) -> str:
 
     用 :func:`~...dnd.chapter.chapter_summary` 的 DM 侧形态，所以这一段里
     **包含难度数值与 fail_forward**——那是 DM 该知道、玩家不该看到的。
+    后面接世界演化轨的 DM 侧形态（势力位置、痕迹、未结期限）。
     """
     try:
-        return chapter_summary(save, for_player=False)
+        text = chapter_summary(save, for_player=False)
     except Exception as e:  # 章节状态读不出来不该拦住切换场景
         log.warning(f"读章节进度失败：{str_traceback(e)}")
         return ""
+    try:
+        from ...dnd.evolution import evolution_text, load_evolution
+
+        extra = evolution_text(load_evolution(save), for_player=False)
+    except Exception as e:  # 世界演化是增强，读不出来不该拦住
+        log.warning(f"读世界演化失败：{str_traceback(e)}")
+        extra = ""
+    return f"{text}\n\n{extra}".strip() if extra else text
 
 
 #: 复盘「裁定」一行要收进来的功能（其余是查询 / 叙述 / 世界书类，不必进流水）

@@ -32,6 +32,7 @@ from ...dnd.combat import (
     attack as combat_attack,
 )
 from ...dnd.combat import (
+    apply_threat_profile,
     auto_crit_on_hit,
     clear_combat,
     combat_text,
@@ -48,6 +49,7 @@ from ...dnd.combat import (
     roll_damage,
     save_combat,
     start_combat,
+    summon_reinforcements,
     update_enemy,
     use_resource,
 )
@@ -70,6 +72,7 @@ from ...dnd.difficulty import (
 )
 from ...dnd.encounter import calibrate_specs
 from ...dnd.equipment import ARMORS, SHIELDS, WEAPONS, get_armor, get_weapon
+from ...dnd.evolution import note_scene_change
 from ...dnd.memory import (
     MEMORY_MAX,
     add_memory,
@@ -1193,6 +1196,10 @@ class UpdateSceneTool(AgentTool):
             {"note": text},
             round=current_round(save),
         )
+        # 顺手给地点记一条痕迹（同样零额外成本）：「这座城烧过」「这里驻过军」
+        # 是世界演化轨的一半输入，另一半由势力推进自动产生。认不出的 kind
+        # 会被换成按序取的措辞，不会丢信息。
+        note_scene_change(save, save.current_scene, label, text)
         return f"已在场景「{save.current_scene}」记录变化：{text}"
 
 
@@ -1301,11 +1308,23 @@ class StartCombatTool(AgentTool):
         )
         context.data["combat_started"] = True
 
+        # 威胁层级（后期加压，走规则层不动数值）：专攻目标 / 增援 / 首领传奇行动 / 场地规则
+        threat_note = ""
+        try:
+            from .chapter_flow import chapter_plan
+
+            plan = chapter_plan(save)
+            threat_note = apply_threat_profile(state, plan.threat)
+        except Exception as e:  # 威胁层是增强，不该让开战失败
+            log.warning(f"应用威胁层级失败（继续开战）：{str_traceback(e)}")
+
         lines = ["⚔️ 战斗开始，先攻已掷好。"]
         if calibration:
             lines.append(
                 f"（CR 校准：队伍平均等级 {level} —— " + "；".join(calibration) + "）"
             )
+        if threat_note:
+            lines.append("（威胁层级：" + threat_note.replace("\n", "；") + "）")
         if unknown:
             lines.append("（没认出来的写法已忽略：" + "、".join(unknown) + "）")
         lines.append("")
@@ -1497,6 +1516,14 @@ class EnemyAttackTool(AgentTool):
             str(attack_name or ""),
             advantage=_parse_advantage(advantage),
         )
+        # 增援（attrition 档）：敌人被清掉一半以上时自动来一波
+        try:
+            wave = summon_reinforcements(save, state)
+        except Exception as e:  # 增援是增强，不该让攻击结算失败
+            log.warning(f"放增援失败（忽略）：{str_traceback(e)}")
+            wave = ""
+        if wave:
+            text = text + "\n" + wave
         return text
 
 

@@ -79,6 +79,7 @@ from .npcs import (
 )
 from .progression import xp_for_cr
 from .save_store import Save, get_character, read_scene, save_dir, set_character
+from .threat import apply_arena_terrain, pick_boss, target_focus
 
 __all__ = [
     "COMBAT_FILENAME",
@@ -90,6 +91,7 @@ __all__ = [
     "advance_turn",
     "all_enemies_out",
     "apply_damage",
+    "apply_threat_profile",
     "attack",
     "auto_crit_on_hit",
     "can_act",
@@ -100,6 +102,7 @@ __all__ = [
     "combatant_conditions",
     "combatant_exhaustion",
     "combatant_state_text",
+    "count_legendary_use",
     "cover_text",
     "current_actor",
     "effective_ac",
@@ -111,6 +114,7 @@ __all__ = [
     "is_dead",
     "is_dying",
     "is_out",
+    "legendary_available",
     "load_combat",
     "move_combatant",
     "parse_enemy_list",
@@ -118,11 +122,15 @@ __all__ = [
     "peek_following",
     "player_status",
     "record_defeat",
+    "reinforcement_pending",
     "resource_of",
     "resources_text",
     "roll_damage",
     "save_combat",
     "start_combat",
+    "summon_reinforcements",
+    "threat_focus_name",
+    "threat_text",
     "tick_dot",
     "update_enemy",
     "use_resource",
@@ -282,6 +290,26 @@ class CombatState:
     #: 本场被击败的敌人（结算经验 / 战利品用）：``{"name","monster","cr","xp"}``
     defeated: list[dict[str, Any]] = field(default_factory=list)
     started_at: float = field(default_factory=time.time)
+    #: —— 威胁层级（见 :mod:`.threat`）——
+    #: 生效的档位标签（``elite`` / ``attrition`` / ``legendary`` / ``rulebreak``）
+    threat_tags: list[str] = field(default_factory=list)
+    #: 专攻目标的 cid（elite 档）：敌方优先打他
+    threat_focus: str = ""
+    #: 首领的 cid（legendary 档）：每轮可以多一次行动
+    threat_boss: str = ""
+    #: 传奇行动计数所属的轮次（轮次变了就清零重数）
+    legendary_round: int = 0
+    #: 首领本轮的攻击次数：``cid -> 次数``。第二次即视为传奇行动（不占动作）
+    legendary_counts: dict[str, int] = field(default_factory=dict)
+    #: 增援计划（attrition 档）：``{"count","target_cr","label","cr_text"}``
+    threat_reinforcement: dict[str, Any] = field(default_factory=dict)
+    #: 增援已经放出来了几波
+    reinforcement_waves: int = 0
+    #: 场地规则键（rulebreak 档，见 :data:`~.threat.ARENA_RULES`）
+    arena_rule: str = ""
+    #: 场地规则对掩体的修正（负数 = 掩体变差）。存在状态上，
+    #: 这样 :func:`~.battlemap.cover_bonus` 不用反向依赖 :mod:`.threat`
+    arena_cover_delta: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -299,12 +327,24 @@ class CombatState:
             "map_hash": self.map_hash,
             "defeated": [dict(item) for item in self.defeated],
             "started_at": self.started_at,
+            "threat_tags": list(self.threat_tags),
+            "threat_focus": self.threat_focus,
+            "threat_boss": self.threat_boss,
+            "legendary_round": self.legendary_round,
+            "legendary_counts": {
+                str(k): int(v) for k, v in (self.legendary_counts or {}).items()
+            },
+            "threat_reinforcement": dict(self.threat_reinforcement),
+            "reinforcement_waves": self.reinforcement_waves,
+            "arena_rule": self.arena_rule,
+            "arena_cover_delta": self.arena_cover_delta,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CombatState:
         order = data.get("order")
         tiles = data.get("tiles")
+        reinforcement = data.get("threat_reinforcement")
         return cls(
             scene=str(data.get("scene", "") or ""),
             note=str(data.get("note", "") or ""),
@@ -334,6 +374,23 @@ class CombatState:
                 if isinstance(item, dict)
             ],
             started_at=float(data.get("started_at", 0.0) or 0.0),
+            threat_tags=[str(x) for x in (data.get("threat_tags") or []) if str(x)],
+            threat_focus=str(data.get("threat_focus", "") or ""),
+            threat_boss=str(data.get("threat_boss", "") or ""),
+            legendary_round=_int_or(data.get("legendary_round"), 0),
+            legendary_counts={
+                str(k): int(v)
+                for k, v in (data.get("legendary_counts") or {}).items()
+                if str(k)
+            },
+            threat_reinforcement=(
+                {str(k): v for k, v in reinforcement.items()}
+                if isinstance(reinforcement, dict)
+                else {}
+            ),
+            reinforcement_waves=_int_or(data.get("reinforcement_waves"), 0),
+            arena_rule=str(data.get("arena_rule", "") or ""),
+            arena_cover_delta=_int_or(data.get("arena_cover_delta"), 0),
         )
 
 
@@ -1054,8 +1111,217 @@ def start_combat(
 
 
 # --------------------------------------------------------------------------- #
-# 伤害结算
+# 威胁层级
 # --------------------------------------------------------------------------- #
+
+
+def apply_threat_profile(
+    state: CombatState,
+    profile: Any,
+    *,
+    rng: Any = None,
+) -> str:
+    """把威胁剖面落到这场战斗上，返回给 DM 看的一行提示（没有威胁时返回空串）。
+
+    这一步是**规则落地**，不是提示：档位一旦生效，它就会改变战场本身
+    （专攻目标、增援计划、首领、场地地形），后续结算照着算。
+
+    :param state: 战斗状态（就地修改）。
+    :param profile: :class:`~.threat.ThreatProfile`。
+    """
+    if profile is None or not getattr(profile, "active", False):
+        return ""
+
+    state.threat_tags = list(profile.tags)
+
+    # —— elite：专攻目标 ——
+    if profile.has("elite"):
+        focus = str(profile.focus_cid or "")
+        if not focus:
+            focus = target_focus([c for c in state.order if c.kind == "player"])
+        state.threat_focus = focus
+
+    # —— legendary：首领 ——
+    if profile.has("legendary"):
+        boss = str(profile.boss_cid or "")
+        if not boss:
+            boss = pick_boss(
+                [c for c in state.order if c.is_enemy], resolve_monster
+            )
+        state.threat_boss = boss
+        state.legendary_round = 0
+        state.legendary_counts = {}
+
+    # —— attrition：增援计划 ——
+    if profile.has("attrition"):
+        state.threat_reinforcement = dict(profile.reinforcement or {})
+        state.reinforcement_waves = 0
+
+    # —— rulebreak：场地规则 ——
+    if profile.has("rulebreak") and profile.arena is not None:
+        state.arena_rule = profile.arena.key
+        state.arena_cover_delta = int(profile.arena.cover_delta or 0)
+        if profile.arena.terrain and state.width and state.height:
+            apply_arena_terrain(
+                state.tiles,
+                state.width,
+                state.height,
+                profile.arena,
+                occupied=[
+                    (c.x, c.y) for c in state.order if c.x >= 0 and c.y >= 0
+                ],
+                rng=rng,
+            )
+
+    lines = profile.dm_lines()
+    return "\n".join(lines)
+
+
+def threat_focus_name(state: CombatState) -> str:
+    """专攻目标的显示名（没有专攻目标时返回空串）。"""
+    cid = str(getattr(state, "threat_focus", "") or "")
+    if not cid:
+        return ""
+    for combatant in state.order:
+        if combatant.cid == cid:
+            return combatant.name
+    return ""
+
+
+def _legendary_count(state: CombatState, combatant: Combatant) -> int:
+    """首领本轮已经攻击了几次（不是首领恒为 0）。轮次变了自动重数。"""
+    boss = str(getattr(state, "threat_boss", "") or "")
+    if not boss or combatant.cid != boss:
+        return 0
+    if int(getattr(state, "legendary_round", 0) or 0) != int(state.round):
+        return 0
+    return int((state.legendary_counts or {}).get(combatant.cid, 0))
+
+
+def _count_legendary(state: CombatState, combatant: Combatant) -> bool:
+    """记一次首领的攻击，返回它是不是传奇行动（本轮第二次起算）。
+
+    传奇行动**不占动作**，所以系统不扣首领的动作资源，只记次数。
+    """
+    boss = str(getattr(state, "threat_boss", "") or "")
+    if not boss or combatant.cid != boss:
+        return False
+    if int(getattr(state, "legendary_round", 0) or 0) != int(state.round):
+        state.legendary_round = int(state.round)
+        state.legendary_counts = {}
+    counts = state.legendary_counts or {}
+    used = int(counts.get(combatant.cid, 0)) + 1
+    counts[combatant.cid] = used
+    state.legendary_counts = counts
+    return used >= 2
+
+
+def legendary_available(state: CombatState, combatant: Combatant) -> bool:
+    """这只敌人本轮还能不能发动传奇行动。
+
+    口径：只有首领能，且**每轮一次**——也就是本轮攻击次数还没到 2 次。
+    """
+    boss = str(getattr(state, "threat_boss", "") or "")
+    if not boss or combatant.cid != boss:
+        return False
+    return _legendary_count(state, combatant) < 2
+
+
+def count_legendary_use(state: CombatState, combatant: Combatant) -> bool:
+    """记一次首领的攻击，返回它是不是传奇行动（第二次及以后算）。
+
+    保留给外部调用；:func:`~.enemy_attack` 内部用的是先查后数的两段式，
+    因为它需要在上限被突破时**拦下**而不是只记账。
+    """
+    return _count_legendary(state, combatant)
+
+
+def reinforcement_pending(state: CombatState) -> dict[str, Any]:
+    """还没放出来的增援计划（没有则返回空 dict）。"""
+    if "attrition" not in (getattr(state, "threat_tags", []) or []):
+        return {}
+    plan = dict(getattr(state, "threat_reinforcement", {}) or {})
+    if not plan:
+        return {}
+    if int(getattr(state, "reinforcement_waves", 0) or 0) > 0:
+        return {}
+    return plan
+
+
+def summon_reinforcements(
+    save: Save,
+    state: CombatState,
+    *,
+    rng: Any = None,
+) -> str:
+    """放出一波增援（attrition 档），返回给 DM 看的说明（没有增援时返回空串）。
+
+    **触发时机**：原敌人被打到只剩一半以下时——这时放增援最吓人，
+    也最符合「每场战斗结束前追加一波」的意思（战斗快结束时压力最大）。
+    一场战斗只放一波。
+
+    增援是**打折的杂兵**（CR = 队伍平均等级 − 2），不是新的主力：
+    它的作用是拖时间与消耗资源，不是提高单场难度上限。
+
+    :return: 放出了就返回一段说明（含新敌人的名字与数量），没放返回空串。
+    """
+    plan = reinforcement_pending(state)
+    if not plan:
+        return ""
+
+    enemies = [c for c in state.order if c.is_enemy]
+    living = [c for c in enemies if not c.out and c.hp > 0]
+    # 只在原敌人被清掉一半以上时放增援
+    if len(living) * 2 > len(enemies):
+        return ""
+
+    count = max(1, int(plan.get("count", 0) or 0))
+    target_cr = float(plan.get("target_cr", 1.0) or 1.0)
+    label = str(plan.get("label", "") or "增援")
+
+    # 从怪物表里挑最接近目标 CR 的杂兵
+    from .monsters import MONSTERS, scale_monster
+
+    candidates = sorted(MONSTERS, key=lambda m: (abs(m.cr - target_cr), m.cr))
+    if not candidates:
+        return ""
+    base = candidates[0]
+    monster = scale_monster(base, target_cr) or base
+
+    # 名字：沿用场上已有的同名计数，避免撞名
+    counters: Counter[str] = Counter()
+    for combatant in state.order:
+        if combatant.is_enemy:
+            counters[combatant.name] += 1
+    added: list[str] = []
+    for _ in range(min(count, MAX_ENEMIES - len(enemies))):
+        counters[base.cn] += 1
+        index = counters[base.cn]
+        name = f"{base.cn}{index}" if index > 1 else base.cn
+        hp = max(1, roll(monster.hit_dice, rng=rng).total)
+        state.order.append(
+            Combatant(
+                cid=f"{monster.key}#r{index}",
+                kind="enemy",
+                name=name,
+                initiative=roll_d20(rng=rng)[1] + monster.initiative,
+                ac=monster.ac,
+                hp=hp,
+                max_hp=hp,
+                monster=monster.key,
+                speed=int(getattr(monster, "speed", 30) or 30),
+            )
+        )
+        added.append(name)
+
+    if not added:
+        return ""
+    state.reinforcement_waves = 1
+    save_combat(save, state)
+    return (
+        f"增援到了：{label} {len(added)} 只（{'、'.join(added)}，"
+        f"CR {plan.get('cr_text', '')}）从战场边缘涌了进来。"
+    )
 
 
 def roll_damage(expr: str, *, crit: bool = False, rng: Any = None) -> tuple[int, str]:
@@ -1487,6 +1753,15 @@ def enemy_attack(
     if gate.disadvantage and advantage is not Advantage.DISADVANTAGE:
         advantage = Advantage.DISADVANTAGE
 
+    # 专攻（elite 档）：敌方优先打最脆弱的那个。选了别人就提醒一句——
+    # **不拦**：战术取舍是 DM 的判断力，系统只保证规则被看见。
+    focus_hint = ""
+    focus_cid = str(getattr(state, "threat_focus", "") or "")
+    if focus_cid and target.cid != focus_cid:
+        focus_name = threat_focus_name(state)
+        if focus_name:
+            focus_hint = f"（{enemy.name}的专攻目标是{focus_name}，不是{target.name}）"
+
     # 双方状态带来的优势 / 劣势（敌人中毒 / 玩家倒地 / 隐形……），相遇抵消
     state_adv, state_reason = attack_advantage(
         combatant_conditions(save, enemy),
@@ -1512,6 +1787,26 @@ def enemy_attack(
     ]
     if state_reason:
         lines.append(f"（{state_reason}）")
+    if focus_hint:
+        lines.append(focus_hint)
+
+    # 传奇行动（threat 的 legendary 档）：首领每轮可以多一次行动，不占动作。
+    # 口径：**每轮至多 2 次攻击**（1 次常规 + 1 次传奇），超出的直接拦下——
+    # 这条要是只提示不拦，DM 多调几次就等于没有上限，压力凭空消失。
+    legendary = False
+    if enemy.cid == str(getattr(state, "threat_boss", "") or ""):
+        used = _legendary_count(state, enemy)
+        if used >= 2:
+            return (
+                f"{enemy.name} 本轮的传奇行动已经用过了（首领每轮只有 1 次额外行动）。",
+                False,
+            )
+        legendary = _count_legendary(state, enemy)
+        if legendary:
+            lines.append("（传奇行动：这一击不占它的动作）")
+        else:
+            lines.append("（它本轮还可以再发动一次传奇行动）")
+
     if not result.success:
         lines.append(f"未命中 {target.name}。")
         return "\n".join(lines), False
@@ -1751,6 +2046,44 @@ def state_tile(state: CombatState, combatant: Combatant):
 # --------------------------------------------------------------------------- #
 
 
+def threat_text(state: CombatState) -> str:
+    """威胁层级的一句话摘要（给 DM 看；没有威胁时返回空串）。
+
+    写进战斗块的开头，让 DM 一眼看到「这场有哪些额外规则」——
+    规则藏得太深就等于没有规则。
+    """
+    tags = list(getattr(state, "threat_tags", []) or [])
+    if not tags:
+        return ""
+    from .threat import ARENA_RULES
+
+    parts: list[str] = []
+    if "elite" in tags:
+        name = threat_focus_name(state)
+        parts.append(f"敌方专攻{name}" if name else "敌方专攻最脆弱的冒险者")
+    if "attrition" in tags:
+        plan = dict(getattr(state, "threat_reinforcement", {}) or {})
+        count = int(plan.get("count", 0) or 0)
+        if count and int(getattr(state, "reinforcement_waves", 0) or 0) == 0:
+            parts.append(f"还有一波增援未到（{count} 只 {plan.get('label', '杂兵')}）")
+    if "legendary" in tags:
+        boss = ""
+        for combatant in state.order:
+            if combatant.cid == str(getattr(state, "threat_boss", "") or ""):
+                boss = combatant.name
+                break
+        parts.append(f"首领{boss}每轮有 1 次传奇行动" if boss else "首领每轮有 1 次传奇行动")
+    if "rulebreak" in tags:
+        key = str(getattr(state, "arena_rule", "") or "")
+        for rule in ARENA_RULES:
+            if rule.key == key:
+                parts.append(f"场地规则：{rule.name}（{rule.desc}）")
+                break
+    if not parts:
+        return ""
+    return "【威胁】" + "；".join(parts)
+
+
 def combat_text(save: Save, state: CombatState, *, with_map: bool = True) -> str:
     """战斗现状文本，用于 DM 输入与玩家提示。"""
     current = current_actor(state)
@@ -1762,6 +2095,9 @@ def combat_text(save: Save, state: CombatState, *, with_map: bool = True) -> str
         lines.extend(f"  · {item}" for item in state.pending)
     if state.note:
         lines.append(f"起因 / 环境：{state.note}")
+    threat_line = threat_text(state)
+    if threat_line:
+        lines.append(threat_line)
     board = battlefield_text(state, with_map=with_map)
     if board:
         lines.append(board)
