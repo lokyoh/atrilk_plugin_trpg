@@ -271,7 +271,7 @@
       "磨盘镇": {
         "title": "磨盘镇",
         "level": 4,
-        "parent": "",
+        "parent": "石台地",
         "migrated_from": "area:灰岩原"
       },
       "盐道走廊石廊站": {
@@ -307,7 +307,7 @@
       "渡鸦渡口": {
         "title": "渡鸦渡口",
         "level": 4,
-        "parent": "",
+        "parent": "湾口深水区",
         "migrated_from": "area:白港"
       },
       "灰烬台圣灰广场": {
@@ -340,7 +340,7 @@
       "誓骨窟": {
         "title": "誓骨窟",
         "level": 4,
-        "parent": "",
+        "parent": "冰裂谷",
         "migrated_from": "area:霜牙岭"
       },
       "七十二眼": {
@@ -358,44 +358,118 @@
       "旧盐井": {
         "title": "旧盐井",
         "level": 4,
-        "parent": "",
+        "parent": "西盐田",
         "migrated_from": "area:白港"
       },
       "圣殿地窖": {
         "title": "圣殿地窖",
         "level": 4,
-        "parent": "",
+        "parent": "台心",
         "migrated_from": "area:灰烬台"
       }
     },
     "scene": {
       "盐仓码头": {
         "title": "盐仓码头",
-        "region": "白港"
+        "region": "白港",
+        "site": "盐仓码头",
+        "updated_at": 1792541967.459666
       },
       "三闸关": {
         "title": "三闸关",
-        "region": "熔渣渠"
+        "region": "熔渣渠",
+        "site": "三闸关",
+        "updated_at": 1792541967.459666
       },
       "万人磨盘": {
         "title": "万人磨盘",
-        "region": "灰岩原"
+        "region": "灰岩原",
+        "site": "万人磨盘",
+        "updated_at": 1792541967.459666
       },
       "三岔桩": {
         "title": "三岔桩",
-        "region": "盐沼渡"
+        "region": "盐沼渡",
+        "site": "三岔桩",
+        "updated_at": 1792541967.459666
       },
       "断齿关": {
         "title": "断齿关",
-        "region": "霜牙岭"
+        "region": "霜牙岭",
+        "site": "断齿关",
+        "updated_at": 1792541967.459666
       },
       "霜牙岭哨站": {
         "title": "霜牙岭哨站",
-        "region": "霜牙岭"
+        "region": "霜牙岭",
+        "site": "霜牙岭哨站",
+        "updated_at": 1792541967.459666
       },
       "灰烬台圣灰广场": {
         "title": "灰烬台圣灰广场",
-        "region": "灰烬台"
+        "region": "灰烬台",
+        "site": "灰烬台圣灰广场",
+        "updated_at": 1792541967.459666
+      },
+      "七十二眼": {
+        "title": "七十二眼",
+        "site": "七十二眼",
+        "updated_at": 1792541967.459666
+      },
+      "千炉塔": {
+        "title": "千炉塔",
+        "site": "千炉塔",
+        "updated_at": 1792541967.459666
+      },
+      "圣殿地窖": {
+        "title": "圣殿地窖",
+        "site": "圣殿地窖",
+        "updated_at": 1792541967.459666
+      },
+      "旧盐井": {
+        "title": "旧盐井",
+        "site": "旧盐井",
+        "updated_at": 1792541967.459666
+      },
+      "沉盐塘": {
+        "title": "沉盐塘",
+        "site": "沉盐塘",
+        "updated_at": 1792541967.459666
+      },
+      "泥渡栈道口": {
+        "title": "泥渡栈道口",
+        "site": "泥渡栈道口",
+        "updated_at": 1792541967.459666
+      },
+      "渡鸦渡口": {
+        "title": "渡鸦渡口",
+        "site": "渡鸦渡口",
+        "updated_at": 1792541967.459666
+      },
+      "灰肺坑": {
+        "title": "灰肺坑",
+        "site": "灰肺坑",
+        "updated_at": 1792541967.459666
+      },
+      "灰门": {
+        "title": "灰门",
+        "site": "灰门",
+        "updated_at": 1792541967.459666
+      },
+      "盐霜原刮盐场": {
+        "title": "盐霜原刮盐场",
+        "site": "盐霜原刮盐场",
+        "updated_at": 1792541967.459666
+      },
+      "磨盘镇": {
+        "title": "磨盘镇",
+        "site": "磨盘镇",
+        "updated_at": 1792541967.459666
+      },
+      "誓骨窟": {
+        "title": "誓骨窟",
+        "site": "誓骨窟",
+        "updated_at": 1792541967.459666
       }
     },
     "realm": {
@@ -515,6 +589,110 @@
         "title": "落灰带",
         "level": 3,
         "parent": "灰烬台"
+      }
+    },
+    "chapter": {
+      "ch1_灰岩原": {
+        "title": "磨盘的节拍",
+        "arc": "investigation",
+        "chapter_no": 1,
+        "target_cr": "1",
+        "locations": [
+          "磨盘镇",
+          "七十二眼"
+        ],
+        "npcs": [
+          "掌磨人老砚"
+        ],
+        "parallel": false,
+        "xp_budget": 4800,
+        "level": 6,
+        "updated_at": 1792541967.459666
+      },
+      "ch1_灰烬台": {
+        "title": "被关上的门",
+        "arc": "decoding",
+        "chapter_no": 1,
+        "target_cr": "1",
+        "locations": [
+          "灰门",
+          "圣殿地窖"
+        ],
+        "npcs": [
+          "守灯的老执事"
+        ],
+        "parallel": false,
+        "xp_budget": 4800,
+        "level": 6,
+        "updated_at": 1792541967.459666
+      },
+      "ch1_熔渣渠": {
+        "title": "第七层的火",
+        "arc": "investigation",
+        "chapter_no": 1,
+        "target_cr": "1",
+        "locations": [
+          "千炉塔",
+          "灰肺坑"
+        ],
+        "npcs": [
+          "独眼戚"
+        ],
+        "parallel": false,
+        "xp_budget": 4800,
+        "level": 6,
+        "updated_at": 1792541967.459666
+      },
+      "ch1_白港": {
+        "title": "第二套账",
+        "arc": "investigation",
+        "chapter_no": 1,
+        "target_cr": "1",
+        "locations": [
+          "渡鸦渡口",
+          "旧盐井"
+        ],
+        "npcs": [
+          "老鸦陈"
+        ],
+        "parallel": false,
+        "xp_budget": 4800,
+        "level": 6,
+        "updated_at": 1792541967.459666
+      },
+      "ch1_盐沼渡": {
+        "title": "退潮的两个时辰",
+        "arc": "heist",
+        "chapter_no": 1,
+        "target_cr": "1",
+        "locations": [
+          "泥渡栈道口",
+          "沉盐塘"
+        ],
+        "npcs": [
+          "渡夫阿灰"
+        ],
+        "parallel": false,
+        "xp_budget": 4800,
+        "level": 6,
+        "updated_at": 1792541967.459666
+      },
+      "ch1_霜牙岭": {
+        "title": "空池",
+        "arc": "audit",
+        "chapter_no": 1,
+        "target_cr": "1",
+        "locations": [
+          "盐霜原刮盐场",
+          "誓骨窟"
+        ],
+        "npcs": [
+          "巴音"
+        ],
+        "parallel": false,
+        "xp_budget": 4800,
+        "level": 6,
+        "updated_at": 1792541967.459666
       }
     }
   },

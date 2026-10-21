@@ -34,6 +34,7 @@ from ATRI.log import log
 from .save_store import Save, get_character, save_dir
 from .world_bible import KIND_LABELS, load_bible
 from .world_store import (
+    DOC_KIND_LABELS,
     MAIN_DOC_KEY,
     get_world,
     load_doc,
@@ -187,13 +188,17 @@ def _world_section(save: Save) -> list[str]:
     if len(lines) == 1:
         return []
 
-    # 地区：从世界地图文档的「## 地区X：名称」小节里取
+    # 地区：从世界地图文档的「## 地区X：名称」小节里取。
+    # **只在世界还没分过省时这么列**——分过省的世界由「地理」那一节按
+    # 王国 → 区域 → 地点三级列，两边都列等于同一件事说两遍。
+    from .world_store import get_provinces
+
     regions = [
         (heading, body)
         for level, heading, body in _sections(content)
         if level == 2 and heading.strip().startswith("地区")
     ]
-    if regions:
+    if regions and not get_provinces(save.world_key):
         lines.append("")
         lines.append("### 主要地区")
         for heading, body in regions:
@@ -206,6 +211,118 @@ def _world_section(save: Save) -> list[str]:
                     continue
                 lines.append(f"- **{label}**：{_first_paragraph(value, 160)}")
     return lines
+
+
+def _geography_section(save: Save) -> list[str]:
+    """地理：**王国 → 区域（省）→ 已知地点**，三级一起给。
+
+    这一节是这次层级重整的产物。手册原先只从世界文档里抓「## 地区X：」小节，
+    于是玩家看得到「白港」这种王国量级的名字，却看不到自己在哪个**省**、
+    这个省里还有哪些**地方**可去——而那才是玩家真正需要的粒度。
+
+    三级各自取最有用的一行：
+
+    - 王国：一句话地形 / 性格（从王国文档的概览里抽）；
+    - 区域：方位 + 地形底色（从省文档里抽）；
+    - 地点：只列名字与类型（据点 / 野外地点 / 地下城）。
+
+    **取不到就退，不硬凑**：老世界没有省表时这一节整块不出现，
+    由 :func:`_world_section` 用旧写法列地区。
+    """
+    from .world_store import (
+        SITE_KINDS,
+        get_provinces,
+        get_world_map,
+        load_doc,
+        load_index,
+    )
+
+    world_key = save.world_key
+    realms, _adjacency = get_world_map(world_key)
+    table = get_provinces(world_key)
+    if not table:
+        return []
+
+    # 地点按「所属省」分堆（没有 parent 的先不在这节列，别把它们硬塞进某个省）
+    index = load_index(world_key)
+    sites: dict[str, list[tuple[str, str]]] = {}
+    for kind in SITE_KINDS:
+        label = DOC_KIND_LABELS.get(kind, "地点")
+        for name, meta in (index["docs"].get(kind) or {}).items():
+            parent = str((meta or {}).get("parent") or "")
+            if parent:
+                sites.setdefault(parent, []).append((str(name), label))
+
+    lines = ["## 地理", ""]
+    lines.append("> 时间尺度：同一个区域里走动是几小时，相邻两个区域之间约一天。")
+    for realm in realms or list(table):
+        realm_doc = load_doc(world_key, "realm", realm) or ""
+        lines.append("")
+        lines.append(f"### {realm}")
+        if realm_doc:
+            one = _realm_headline(realm_doc)
+            if one:
+                lines.append(one)
+        for province in table.get(realm, []):
+            province_doc = load_doc(world_key, "province", province) or ""
+            where = _province_line(province_doc)
+            row = f"- **{province}**"
+            if where:
+                row += f"（{where}）"
+            lines.append(row)
+            for name, label in sites.get(province, []):
+                lines.append(f"  - {label}：{name}")
+    return lines if len(lines) > 2 else []
+
+
+def _realm_headline(text: str) -> str:
+    """王国文档里那句最像「这地方什么样」的话。"""
+    for labels in (
+        ("一句话性格",),
+        ("大致形状",),
+        ("当前政治局势",),
+        ("一句话定位",),
+    ):
+        value = _label_value_any(text, *labels)
+        if value:
+            return _first_paragraph(value, 120)
+    return ""
+
+
+def _province_line(text: str) -> str:
+    """省文档里「方位 + 地形」那半行。
+
+    两头都要剪掉句末标点再拼，否则会出现「延七里。；废弃炉体」这种叠标点。
+    """
+    where = _trim_punct(_label_value_any(text, "大致位置", "位置范围"))
+    what = _trim_punct(
+        _label_value_any(text, "地形底色", "地形构成", "地形类型", "主要地貌")
+    )
+    if where and what:
+        return f"{where}；{what}"
+    return where or what
+
+
+def _trim_punct(value: str) -> str:
+    """剪掉句末的中英文标点（拼句子用）。"""
+    return str(value or "").strip().rstrip("。．.，,；;、 　")
+
+
+def _label_value_any(text: str, *labels: str) -> str:
+    """按标签取 ``- 标签：值`` 里的值（标签包含匹配，取第一条非空）。"""
+    pairs = [
+        (
+            line.strip()[1:].split("：", 1)[0].strip(),
+            line.strip().split("：", 1)[1].strip(),
+        )
+        for line in str(text or "").splitlines()
+        if line.strip().startswith("-") and "：" in line
+    ]
+    for want in labels:
+        for label, value in pairs:
+            if want in label and value:
+                return value
+    return ""
 
 
 def _chapter_section(save: Save) -> list[str]:
@@ -254,7 +371,9 @@ def _epoch_section(save: Save) -> list[str]:
     if not ep.ending:
         from .evolution import load_evolution
 
-        facts = epoch_facts(state, load_evolution(save), index=ep.current, length=ep.length)
+        facts = epoch_facts(
+            state, load_evolution(save), index=ep.current, length=ep.length
+        )
     text = epoch_text(ep, facts, for_player=True)
     if not text.strip():
         return []
@@ -327,6 +446,7 @@ def _party_section(save: Save) -> list[str]:
 #: 章节卡既然接手了「玩家该干什么」，手册就该讲这个，而不是讲背景故事。
 _BUILDERS = (
     _world_section,
+    _geography_section,
     _chapter_section,
     _epoch_section,
     _evolution_section,
