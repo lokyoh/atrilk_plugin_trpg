@@ -724,12 +724,21 @@ _DATA_ALIASES = {
     "chapter": "chapter",
     "章节": "chapter",
     "章节卡": "chapter",
-    "area": "area",
-    "区域": "area",
+    "realm": "realm",
+    "王国": "realm",
+    "地区": "realm",
+    "王国/地区": "realm",
+    "province": "province",
+    "区域": "province",
+    "省": "province",
+    "省份": "province",
     "city": "city",
+    "据点": "city",
     "城镇": "city",
     "城市": "city",
     "place": "place",
+    "野外地点": "place",
+    "自然地点": "place",
     "地点": "place",
     "dungeon": "dungeon",
     "地下城": "dungeon",
@@ -1109,6 +1118,25 @@ class NarrateTool(AgentTool):
         raise AgentFinishError(str(text or "").strip())
 
 
+def _travel_hint(world_key: str, origin: str, destination: str) -> str:
+    """两地之间要走多久（省与省一天，同省几小时）；认不出就什么都不加。"""
+    if not origin or origin == destination:
+        return ""
+    try:
+        from ...dnd.travel import travel_span
+        from ...dnd.world_store import get_world_map, province_index
+
+        span = travel_span(
+            origin,
+            destination,
+            places=province_index(world_key),
+            adjacency=get_world_map(world_key)[1],
+        )
+        return f"（从「{origin}」过来大约 {span}）" if span else ""
+    except Exception:  # noqa: BLE001 —— 旅行提示是锦上添花，算不出就不说
+        return ""
+
+
 class MoveSceneTool(AgentTool):
     """切换场景（缺什么生成什么），并构建出本局专属的场景副本存进存档。"""
 
@@ -1147,6 +1175,7 @@ class MoveSceneTool(AgentTool):
         if not name:
             return "请给出要前往的地点 / 场景名"
 
+        origin = str(save.current_scene or "")
         result = await open_scene(save, name, kind=kind, region=region)
         if result is None:
             return (
@@ -1154,8 +1183,9 @@ class MoveSceneTool(AgentTool):
                 "请换一个更明确的名称，或补上所在区域（region）与类型（kind）。"
             )
         key, text = result
+        span = _travel_hint(save.world_key, origin, key)
         return (
-            f"已切换到场景「{key}」。\n"
+            f"已切换到场景「{key}」。{span}\n"
             "注意：切换场景是剧情事件，必须由你的叙述来合理化——请在接下来的叙述里"
             "先用一两句交代玩家**如何离开上一处（离场）**，再描述**如何抵达这里（入场）**，"
             "让这次移动自然合理，然后给出新场景的第一印象与 2~3 个可回应的切入点。\n\n"

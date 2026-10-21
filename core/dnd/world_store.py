@@ -38,41 +38,60 @@ from ATRI.log import log
 __all__ = [
     "DOC_KINDS",
     "DOC_KIND_LABELS",
+    "KIND_LEVEL",
+    "LEVEL_KINDS",
     "MAIN_DOC_KEY",
     "REGISTRY_FILENAME",
+    "SITE_KINDS",
     "WORLDS_DIRNAME",
     "WORLD_DIRNAME",
+    "ChapterRefInfo",
     "WorldDoc",
     "WorldInfo",
+    "add_provinces",
     "clean_name",
     "delete_doc",
     "doc_path",
     "docs_dir",
+    "find_at_level",
+    "get_provinces",
     "get_world",
     "get_world_map",
     "index_path",
+    "kinds_at",
+    "level_of",
+    "list_chapters",
     "list_docs",
     "list_worlds",
     "load_doc",
     "load_index",
+    "names_at_level",
+    "new_chapter_id",
     "new_world_id",
+    "province_index",
+    "read_at_level",
     "read_doc",
     "registry_path",
     "save_doc",
+    "set_provinces",
     "set_world_map",
-    "list_chapters",
-    "new_chapter_id",
-    "ChapterRefInfo",
     "upsert_world",
     "world_dir",
     "world_root",
     "worlds_dir",
 ]
 
-#: 文档种类
+#: 文档种类。世界是五层：**世界 → 王国/地区 → 区域（省）→ 地点 → 场景**。
+#:
+#: 第 4 层刻意**保持三个种类**而不是合成一个 ``site``：据点（有人住、有买卖、
+#: 有管事的人）、野外地点（地形与遭遇）、地下城（多房间的探索空间）三者的生成模板与
+#: 下游用法本来就不一样，合成一个再靠子类型分派，只是把区别藏进 meta 里。
+#:
+#: ``chapter`` 不属于地理层级，它是挂在存档上的剧本卡。
 DOC_KINDS: tuple[str, ...] = (
     "world",
-    "area",
+    "realm",
+    "province",
     "city",
     "place",
     "dungeon",
@@ -83,12 +102,37 @@ DOC_KINDS: tuple[str, ...] = (
 #: 文档种类 -> 中文名
 DOC_KIND_LABELS: dict[str, str] = {
     "world": "世界",
-    "area": "区域",
-    "city": "城镇",
-    "place": "地点",
+    "realm": "王国/地区",
+    "province": "区域",
+    "city": "据点",
+    "place": "野外地点",
     "dungeon": "地下城",
     "scene": "场景",
     "chapter": "章节",
+}
+
+#: 第 4 层的三个种类（地点）
+SITE_KINDS: tuple[str, ...] = ("city", "place", "dungeon")
+
+#: 文档种类 -> 地理层级（世界 = 1）。``chapter`` 不在地理层级里，记为 0。
+KIND_LEVEL: dict[str, int] = {
+    "world": 1,
+    "realm": 2,
+    "province": 3,
+    "city": 4,
+    "place": 4,
+    "dungeon": 4,
+    "scene": 5,
+    "chapter": 0,
+}
+
+#: 层级 -> 该层全部种类
+LEVEL_KINDS: dict[int, tuple[str, ...]] = {
+    1: ("world",),
+    2: ("realm",),
+    3: ("province",),
+    4: SITE_KINDS,
+    5: ("scene",),
 }
 
 WORLD_DIRNAME = "world"
@@ -299,7 +343,12 @@ def new_world_id() -> str:
 
 
 def _empty_index() -> dict[str, Any]:
-    return {"regions": [], "adjacency": {}, "docs": {k: {} for k in DOC_KINDS}}
+    return {
+        "regions": [],
+        "adjacency": {},
+        "provinces": {},
+        "docs": {k: {} for k in DOC_KINDS},
+    }
 
 
 def load_index(world_key: str) -> dict[str, Any]:
@@ -320,6 +369,11 @@ def load_index(world_key: str) -> dict[str, Any]:
         if isinstance(adjacency, dict):
             base["adjacency"] = {
                 str(k): [str(v) for v in (vs or [])] for k, vs in adjacency.items()
+            }
+        provinces = data.get("provinces")
+        if isinstance(provinces, dict):
+            base["provinces"] = {
+                str(k): [str(v) for v in (vs or [])] for k, vs in provinces.items()
             }
         docs = data.get("docs")
         if isinstance(docs, dict):
@@ -434,6 +488,133 @@ def list_docs(world_key: str, kind: str | None = None) -> dict[str, list[str]]:
 
 
 # --------------------------------------------------------------------------- #
+# 层级：世界 → 王国/地区 → 区域 → 地点 → 场景
+# --------------------------------------------------------------------------- #
+
+
+def level_of(kind: str) -> int:
+    """某个文档种类属第几层（世界 = 1；``chapter`` 不在地理层级里，返回 0）。"""
+    return KIND_LEVEL.get(str(kind or "").strip().lower(), 0)
+
+
+def kinds_at(level: int) -> tuple[str, ...]:
+    """该层的全部种类，**新种类在前**（读的时候按这个顺序试）。"""
+    return LEVEL_KINDS.get(int(level), ())
+
+
+def find_at_level(
+    world_key: str, level: int, name: str
+) -> tuple[str, dict[str, Any]] | None:
+    """在某一层按名字找文档，返回 ``(种类, meta)``；找不到返回 ``None``。
+
+    第 4 层有三个种类（据点 / 野外地点 / 地下城），只凭名字不知道是哪一个，
+    所以这一层要**逐个种类试**；其余层各只有一个种类。
+    只查索引，不读正文；要正文用 :func:`read_at_level`。
+    """
+    key = _safe_key(name)
+    index = load_index(world_key)
+    for kind in kinds_at(level):
+        entry = index["docs"].get(kind, {}).get(key)
+        if entry is not None:
+            return kind, dict(entry)
+    return None
+
+
+def read_at_level(world_key: str, level: int, name: str) -> WorldDoc | None:
+    """在某一层按名字读文档（含正文）；找不到返回 ``None``。"""
+    found = find_at_level(world_key, level, name)
+    if found is None:
+        return None
+    kind, _meta = found
+    return read_doc(world_key, kind, name)
+
+
+def names_at_level(world_key: str, level: int) -> list[str]:
+    """该层全部文档名（第 4 层三个种类合并、去重）。"""
+    index = load_index(world_key)
+    seen: list[str] = []
+    for kind in kinds_at(level):
+        for name in sorted(index["docs"].get(kind, {})):
+            if name not in seen:
+                seen.append(name)
+    return seen
+
+
+def set_provinces(world_key: str, provinces: dict[str, list[str]]) -> None:
+    """写入「王国/地区 → 区域（省）」的归属表。
+
+    与 :func:`set_world_map` 分开，因为两者回答不同的问题：
+
+    - ``regions`` 是**政治单位**（谁说了算），不是旅行单位；
+    - ``provinces`` 是**旅行单位**——**相邻两个省之间约一天**，同一个省里
+      各处地点之间**几小时**（见 :func:`~...dnd.travel.travel_span`）。
+
+    所以 ``adjacency`` 记的是**省与省**的相邻关系，不是王国与王国。王国之间的关系
+    属于政治（写在 realm 文档的「外交」一节），不该混进旅行动词。
+    """
+    index = load_index(world_key)
+    index["provinces"] = {
+        str(k): [str(v) for v in (vs or [])] for k, vs in (provinces or {}).items()
+    }
+    _write_index(world_key, index)
+
+
+def get_provinces(world_key: str) -> dict[str, list[str]]:
+    """读取「王国/地区 → 区域」归属表；还没分过省的世界返回空表。
+
+    空表不是错误：`ensure_realm` 落一篇王国文档时会把它的区域划分写进来，
+    在那之前这个表就是空的。
+    """
+    index = load_index(world_key)
+    return {str(k): list(v) for k, v in (index.get("provinces") or {}).items()}
+
+
+def province_index(world_key: str) -> dict[str, str]:
+    """「地名 → 它属于哪个省」的映射，供旅行时间换算用。
+
+    三种来源合成：
+
+    - 省自己映射到自己（``盐仓区 → 盐仓区``）；
+    - 地点文档的 ``meta.parent``（``盐仓码头 → 盐仓区``）；
+    - 场景文档的 ``meta.site``（``盐仓码头夜景 → 盐仓码头``，再由上一条接上去）。
+
+    **王国不在表里**：它不是旅行单位，从王国出发得先说清去哪个省。
+    取不到的（比如没归到省的地点）就不在表里——那样旅行时间会算成「不知道」，
+    而不是给出一个凭空猜的数字。
+    """
+    places: dict[str, str] = {}
+    for names in get_provinces(world_key).values():
+        for province in names or []:
+            places.setdefault(str(province), str(province))
+    index = load_index(world_key)
+    for kind in SITE_KINDS:
+        for name, meta in (index["docs"].get(kind) or {}).items():
+            parent = str((meta or {}).get("parent") or "")
+            if parent:
+                places[str(name)] = parent
+    for name, meta in (index["docs"].get("scene") or {}).items():
+        site = str((meta or {}).get("site") or "")
+        if site and site in places:
+            places[str(name)] = places[site]
+    return places
+
+
+def add_provinces(world_key: str, realm: str, names: list[str]) -> None:
+    """给某个王国补上若干个区域名（去重保序，可重复调用）。"""
+    realm = clean_name(str(realm or ""))
+    if not realm:
+        return
+    table = get_provinces(world_key)
+    current = table.get(realm, [])
+    for name in names or []:
+        text = clean_name(str(name or ""))
+        if text and text not in current:
+            current.append(text)
+    table[realm] = current
+    set_provinces(world_key, table)
+
+
+# --------------------------------------------------------------------------- #
 # 名称归一
 # --------------------------------------------------------------------------- #
 
@@ -522,7 +703,11 @@ def new_chapter_id(world_key: str, prefix: str = "ch") -> str:
 def set_world_map(
     world_key: str, regions: list[str], adjacency: dict[str, list[str]]
 ) -> None:
-    """写入某个世界的地区列表与陆地相邻关系（来自世界地图生成 agent）。"""
+    """写入某个世界的**王国**列表与**省与省**的相邻关系。
+
+    ``regions`` 是王国名（政治单位）；``adjacency`` 的键与值都是**省名**——
+    相邻即「走一天」。两条相邻的省可以同属一个王国，也可以分属两国。
+    """
     index = load_index(world_key)
     index["regions"] = [str(r) for r in regions]
     index["adjacency"] = {

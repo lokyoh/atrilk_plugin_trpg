@@ -227,10 +227,16 @@ def _state_of(save: Save) -> ChapterState:
 def world_place_names(world_key: str) -> list[str]:
     """列出这个世界里章节可以引用的地名。
 
-    来源：世界地图的地区、圣经里登记的地点实体、以及已经生成过的
-    区域 / 城镇 / 自然地点 / 地下城文档。**顺序即优先级**（地区在前），
-    织分支时按顺序取，所以新生成的地方会比地区更常被选中——
-    这正好对应「越玩越用到走过的地」。
+    **顺序即优先级**，而优先级按世界层级来定：
+
+    1. 场景（已经有场景的地方 = 走过的地方，最该再用一次）；
+    2. 地点（据点 / 野外地点 / 地下城）——**一章真正发生的地方**；
+    3. 区域（省）——可以作为「这一章在这一带」的说法；
+    4. 王国（地区）——**排在最后**：一章落在一个王国上是空话，
+       落在某个据点或某处地下城才有画面。
+
+    这里曾经把「地区」排在最前，于是章节最容易引用「白港」这种量级的名字，
+    织出来的目标也就只能说「弄清楚白港出了什么事」——层级错了，叙述自然就虚。
     """
     names: list[str] = []
 
@@ -240,12 +246,14 @@ def world_place_names(world_key: str) -> list[str]:
             names.append(name)
 
     try:
-        regions, _adjacency = get_world_map(world_key)
+        docs = list_docs(world_key)
     except (OSError, ValueError):
-        regions = []
-    for region in regions:
-        add(region)
+        docs = {}
+    for kind in ("scene", "city", "place", "dungeon", "province"):
+        for name in docs.get(kind, []):
+            add(name)
 
+    # 圣经里登记过、但还没有文档的地名（省文档点过名、还没人去过的地方）
     try:
         bible = load_bible(world_key)
     except (OSError, ValueError):
@@ -255,13 +263,13 @@ def world_place_names(world_key: str) -> list[str]:
             if entity.kind == "place":
                 add(entity.name)
 
+    # 王国放最后
     try:
-        docs = list_docs(world_key)
+        regions, _adjacency = get_world_map(world_key)
     except (OSError, ValueError):
-        docs = {}
-    for kind in ("area", "city", "place", "dungeon", "scene"):
-        for name in docs.get(kind, []):
-            add(name)
+        regions = []
+    for region in regions:
+        add(region)
     return names
 
 

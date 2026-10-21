@@ -33,6 +33,7 @@ from .world_store import (
     DOC_KINDS,
     MAIN_DOC_KEY,
     list_worlds,
+    set_provinces,
     load_doc,
     new_world_id,
     save_doc,
@@ -139,16 +140,19 @@ def _preset_profile(directory: Path) -> tuple[str, str]:
 
 
 def _seed_bible(key: str, index: dict[str, Any]) -> None:
-    """装完库后播种世界圣经：世界文档与场景里的实体。
+    """装完库后播种世界圣经：五层里**有文档的每一层**都登记进去。
 
-    全部是程序提取（地区 / 地标 / 国都 / 特殊地区、场景在场者），
+    全部是程序提取（王国 / 区域 / 据点 / 野外地点 / 地下城、地标、国都、场景在场者），
     零模型成本——装完的预设世界和「现生成」的一样，开局即有圣经可用。
 
-    章节卡不再这里播种：它是**游玩过程中**织出来才落库的，
-    开局时世界库里一章都没有。
+    登记成 ``place`` 而不是给层级各开一个种类：圣经是**名字登记簿**，
+    层级在 ``index.json`` 的 ``provinces`` 与文档 ``meta.parent`` 里。
+
+    章节卡不在这里播种：它是**游玩过程中**织出来才落库的，开局时一章都没有。
     """
     from ..agents.dnd.gen_scene import parse_scene_npcs
-    from .world_bible import entities_from_json, register_entities, seed_from_world
+    from .world_bible import Entity, entities_from_json, register_entities, seed_from_world
+    from .world_store import SITE_KINDS
 
     seed_from_world(key)
     register_entities(
@@ -157,6 +161,14 @@ def _seed_bible(key: str, index: dict[str, Any]) -> None:
         source="world",
     )
     docs = index.get("docs") or {}
+    level_notes = {"realm": "王国/地区", "province": "区域", **{k: "" for k in SITE_KINDS}}
+    for kind, note in level_notes.items():
+        for name in docs.get(kind) or {}:
+            register_entities(
+                key,
+                [Entity(name=str(name), kind="place", note=note, source=f"preset:{kind}")],
+                source="preset",
+            )
     for scene_key in docs.get("scene") or {}:
         text = load_doc(key, "scene", str(scene_key)) or ""
         register_entities(key, parse_scene_npcs(text), source=f"scene:{scene_key}")
@@ -189,6 +201,7 @@ def install_preset(name: str = DEFAULT_PRESET, *, world_key: str = "") -> str:
         )
         count += 1
 
+    set_provinces(key, dict(index.get("provinces") or {}))
     set_world_map(
         key,
         [str(region) for region in index.get("regions", [])],

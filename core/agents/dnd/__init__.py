@@ -4,6 +4,8 @@
 
 - :mod:`.gen_world`：世界地图生成（``world``）
 - :mod:`.gen_chapter`：章节卡生成（``chapter``）——取代原先的「世界起点与推力」
+- :mod:`.gen_realm`：王国/地区生成（``realm``）——政体 / 法度 / 军力 / 外交 + 区域划分
+- :mod:`.gen_province`：区域（省）生成（``province``）——地形气候 / 人文产出 / 风险 + 地点索引
 - :mod:`.gen_epoch`：纪元称号命名（``epithet``）——按纪元内的实际行为起名
 - :mod:`.gen_area`：地区详细生成（``area``）
 - :mod:`.gen_place`：地形地貌详细生成（``place``）
@@ -78,7 +80,17 @@ from .gen_world import (
     parse_world_profile,
     world_agent,
 )
-from .on_demand import ensure_scene, normalize_kind, slice_block
+from .gen_province import ProvinceAgent, ProvinceResult, parse_province, province_agent
+from .gen_realm import RealmAgent, RealmResult, parse_realm, realm_agent
+from .on_demand import (
+    ensure_area,
+    ensure_province,
+    ensure_realm,
+    ensure_scene,
+    ensure_site,
+    normalize_kind,
+    slice_block,
+)
 from .tools import DM_TOOLS
 
 __all__ = [
@@ -98,6 +110,10 @@ __all__ = [
     "EpithetResult",
     "EpochOutcome",
     "PlaceAgent",
+    "ProvinceAgent",
+    "ProvinceResult",
+    "RealmAgent",
+    "RealmResult",
     "SceneAgent",
     "SceneBuilderAgent",
     "ChapterPlan",
@@ -115,8 +131,12 @@ __all__ = [
     "close_chapter",
     "dm_agent",
     "dungeon_agent",
+    "ensure_area",
     "ensure_opening_chapter",
+    "ensure_province",
+    "ensure_realm",
     "ensure_scene",
+    "ensure_site",
     "epoch_deeds",
     "epithet_agent",
     "get_agent",
@@ -125,9 +145,13 @@ __all__ = [
     "open_scene",
     "offer_branches",
     "parse_area",
+    "parse_province",
+    "parse_realm",
     "parse_world_map",
     "parse_world_profile",
     "place_agent",
+    "province_agent",
+    "realm_agent",
     "run_dm_round",
     "run_entry_flow",
     "run_opening",
@@ -145,6 +169,8 @@ __all__ = [
 #: 全部 agent 实例，按 :attr:`~..base.TrpgAgent.name` 索引
 AGENTS = {
     world_agent.name: world_agent,
+    realm_agent.name: realm_agent,
+    province_agent.name: province_agent,
     chapter_agent.name: chapter_agent,
     area_agent.name: area_agent,
     place_agent.name: place_agent,
