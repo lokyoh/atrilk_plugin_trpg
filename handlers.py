@@ -634,6 +634,40 @@ def _world_chooser(worlds, note: str = "") -> str:
     return "\n".join(lines)
 
 
+def _story_chooser(world_key: str, note: str = "") -> str:
+    """「选起始故事」的提示文案。
+
+    开局是**两步选择**：先选世界，再从这个世界里**现成的事件**里挑一件
+    当这一局的起点。挑完才建档、等人加入、开局——DM 会按它写开场白，
+    而它就是这一局的**入场事件**。
+
+    这个世界没有现成事件时（老世界），直接建档，不多问一轮。
+    """
+    from .core.dnd.openings import opening_choices_text, opening_options
+
+    options = opening_options(world_key)
+    if not options:
+        return ""
+    lines: list[str] = []
+    if note:
+        lines.append(f"⚠️ {note}")
+        lines.append("")
+    lines.append("📖 这个世界里现成的几件事（挑一件当这一局的起点）：")
+    lines.append("")
+    lines.append(opening_choices_text(world_key))
+    lines += [
+        "",
+        "接下来：",
+        "· 挑一件 → /跑团.开局 <序号>（"
+        f"{int(_START_PICK_TTL // 60)} 分钟内有效）",
+        "",
+        "选完的那一件就是这一局的入场事件，DM 会从它写开场白。",
+        "如果你们想自己另起一个故事——开局时跟 DM 说一声就行，",
+        "这些是**可选的**，不是全部。",
+    ]
+    return "\n".join(lines)
+
+
 def _bound_save(key: str) -> Save | None:
     """本会话当前绑定的存档（绑定失效时返回 ``None``）。"""
     bound = get_binding(key)
@@ -692,7 +726,12 @@ def _paused_save(key: str) -> Save | None:
 
 
 def _open_save(
-    user_id: str, key: str, world_key: str, *, mode: str = ""
+    user_id: str,
+    key: str,
+    world_key: str,
+    *,
+    mode: str = "",
+    story_key: str = "",
 ) -> tuple[str, str]:
     """建立存档、复制角色卡并绑定本会话，返回 ``(存档 ID, 给玩家的文案)``。
 
@@ -700,7 +739,9 @@ def _open_save(
     再由任意已加入的玩家发 ``/跑团.开始`` 正式开局（见 :func:`_start_round`）。
 
     :param mode: 玩法名（见 :mod:`...dnd.gamemode`）。**开局是玩法唯一决定时机**——
-    织法与纪元长度必须在织第一章之前落盘，否则第一章就按默认参数织出来了。
+        织法与纪元长度必须在织第一章之前落盘，否则第一章就按默认参数织出来了。
+    :param story_key: 玩家挑的**入场事件**（世界库 ``event`` 文档的键）。
+        空 = 玩家没挑（要自己另起一个），开局时织一件新的，那一件就是入场事件。
     """
     from .core.dnd.gamemode import mode_text, start_mode
 
@@ -708,6 +749,7 @@ def _open_save(
     save = create_save(player_cards=[card] if card is not None else [])
     save.creator_id = str(user_id)
     save.world_key = world_key or "main"
+    save.story_key = str(story_key or "")
     save.progress["chat_key"] = key
     save.progress["started"] = False  # 等人齐 + /跑团.开始 之后才开局
     picked = start_mode(save, mode)
@@ -728,6 +770,15 @@ def _open_save(
         "· 人齐后由**任意已加入的玩家**发 /跑团.开始 正式开局\n"
         "· /跑团.存档 查看谁已经加入、进度与用量"
     )
+    if save.story_key:
+        from .core.dnd.openings import opening_options
+
+        chosen = next(
+            (o for o in opening_options(save.world_key) if o.event_key == save.story_key),
+            None,
+        )
+        if chosen is not None:
+            text += f"\n\n📖 入场事件：{chosen.title}（DM 会从它写开场白）"
     if picked.key != "standard":
         text += f"\n\n（{picked.title}模式：{picked.note}）"
     return save.save_id, text
@@ -819,7 +870,53 @@ async def _start_game(
     rest = parts[1].strip() if len(parts) > 1 else ""
     worlds = list_worlds()
     # 顺手清掉过期的开局选择状态（这个调用的副作用就是清理，返回值用不上）
-    _pending_pick(key, user_id)
+    pending = _pending_pick(key, user_id)
+
+    # ·「选起始故事」阶段：世界已经选好，这一轮的数字是**故事序号**。
+    if pending is not None and pending.stage == "story":
+        from .core.dnd.openings import opening_options
+
+        options = opening_options(pending.world_key)
+        if not options:
+            # 这个世界没有开场清单（中途换过世界？）：退回直接建档
+            _START_PENDING.pop(key, None)
+            world = next(
+                (w for w in worlds if w.key == pending.world_key), None
+            )
+            if world is None:
+                await start_game.finish(
+                    "🌍 那个世界已经不在了。发送 /跑团.开局 重新选择。"
+                )
+            save_id, text = _open_save(user_id, key, world.key)
+            await start_game.finish(text)
+        if not head.isdigit():
+            await start_game.finish(
+                _story_chooser(
+                    pending.world_key, note="要选一条起始故事，请给一个序号。"
+                )
+            )
+        index = int(head)
+        if not (1 <= index <= len(options)):
+            await start_game.finish(
+                _story_chooser(
+                    pending.world_key, note=f"没有第 {index} 条开场剧情，请重新选择。"
+                )
+            )
+        chosen = options[index - 1]
+        _START_PENDING.pop(key, None)
+        world = next((w for w in worlds if w.key == pending.world_key), None)
+        world_title = world.title if world else pending.world_key
+        await matcher.send(
+            f"🌍 使用世界「{world_title}」· 入场事件「{chosen.title}」，正在建立存档"
+            "（之后等大家加入再 /跑团.开始 开局）……"
+        )
+        save_id, text = _open_save(
+            user_id,
+            key,
+            pending.world_key,
+            story_key=chosen.event_key,
+        )
+        await start_game.finish(text)
 
     # ·「无尽」：一条命令开局。装预设世界（零模型调用，已装则复用）+ 建档 +
     #   把无尽玩法写进存档。之前要先「开局 预设」再「开局 选世界」，两步。
@@ -901,15 +998,40 @@ async def _start_game(
                     _world_chooser(worlds, note=f"没有找到世界「{target}」。")
                 )
 
-        # 选中世界：直接建档。事件在建档后由 /跑团.开始 织，所以这里不再多问一轮。
-        # ``/跑团.开局 3 无尽`` 这种写法也认——玩法跟在世界名或序号后面。
-        _START_PENDING.pop(key, None)
+        # 选中世界：**先看这个世界有没有现成的事件可选**。
+        # 有的话多问一轮（挑一件入场事件），没有就直接建档——
+        # 老世界没有现成事件，多问一轮只会让人莫名其妙。
         mode = "endless" if rest.lower() in _ENDLESS_WORDS else ""
+        story_key = ""
+        if not mode:
+            from .core.dnd.openings import opening_options
+
+            options = opening_options(world.key)
+            if options:
+                if rest.isdigit():
+                    # 一步到位：/跑团.开局 2 3（世界 2，事件 3）
+                    index = int(rest)
+                    if 1 <= index <= len(options):
+                        story_key = options[index - 1].event_key
+                if not story_key:
+                    _set_pending_pick(key, user_id, "story", world.key)
+                    await start_game.finish(
+                        _story_chooser(world.key, note=f"已选世界「{world.title}」。")
+                    )
+                    return
+
+        _START_PENDING.pop(key, None)
         await matcher.send(
             f"🌍 使用世界「{world.title}」，正在建立存档"
             "（之后等大家加入再 /跑团.开始 开局）……"
         )
-        save_id, text = _open_save(user_id, key, world.key, mode=mode)
+        save_id, text = _open_save(
+            user_id,
+            key,
+            world.key,
+            mode=mode,
+            story_key=story_key,
+        )
         await start_game.finish(text)
 
     # · 裸 /跑团.开局：还没有世界就直接生成；有世界则展示世界选择

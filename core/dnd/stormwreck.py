@@ -29,17 +29,13 @@ STORMWRECK_SOURCES: dict[str, str] = {
     "青铜龙雏龙": "MM",
     "火蛇": "MM",
     "烟雾龙兽": "DoSI",
-    "食尸鬼": "MM",
     "鸟妖": "MM",
     "狗头人修补匠": "DoSI",
-    "狗头人": "MM",
     "蕈人成体": "MM",
     "蕈人幼体": "MM",
-    "枭熊": "MM",
     "茹娜拉": "DoSI",
     "塞娜萨": "DoSI",
     "孢子仆从八爪鱼": "DoSI",
-    "蚊蝠": "MM",
     "塔拉克": "DoSI",
     "瓦努斯": "DoSI",
     "紫腐菌": "MM",
@@ -52,7 +48,7 @@ STORMWRECK_SOURCES: dict[str, str] = {
 STORMWRECK_MONSTERS: tuple[Monster, ...] = (
     # —— 龙类 ——
     Monster(
-        key="blue_dragon_wyrmling",
+        key="sw_blue_dragon_wyrmling",
         cn="蓝龙雏龙",
         en="Blue Dragon Wyrmling",
         cr=3,
@@ -92,7 +88,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
         source="MM",
     ),
     Monster(
-        key="bronze_dragon_wyrmling",
+        key="sw_bronze_dragon_wyrmling",
         cn="青铜龙雏龙",
         en="Bronze Dragon Wyrmling",
         cr=3,
@@ -133,7 +129,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
     ),
     # —— 元素与异怪 ——
     Monster(
-        key="fire_snake",
+        key="sw_fire_snake",
         cn="火蛇",
         en="Fire Snake",
         cr=1,
@@ -157,7 +153,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
         source="MM",
     ),
     Monster(
-        key="smoke_dragon_beast",
+        key="sw_smoke_dragon_beast",
         cn="烟雾龙兽",
         en="Smoke Dragon Beast",
         cr=3,
@@ -198,35 +194,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
     ),
     # —— 亡灵 ——
     Monster(
-        key="ghoul",
-        cn="食尸鬼",
-        en="Ghoul",
-        cr=1,
-        size="中型",
-        kind="亡灵",
-        ac=12,
-        hp=22,
-        hit_dice="5d8",
-        speed=30,
-        abilities={"str": 13, "dex": 15, "con": 10, "int": 7, "wis": 10, "cha": 6},
-        attacks=(
-            MonsterAttack("爪击", "dex", "2d4+2", "挥砍", reach=5),
-            MonsterAttack("钳咬", "dex", "2d6+2", "穿刺", reach=5),
-        ),
-        saves=("dex", "con"),
-        traits=("多食：进食后可额外行动一次", "黑暗视觉 60 尺"),
-        resistances=("穿刺:免疫",),
-        senses="黑暗视觉 60 尺 被动察觉 12",
-        languages="亡灵语",
-        desc=(
-            "在沉船与墓穴里翻找食物的东西。它们是船上沉尸与古墓的看守，"
-            "也是最难缠的一群——它们不怕死，也不需要休息。"
-        ),
-        aliases=("食尸怪",),
-        source="MM",
-    ),
-    Monster(
-        key="zombie",
+        key="sw_zombie",
         cn="丧尸",
         en="Zombie",
         cr=0.25,
@@ -251,7 +219,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
     ),
     # —— 妖精与类人 ——
     Monster(
-        key="harpy",
+        key="sw_harpy",
         cn="鸟妖",
         en="Harpy",
         cr=1,
@@ -279,49 +247,9 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
         source="MM",
     ),
     Monster(
-        key="goblin",
-        cn="狗头人",
-        en="Goblin",
-        cr=0.25,
-        size="小型",
-        kind="类人",
-        ac=15,
-        hp=7,
-        hit_dice="2d6",
-        speed=30,
-        abilities={"str": 8, "dex": 14, "con": 10, "int": 10, "wis": 8, "cha": 8},
-        attacks=(
-            MonsterAttack("弯刀", "dex", "1d6+2", "挥砍", reach=5),
-            MonsterAttack(
-                "短弓",
-                "dex",
-                "1d6+2",
-                "穿刺",
-                reach=0,
-                ranged_normal=80,
-                ranged_max=320,
-            ),
-        ),
-        saves=("dex", "con"),
-        skills=("stealth",),
-        traits=(
-            "偷袭：在 advantageous 与隐形状态下攻击有优势",
-            "绕过同伴：队友站旁边时可无条件离开其身边",
-            "黑暗视觉 60 尺",
-        ),
-        senses="黑暗视觉 60 尺 被动察觉 9",
-        languages="通用语、狗头人语",
-        desc=(
-            "岛上到处都是。它们替斯帕克兰德守天文台，"
-            "也在修道院附近探头探脑——瑞克斯和米拉是其中两只，另有带翼的同族。"
-        ),
-        aliases=("地精",),
-        source="MM",
-    ),
-    Monster(
-        key="goblin_scribe",
+        key="sw_goblin_scribe",
         cn="狗头人修补匠",
-        en="Goblin Scribe",
+        en="Kobold Tinker",
         cr=0.5,
         size="小型",
         kind="类人",
@@ -351,13 +279,13 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
             "会做买卖的那种狗头人。修东西、抄东西、也接暗杀活——"
             "岛上那些「被偷走的行李」多半是它们干的。"
         ),
-        aliases=("狗头人工匠", "修补匠"),
+        aliases=("地精工匠", "修补匠"),
         source="DoSI",
     ),
     Monster(
-        key="winged_goblin",
+        key="sw_winged_goblin",
         cn="带翼狗头人",
-        en="Winged Goblin",
+        en="Winged Kobold",
         cr=0.25,
         size="小型",
         kind="类人",
@@ -383,11 +311,11 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
         senses="黑暗视觉 60 尺 被动察觉 9",
         languages="通用语、狗头人语",
         desc="长了翅膀的狗头人，能从崖顶往下扑。斯帕克兰德的盟友里就有带翼的。",
-        aliases=("飞狗头人", "翼狗头人"),
+        aliases=("飞地精", "翼地精"),
         source="MM",
     ),
     Monster(
-        key="myconid_adult",
+        key="sw_myconid_adult",
         cn="蕈人成体",
         en="Myconid Adult",
         cr=1,
@@ -426,7 +354,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
         source="MM",
     ),
     Monster(
-        key="myconid_sprout",
+        key="sw_myconid_sprout",
         cn="蕈人幼体",
         en="Myconid Sprout",
         cr=0.25,
@@ -450,7 +378,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
         source="MM",
     ),
     Monster(
-        key="sensenya",
+        key="sw_sensenya",
         cn="塞娜萨",
         en="Sensenya",
         cr=2,
@@ -489,7 +417,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
         source="DoSI",
     ),
     Monster(
-        key="spore_octopus",
+        key="sw_spore_octopus",
         cn="孢子仆从八爪鱼",
         en="Spore Octopus",
         cr=2,
@@ -528,7 +456,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
         source="DoSI",
     ),
     Monster(
-        key="ruinak",
+        key="sw_ruinak",
         cn="茹娜拉",
         en="Ruinak",
         cr=3,
@@ -570,59 +498,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
     ),
     # —— 野兽与植物 ——
     Monster(
-        key="mosquito_bat",
-        cn="蚊蝠",
-        en="Mosquito Bat",
-        cr=0.125,
-        size="微型",
-        kind="野兽",
-        ac=13,
-        hp=3,
-        hit_dice="1d6",
-        speed=10,
-        abilities={"str": 5, "dex": 15, "con": 10, "int": 2, "wis": 12, "cha": 4},
-        attacks=(MonsterAttack("吸血咬", "dex", "1d2+2", "穿刺", reach=0),),
-        traits=("吸血：命中后额外吸 1d4 生命值", "飞行 10 尺"),
-        senses="被动察觉 11",
-        languages="—",
-        desc=(
-            "吸血的小蝙蝠，筑巢在海藻洞穴里。单只构不成威胁——"
-            "成群时十分致命。带翼狗头人的翅膀也曾被它们咬伤过。"
-        ),
-        aliases=("吸血蝠", "蚊子蝙蝠"),
-        source="MM",
-    ),
-    Monster(
-        key="owlbear",
-        cn="枭熊",
-        en="Owlbear",
-        cr=3,
-        size="大型",
-        kind="野兽",
-        ac=13,
-        hp=59,
-        hit_dice="7d10+28",
-        speed=40,
-        abilities={"str": 20, "dex": 12, "con": 17, "int": 3, "wis": 12, "cha": 7},
-        attacks=(
-            MonsterAttack("喙击", "str", "1d10+5", "穿刺", reach=5),
-            MonsterAttack("爪击", "str", "2d8+5", "挥砍", reach=5),
-        ),
-        saves=("con", "wis"),
-        skills=("perception", "stealth"),
-        traits=("黑暗视觉 60 尺",),
-        senses="黑暗视觉 60 尺 被动察觉 13",
-        languages="—",
-        desc=(
-            "熊身枭首，紫羽与深灰毛混在一起。它**想驱离入侵者而不是杀人**——"
-            "它认为小队闯了它的领地。脖子上挂着一支小木哨（曾属马戏团）："
-            "DC 12 力量检定夺下哨子，再过 DC 10 感知（驯兽）检定吹响，它就会安静下来。"
-        ),
-        aliases=("枭熊巨兽",),
-        source="MM",
-    ),
-    Monster(
-        key="violet_rot",
+        key="sw_violet_rot",
         cn="紫腐菌",
         en="Violet Rot",
         cr=0.25,
@@ -660,7 +536,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
     ),
     # —— 人物 ——
     Monster(
-        key="tarlak",
+        key="sw_tarlak",
         cn="塔拉克",
         en="Tarlak",
         cr=0.5,
@@ -686,7 +562,7 @@ STORMWRECK_MONSTERS: tuple[Monster, ...] = (
         source="DoSI",
     ),
     Monster(
-        key="vanus",
+        key="sw_vanus",
         cn="瓦努斯",
         en="Vanus",
         cr=1,

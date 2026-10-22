@@ -38,6 +38,7 @@ from ATRI.log import log
 __all__ = [
     "DOC_KINDS",
     "DOC_KIND_LABELS",
+    "KIND_DIR",
     "KIND_LEVEL",
     "LEVEL_KINDS",
     "MAIN_DOC_KEY",
@@ -51,13 +52,16 @@ __all__ = [
     "add_provinces",
     "clean_name",
     "delete_doc",
+    "doc_owner",
     "doc_path",
     "docs_dir",
     "find_at_level",
+    "find_doc_path",
     "get_provinces",
     "get_world",
     "get_world_map",
     "index_path",
+    "kind_dir",
     "kinds_at",
     "level_of",
     "list_docs",
@@ -84,59 +88,29 @@ __all__ = [
     "worlds_dir",
 ]
 
-#: 文档种类。世界是五层：**世界 → 王国/地区 → 区域（省）→ 地点 → 场景**。
+#: 地理层的常量住在 :mod:`.layers`（零依赖，独立脚本也能 import）。
 #:
-#: 第 4 层刻意**保持三个种类**而不是合成一个 ``site``：据点（有人住、有买卖、
-#: 有管事的人）、野外地点（地形与遭遇）、地下城（多房间的探索空间）三者的生成模板与
-#: 下游用法本来就不一样，合成一个再靠子类型分派，只是把区别藏进 meta 里。
+#: - 逻辑种类：第 4 层**保持三个**（据点 / 野外地点 / 地下城）——
+#:   三者的生成模板与下游用法本来就不一样，合成一个再靠子类型分派，
+#:   只是把区别藏进 meta 里。
+#: - 物理目录：三种地点共用 ``place/``——它们是同一层的东西，
+#:   放在三个平行的目录里只是把分类重复了一遍。
 #:
-#: ``event`` 不属于地理层级，它是挂在存档上的剧本卡。
-DOC_KINDS: tuple[str, ...] = (
-    "world",
-    "realm",
-    "province",
-    "city",
-    "place",
-    "dungeon",
-    "scene",
-    "event",
+#: 这里保留同名转发，别的模块照旧 ``from .world_store import DOC_KINDS``。
+from .layers import (
+    DOC_KIND_LABELS,
+    DOC_KINDS,
+    KIND_DIR,
+    KIND_LEVEL,
+    LEVEL_KINDS,
+    SITE_KINDS,
 )
-
-#: 文档种类 -> 中文名
-DOC_KIND_LABELS: dict[str, str] = {
-    "world": "世界",
-    "realm": "王国/地区",
-    "province": "区域",
-    "city": "据点",
-    "place": "野外地点",
-    "dungeon": "地下城",
-    "scene": "场景",
-    "event": "事件",
-}
-
-#: 第 4 层的三个种类（地点）
-SITE_KINDS: tuple[str, ...] = ("city", "place", "dungeon")
-
-#: 文档种类 -> 地理层级（世界 = 1）。``event`` 不在地理层级里，记为 0。
-KIND_LEVEL: dict[str, int] = {
-    "world": 1,
-    "realm": 2,
-    "province": 3,
-    "city": 4,
-    "place": 4,
-    "dungeon": 4,
-    "scene": 5,
-    "event": 0,
-}
-
-#: 层级 -> 该层全部种类
-LEVEL_KINDS: dict[int, tuple[str, ...]] = {
-    1: ("world",),
-    2: ("realm",),
-    3: ("province",),
-    4: SITE_KINDS,
-    5: ("scene",),
-}
+from .layers import (
+    doc_owner as _doc_owner,
+)
+from .layers import (
+    kind_dir as _kind_dir,
+)
 
 WORLD_DIRNAME = "world"
 WORLDS_DIRNAME = "worlds"
@@ -205,12 +179,62 @@ def registry_path() -> Path:
     return world_root() / REGISTRY_FILENAME
 
 
-def doc_path(world_key: str, kind: str, key: str) -> Path:
-    """某个世界里一份文档的文件路径。"""
-    kind = _check_kind(kind)
-    directory = docs_dir(world_key) / kind
+def kind_dir(kind: str) -> str:
+    """某个逻辑种类落在哪个**物理目录**下。
+
+    第 4 层的三个种类（据点 / 野外地点 / 地下城）共用 ``place/``——
+    它们是同一层的东西，分类的区分在正文与 meta 里，不在目录名上。
+    """
+    return _kind_dir(_check_kind(kind))
+
+
+def doc_owner(kind: str, meta: dict[str, Any] | None) -> str:
+    """一份文档该放在哪个**归属目录**下（空 = 该种类的根目录）。
+
+    落盘结构 ``docs/<物理目录>/<归属>/<文档名>.md``，与预设样本一致：
+    省挂在王国下面、地点挂在省下面、场景与事件挂在地点下面。
+
+    规则只认 ``meta`` 里的 ``parent``（上级）与 ``site``（所属地点）——
+    那是索引里本来就有的字段，不额外引入新概念。
+    """
+    return _doc_owner(_check_kind(kind), meta)
+
+
+def doc_path(world_key: str, kind: str, key: str, owner: str = "") -> Path:
+    """某个世界里一份文档的文件路径。
+
+    :param owner: 归属目录名（按归属分目录时用）。**空 = 平铺在该种类的目录下。**
+
+    落盘结构与预设样本一致：``docs/<物理目录>/<归属>/<文档名>.md``。
+    读的时候不靠目录找文件——索引里存的是平铺的键。
+    """
+    directory = docs_dir(world_key) / kind_dir(kind)
+    if owner:
+        directory = directory / _safe_key(owner)
     directory.mkdir(parents=True, exist_ok=True)
     return directory / f"{_safe_key(key)}.md"
+
+
+def find_doc_path(world_key: str, kind: str, key: str) -> Path | None:
+    """找一份文档的实际文件（**按归属找，找不到就全目录扫**）。
+
+    归属会变：地点改名、省调整之后，文件可能还留在旧目录里。
+    读的时候先按当前归属算路径，落在那儿就用；不在就扫一遍——
+    免得「文件在但读不到」这种���态把文档变成看不见的死档。
+    """
+    kind = _check_kind(kind)
+    safe = _safe_key(key)
+    index = load_index(world_key)
+    entry = index["docs"][kind].get(safe) or {}
+    owner = doc_owner(kind, entry)
+    direct = doc_path(world_key, kind, safe, owner)
+    if direct.is_file():
+        return direct
+    base = docs_dir(world_key) / kind_dir(kind)
+    if base.is_dir():
+        for path in base.rglob(f"{safe}.md"):
+            return path
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -423,14 +447,18 @@ def save_doc(
     title: str = "",
     meta: dict[str, Any] | None = None,
 ) -> Path:
-    """在某个世界里写入（或覆盖）一份文档，并更新该世界的索引。"""
+    """在某个世界里写入（或覆盖）一份文档，并更新该世界的索引。
+
+    **按归属落盘**（``docs/<物理目录>/<归属>/<文档名>.md``），
+    与预设样本的结构一致——生成器写出来的世界和手工整理的样本长得一样。
+    """
     kind = _check_kind(kind)
     key = _safe_key(key)
-    path = doc_path(world_key, kind, key)
+    entry = dict(meta or {})
+    path = doc_path(world_key, kind, key, doc_owner(kind, entry))
     path.write_text(str(content or ""), encoding="utf-8")
 
     index = load_index(world_key)
-    entry = dict(meta or {})
     entry["title"] = title or key
     entry["updated_at"] = time.time()
     index["docs"][kind][key] = entry
@@ -440,8 +468,8 @@ def save_doc(
 
 def load_doc(world_key: str, kind: str, key: str) -> str | None:
     """读取某个世界的文档正文；不存在返回 ``None``。"""
-    path = doc_path(world_key, kind, key)
-    if not path.is_file():
+    path = find_doc_path(world_key, kind, key)
+    if path is None or not path.is_file():
         return None
     try:
         return path.read_text(encoding="utf-8")
@@ -471,9 +499,9 @@ def delete_doc(world_key: str, kind: str, key: str) -> bool:
     """删除某个世界里的文档并从索引移除；文档不存在返回 ``False``。"""
     kind = _check_kind(kind)
     safe = _safe_key(key)
-    path = doc_path(world_key, kind, safe)
-    existed = path.is_file()
-    if existed:
+    path = find_doc_path(world_key, kind, safe)
+    existed = path is not None and path.is_file()
+    if existed and path is not None:
         path.unlink()
     index = load_index(world_key)
     index["docs"][kind].pop(safe, None)

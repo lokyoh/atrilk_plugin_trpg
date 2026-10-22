@@ -32,6 +32,7 @@ from ATRI.log import log
 from .world_store import (
     DOC_KINDS,
     MAIN_DOC_KEY,
+    kind_dir,
     list_worlds,
     load_doc,
     new_world_id,
@@ -107,6 +108,10 @@ def _collect_docs(
     **子目录只是给人看的**（按归属分：``docs/scene/盐仓区/盐仓码头.md``），
     程序不靠目录找文件——这里对每一类先建一张「文档名 → 路径」的表，
     递归扫一遍就够，索引里仍然是平铺的键。
+
+    **按物理目录扫，不按逻辑种类扫**：据点、野外地点、地下城三类都落在
+    ``docs/place/`` 下（见 :data:`~...dnd.world_store.KIND_DIR`），
+    所以扫 ``place/`` 时要把三类都收进来。
     """
     docs = index.get("docs")
     if not isinstance(docs, dict):
@@ -117,7 +122,10 @@ def _collect_docs(
         section = docs.get(kind)
         if not isinstance(section, dict):
             continue
-        base = directory / "docs" / kind
+        base = directory / "docs" / kind_dir(kind)
+        # **按种类各建一张表**：据点、野外地点、地下城三种共用
+        # ``docs/place/``，共用一张表会让同名的文件互相顶掉
+        # （索引里三种是分开的三段，键可以重名）。
         table: dict[str, Path] = {}
         if base.is_dir():
             for path in base.rglob("*.md"):

@@ -175,7 +175,10 @@ class Save:
     updated_at: float = field(default_factory=time.time)
     #: 引用的世界库键（全局共享，多世界之一）
     world_key: str = "main"
-    #: 引用的故事键（该世界世界库内的 story 文档键；旧存档为空）
+    #: **入场事件键**（该世界世界库内的 ``event`` 文档键）。
+    #:
+    #: 玩家开局时挑的那件事——这一局就从它开始，DM 照着它写开场白。
+    #: 空 = 玩家没挑（或挑了「自己来」），开场时织一件新的，那一件就是入场事件。
     story_key: str = ""
     #: 当前场景（世界库中 scene 文档的键）
     current_scene: str = ""

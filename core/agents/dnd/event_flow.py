@@ -114,6 +114,7 @@ __all__ = [
     "event_scene_names",
     "finish_event",
     "grow_graph",
+    "install_preset_events_for_province",
     "mirror_event",
     "party_level",
     "preset_events",
@@ -976,6 +977,11 @@ def preset_events(save) -> list[EventSlot]:
     并照惯例给玩家播报一条。返回本次装上的那些；空表 = 没有现成的可装，
     调用方该走模型那条路。
 
+    **例外：玩家挑的那件**（``save.story_key``）。那是他在开局时明确选的
+    入场事件——**不管它在哪个省都装**，而且它是这一局的开场，
+    优先于「当前省」那套规矩（那时玩家还没落地，省是空的，
+    按省筛会一件都装不上）。
+
     **与 :func:`weave_event` 的差别只有一处**：那里的 ``scale`` 由
     :func:`event_scale` 按队伍等级定并覆盖模型输出，这里**用文档写死的档位**。
     这不是遗漏——六份预写跨 light/medium/heavy，图的就是「开局在哪一省，
@@ -997,9 +1003,30 @@ def preset_events(save) -> list[EventSlot]:
         log.warning(f"读世界事件失败（{world_key}）：{e!r}")
         return []
 
+    # 玩家挑的那件：不受「当前省」限制，是这一局的开场。
+    picked_key = str(getattr(save, "story_key", "") or "").strip()
+    if picked_key:
+        picked = next((r for r in refs if r.key == picked_key), None)
+        if picked is not None:
+            slot = _load_preset_slot(world_key, picked_key, scenes)
+            if slot is not None:
+                installed = _install_slots(save, pool, [slot])
+                if installed:
+                    return installed
+
     here = province_of(str(getattr(save, "current_scene", "") or ""), places)
     if not here:
-        return []  # 说不出玩家在哪，就说不清什么算「眼前」
+        # **开局**：玩家还没落地（``current_scene`` 是空的），说不出在哪一省，
+        # 于是「只装眼前的」一件都筛不出来。
+        #
+        # 这时**不装**——序位（``event_no``）是**王国内**的序位
+        # （每个王国的开局件都是 1），跨王国按序位装会装进三个王国的事。
+        # 正确的地方是**玩家落地之后**：移动到某个场景时再装那一省的
+        # （见 :func:`install_preset_events_for_province`）。
+        #
+        # 开局时池子空着，DM 的开场白里就只有「眼下没有值得追的事」——
+        # 那是实话：玩家还没到任何地方。
+        return []
 
     # **按序位装**：``event_no`` 小的是这一省里更靠前的那件事（1 = 开局那件）。
     # 池子同时只挂 :data:`~...dnd.events.MAX_OPEN_SLOTS` 件，装不下时
@@ -1010,37 +1037,72 @@ def preset_events(save) -> list[EventSlot]:
 
     found: list[EventSlot] = []
     for ref in refs:
-        text = load_doc(world_key, "event", ref.key)
-        if not text:
+        if ref.key == picked_key:
+            continue  # 玩家挑的那件已经装过了（上面单独装过）
+        slot = _load_preset_slot(world_key, ref.key, scenes)
+        if slot is None:
             continue
-        slot = text_to_event(text)
-        if slot is None or slot.graph.empty:
-            continue  # 这份事件不是事件图（旧的事件卡之类）
-        if slot.id and slot.id in pool.slots:
-            continue  # 装过了（包括已经了结的）
         ats = {n.at for n in slot.graph.nodes.values() if n.at}
         if here not in {province_of(at, places) for at in ats}:
             continue  # 不在这附近
-        if ats - set(scenes):
-            # 节点写在不是场景的地方：玩家永远走不到它，这图是坏的
-            log.warning(f"预写事件「{slot.title}」的所在地不在场景候选里，跳过")
-            continue
-        if validate(slot.graph):
-            # 和 DM 现场造的节点同一条纪律：不过校验不进池。
-            # 入口硬钩子（规则 12）**不在这里查**——它是软提示，
-            # 由 tests/test_dnd_preset_seed.py 那条「预写事件不许有开局提示」钉住。
-            log.warning(f"预写事件「{slot.title}」没过校验，跳过")
-            continue
         found.append(slot)
 
     if not found:
         return []
 
+    return _install_slots(save, pool, found)
+
+
+def install_preset_events_for_province(save) -> list[EventSlot]:
+    """玩家**落地之后**，把那一省的预写事件装进池子。
+
+    :func:`preset_events` 靠 ``current_scene`` 定位省份——玩家没落地时
+    定位不出来，于是开局那一轮一件也装不上。这不是「世界没有现成的事」，
+    只是**还没到地方**。等玩家走进某个场景，这里就把那一省的事挂上。
+
+    所以开局的池子是空的（DM 会说「眼下没有值得追的事」——那是实话），
+    玩家迈出第一步之后，眼前才有事。
+
+    幂等：池里已有同 id 的跳过，了结过的也不再回来。
+    """
+    return preset_events(save)
+
+
+def _load_preset_slot(world_key: str, key: str, scenes: list[str]) -> EventSlot | None:
+    """读一份预写事件并验一遍；不合格返回 ``None``。
+
+    校验与「节点所在是不是场景」都在这里做——不合格的图进了池，
+    玩家永远走不到它的节点，那张卡就是死的。
+    """
+    text = load_doc(world_key, "event", str(key))
+    if not text:
+        return None
+    slot = text_to_event(text)
+    if slot is None or slot.graph.empty:
+        return None  # 这份事件不是事件图（旧的事件卡之类）
+    ats = {n.at for n in slot.graph.nodes.values() if n.at}
+    if ats - set(scenes):
+        # 节点写在不是场景的地方：玩家永远走不到它，这图是坏的
+        log.warning(f"预写事件「{slot.title}」的所在地不在场景候选里，跳过")
+        return None
+    if validate(slot.graph):
+        # 和 DM 现场造的节点同一条纪律：不过校验不进池。
+        # 入口硬钩子（规则 12）**不在这里查**——它是软提示，
+        # 由 tests/test_dnd_preset_seed.py 那条「预写事件不许有开局提示」钉住。
+        log.warning(f"预写事件「{slot.title}」没过校验，跳过")
+        return None
+    return slot
+
+
+def _install_slots(save, pool, found: list[EventSlot]) -> list[EventSlot]:
+    """把几张事件装进池子（幂等、不超载、设定引导目标、播报）。"""
     open_now = sum(1 for s in pool.slots.values() if s.state == "pending")
     installed: list[EventSlot] = []
     for slot in found:
         if open_now >= MAX_OPEN_SLOTS:
             break
+        if slot.id and slot.id in pool.slots:
+            continue  # 装过了（包括已经了结的）
         slot.since_day = pool.day
         slot.state = "pending"
         pool.slots[slot.id] = slot

@@ -1220,7 +1220,36 @@ class MoveSceneTool(AgentTool):
             )
         key, text = result
         span = _travel_hint(save.world_key, origin, key)
+        # **落地了**：把这一省的预写事件挂上。
+        #
+        # 开局时玩家没落地，按省筛一件也筛不出来——池子是空的，
+        # DM 的开场白里只有「眼下没有值得追的事」。等玩家真走到地方，
+        # 眼前才该有事先挂上。
+        #
+        # **必须在 step_move 之前**：``step_move`` 判「走进事件」看的是
+        # 池子当前引导的那件——玩家第一脚就踩在事件场景上时，
+        # 事件得先在池子里，否则这一脚判不到「进入」。
+        #
+        # 幂等：装过的、了结过的都跳过；池满（MAX_OPEN_SLOTS）就停。
+        try:
+            from .event_flow import install_preset_events_for_province
+
+            installed = install_preset_events_for_province(save)
+            if installed:
+                where = f"（{installed[0].stage}）" if installed[0].stage else ""
+                journey = f"\n【{installed[0].title}{where}】{installed[0].hint or ''}"
+        except Exception as e:  # 装不上不该让人走不动
+            log.warning(f"装预写事件失败：{str_traceback(e)}")
         # 世界时间与路上的事在这里算：每走一跳判一次（见 event_flow.step_move）
+        report = None
+        try:
+            from .event_flow import step_move
+
+            report = step_move(save, key, origin=origin)
+            journey = report.dm_hint() or journey
+        except Exception as e:  # 事件系统出问题不该让人走不动
+            log.warning(f"推进世界时间失败：{str_traceback(e)}")
+            journey = journey or ""
         report = None
         try:
             from .event_flow import step_move

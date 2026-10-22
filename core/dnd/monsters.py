@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ..trpg.dice import DiceError, parse_dice
+from .forgotten_realms import LOST_MINE_MONSTERS
 from .monster_types import (
     Monster,
     MonsterAttack,
@@ -279,7 +280,8 @@ MONSTERS: tuple[Monster, ...] = (
         traits=("敏捷撤离：附赠动作撤离或躲藏", "黑暗视觉 60 尺"),
         senses="黑暗视觉 60 尺 被动察觉 9",
         languages="通用语、地精语",
-        desc="成群结队的掠夺者，怯懦但狡猾，惯用埋伏与夹击。",
+        desc="岛上到处都是。它们替斯帕克兰德守天文台，"
+        "也在修道院附近探头探脑——瑞克斯和米拉是其中两只，另有带翼的同族。",
         aliases=("哥布林",),
     ),
     Monster(
@@ -310,7 +312,7 @@ MONSTERS: tuple[Monster, ...] = (
             "黑暗视觉 60 尺",
         ),
         senses="被动察觉 13",
-        desc="荒原与林间的猎手，从不单打独斗。",
+        desc="克拉摩窝点的犬舍里拴着三头，正在被训练。它们够不到站在台阶上的人，但会攻击除地精外任何进入房间的生物。",
         aliases=("野狼", "灰狼"),
     ),
     Monster(
@@ -345,7 +347,7 @@ MONSTERS: tuple[Monster, ...] = (
         ),
         senses="黑暗视觉 60 尺 被动察觉 9",
         languages="理解通用语但不能说",
-        desc="被死灵法术驱使的骸骨，忠实地执行最后的命令。",
+        desc="黑水池边那具骷髅：戴着两枚铂金戒指，骨感的手指紧握着一把魔法飞弹魔杖。",
         aliases=("骷髅兵", "骸骨兵"),
     ),
     Monster(
@@ -413,7 +415,10 @@ MONSTERS: tuple[Monster, ...] = (
         ),
         senses="黑暗视觉 60 尺 被动察觉 10",
         languages="通用语、地精语",
-        desc="地精军团的军官，穿阵型作战，比同类更有纪律。",
+        desc="这支大地精小队正在积极寻找冒险者，希望能领取赏金。"
+        "他们知道克拉摩堡的位置，但除非被魅惑，否则不会提供方向。"
+        "其中一名大地精带着一张粗糙的队伍成员草图，写着「25 金币换这个人」，"
+        "下方画着一个**黑色蜘蛛的徽记**。",
     ),
     Monster(
         key="orc",
@@ -443,7 +448,7 @@ MONSTERS: tuple[Monster, ...] = (
         traits=("侵略性：附赠动作向可见的敌人移动至其速度", "黑暗视觉 60 尺"),
         senses="黑暗视觉 60 尺 被动察觉 10",
         languages="通用语、兽人语",
-        desc="为战而生的掠夺者，崇尚力量与战利品。",
+        desc="矿洞深处那些。它们扰乱了法术工厂的魔法，把眼魔搞疯了——不是它们的错。",
     ),
     Monster(
         key="gnoll",
@@ -497,7 +502,7 @@ MONSTERS: tuple[Monster, ...] = (
         ),
         senses="黑暗视觉 60 尺 被动察觉 10",
         languages="通用语",
-        desc="啃食尸体而生、行动如掠食者的亡灵，爪子令人僵直。",
+        desc="在沉船与墓穴里翻找食物的东西。它们是船上沉尸与古墓的看守，也是最难缠的一群——它们不怕死，也不需要休息。",
         aliases=("食尸鬼群"),
     ),
     Monster(
@@ -588,7 +593,7 @@ MONSTERS: tuple[Monster, ...] = (
         ),
         senses="黑暗视觉 60 尺 被动察觉 10",
         languages="通用语、地精语",
-        desc="比地精高大得多的同族，天生的伏击者与绑匪。",
+        desc="克拉格是其中一只——熊地精，克拉摩窝点的首领，替格罗尔国王打劫商队与旅人。几天前他接到新指令：拦截刚铎·寻岩者一伙。",
     ),
     # —— CR 2 ——
     Monster(
@@ -607,7 +612,7 @@ MONSTERS: tuple[Monster, ...] = (
         traits=("黑暗视觉 60 尺", "贪食：会被食物、酒或财宝引开"),
         senses="黑暗视觉 60 尺 被动察觉 8",
         languages="通用语、巨人语",
-        desc="力大无穷又懒得思考的掠夺者，一棒就能把人打飞。",
+        desc="三五只一群的东西。打起来不顾死活，但打起来也就那样。",
     ),
     Monster(
         key="bandit_captain",
@@ -736,7 +741,7 @@ MONSTERS: tuple[Monster, ...] = (
             "黑暗视觉 60 尺",
         ),
         senses="黑暗视觉 60 尺 被动察觉 13",
-        desc="熊身枭首的怪物，护领地时从不退让。",
+        desc="熊身枭首，紫羽与深灰毛混在一起。它想驱离入侵者而不是杀人——它认为小队闯了它的领地。脖子上挂着一支小木哨（曾属马戏团）：DC 12 力量检定夺下哨子，再过 DC 10 感知（驯兽）检定吹响，它就会安静下来。",
         aliases=("鸱鸮熊",),
     ),
     Monster(
@@ -958,7 +963,7 @@ MONSTERS: tuple[Monster, ...] = (
         en="Young White Dragon",
         cr=6,
         size="大型",
-        kind="龙",
+        kind="龙类",
         ac=17,
         hp=133,
         hit_dice="14d10+56",
@@ -1092,7 +1097,7 @@ MONSTERS: tuple[Monster, ...] = (
         en="Young Blue Dragon",
         cr=9,
         size="大型",
-        kind="龙",
+        kind="龙类",
         ac=18,
         hp=152,
         hit_dice="16d10+80",
@@ -1150,10 +1155,13 @@ MONSTERS: tuple[Monster, ...] = (
         desc="比大多数文明更古老的深海记忆体，把整片水域当成自己的手。",
         aliases=("底栖魔鱼", "魔鱼"),
     ),
-    # —— 《风骸岛之龙》附录 B（20 只）——
+    # —— 模组附录 B ——
     # 官方附录在 Vault 里是占位符，数值读不出来；这批按 5e 规则书现算，
-    # 行为描述取自模组正文。见 :mod:`.stormwreck`。
+    # 行为描述取自模组正文。
+    # 《风骸岛之龙》见 :mod:`.stormwreck`；《凡戴尔的失落矿坑》见
+    # :mod:`.forgotten_realms`。
     *STORMWRECK_MONSTERS,
+    *LOST_MINE_MONSTERS,
 )
 
 

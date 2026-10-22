@@ -1078,6 +1078,10 @@ _OPENING_PROMPT = (
     "然后用 move_scene 把玩家们带进第一个地点并交代入场；"
     "最后用 await_players 声明第一轮要等待行动的玩家（默认全员）。"
     "开场白的结尾，按叙述要求给玩家两三条「现在可以做什么」的具体提示。"
+    "如果给了入场事件（玩家挑的那件，或开局现织的那件），就从它写起；"
+    "**它不是白名单**——队伍从哪儿来、什么来路，你也可以按世界设定另起一个开场，"
+    "但一定要让玩家躲不开：撞见 / 被扣下 / 过不去 / 非要不可，"
+    "不能是「听说某地不太平」这种能转身走开的。"
 )
 
 
@@ -1226,6 +1230,19 @@ async def run_dm_round(
     # 玩家行动原文放进 context：check / attack 等工具要靠它定难度档位
     # （「我悄悄摸过去」比「我走过去」容易），不塞进来就只能拿技能基准难度。
     context.data["action_text"] = action_text
+    # 开场轮才给入场事件：每轮都重发系统提示词，平时带着走纯属浪费。
+    # 玩家挑了一件就只给那件，没挑才给这个世界里现成的事当参照。
+    opening_block = ""
+    if opening:
+        try:
+            from ...dnd.openings import opening_text
+
+            opening_block = opening_text(
+                save.world_key,
+                str(getattr(save, "story_key", "") or ""),
+            )
+        except Exception as e:
+            log.warning(f"取开场剧情清单失败（继续开局）：{str_traceback(e)}")
     try:
         with bind_save(save.save_id):
             result = await dm_agent.run(
@@ -1240,6 +1257,7 @@ async def run_dm_round(
                 combat=combat_block,
                 history=history,
                 phase=phase,
+                opening=opening_block,
             )
             record_result(result)
     except AgentError as e:
@@ -1410,14 +1428,63 @@ async def run_dm_round(
     )
 
 
+def _has_entry_event(save) -> bool:
+    """这一局有没有入场事件（池里挂着的那件）。
+
+    玩家挑的那件在 :func:`preset_events` 里装好了；AI 现生成的世界没有
+    现成事件，得现织——织出来的那一件就是入场事件。
+
+    **同步函数**：读的是存档里的事件池，不碰模型。
+    （早先写成 ``async``，调用点忘了 ``await``——协程对象恒为真，
+    于是「池里没有就现织」这条分支永远不执行，AI 生成的世界照样空手开场。）
+    """
+    try:
+        from .event_flow import load_pool
+
+        return any(s.state in ("pending", "playing") for s in load_pool(save).slots.values())
+    except Exception as e:
+        log.warning(f"读事件池失败：{str_traceback(e)}")
+        return False
+
+
+async def _weave_entry_event(save) -> None:
+    """织一件事件当这一局的**入场事件**（玩家没挑时）。
+
+    织事件要场景可落，而开局时玩家还没落地——所以先落一个**落脚点**：
+    从世界的第一个王国开始，逐级补出省 → 地点 → 场景。补不出来就
+    放弃（DM 照样能开场，只是眼前没有现成的事）。
+    """
+    from .event_flow import event_scene_names, weave_event
+
+    world_key = str(getattr(save, "world_key", "") or "").strip()
+    if not world_key:
+        return
+    if not event_scene_names(world_key):
+        # 一个场景都没有：先落一个落脚点，玩家才有地方去。
+        try:
+            from ...dnd.world_store import get_world_map
+            from .on_demand import ensure_scene
+
+            regions, _adjacency = get_world_map(world_key)
+            if not regions:
+                return
+            await ensure_scene(world_key, regions[0], kind="place")
+        except Exception as e:
+            log.warning(f"落落脚点失败（继续开局）：{str_traceback(e)}")
+            return
+    outcome = await weave_event(save)
+    if not outcome.ok and outcome.problems:
+        log.warning(f"织入场事件失败：{'; '.join(outcome.problems[:2])}")
+
+
 async def run_opening(*, save_id: str, chat_id: str = "") -> TurnResult:
     """开场轮：不等玩家行动，直接由 DM 给出开场白并把玩家带进第一个场景。
 
     ``/跑团.开局`` 只建存档、不跑开场；等玩家陆续 ``/跑团.加入`` 之后，由任意
     已加入的玩家发 ``/跑团.开始`` 调到这里正式开局。
 
-    开局时会先把**预写事件**装进事件池（预设世界里每省一件），这样 DM 的
-    开场白里就能把眼前这件正事摆出来，而不是让玩家先空走几步。
+    开局时会先把**入场事件**装进事件池：玩家挑的那一件，或（他没挑时）
+    现织的那一件——那一件就是这一局的开场，DM 的开场白从它写起。
     """
     save = load_save(save_id)
     if save is None:
@@ -1425,15 +1492,24 @@ async def run_opening(*, save_id: str, chat_id: str = "") -> TurnResult:
             Verdict.NEED_INFO,
             message="这局冒险的存档不见了，发送 /跑团.开局 重新开启。",
         )
-    # 预写事件在开局就装好：DM 的开场白里就能提到眼前这件正事，
+    # 入场事件在开局就装好：DM 的开场白里就能提到眼前这件正事，
     # 不必等玩家先走几步。装不上不影响开局。
     try:
         from .event_flow import preset_events
 
         preset_events(save)
     except Exception as e:
-        log.warning(f"装预写事件失败（继续开局）：{str_traceback(e)}")
+        log.warning(f"装入场事件失败（继续开局）：{str_traceback(e)}")
     save_save(save)
+
+    # 玩家没挑（要自己另起一个），或这个世界压根没有现成事件
+    # （AI 现生成的世界就是这样）→ **织一件**，那件就是入场事件。
+    if not _has_entry_event(save):
+        try:
+            await _weave_entry_event(save)
+        except Exception as e:
+            log.warning(f"织入场事件失败（继续开局）：{str_traceback(e)}")
+        save_save(save)
     actions = {str(uid): {"action": "", "resolution": ""} for uid in save.player_ids}
     result = await run_dm_round(
         save_id=save.save_id, actions=actions, chat_id=chat_id, opening=True

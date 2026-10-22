@@ -12,7 +12,8 @@
 - :mod:`spells` 法术数据表（0~3 环 + 法术位表）
 - :mod:`monsters` 怪物数据表（AC / 生命 / 攻击 / 特性）
 - :mod:`monster_types` 怪物数据卡的类型定义（类，不含数据）
-- :mod:`stormwreck` 《风骸岛之龙》附录 B 的 20 只生物
+- :mod:`stormwreck` 《风骸岛之龙》附录 B 的生物
+- :mod:`forgotten_realms` 《凡戴尔的失落矿坑》附录 B 的生物
 - :mod:`items` 魔法物品数据表（稀有度 / 调谐 / 消耗 / 附魔）
 - :mod:`npcs` 人形 NPC 档位表（按队伍等级给数值）与 NPC 名单（旧伤 / 关系）
 - :mod:`card` 角色卡（组装 + 检定 + 倒地与死亡豁免）
@@ -161,6 +162,7 @@ from .event_progress import (
     note_clue,
     set_current,
 )
+from .forgotten_realms import LOST_MINE_MONSTERS, LOST_MINE_SOURCES
 from .items import (
     ITEM_KINDS,
     ITEM_RARITIES,
@@ -414,6 +416,8 @@ __all__ = [
     "ITEM_RARITIES",
     "LEVEL_XP_THRESHOLDS",
     "LOOT_TABLE",
+    "LOST_MINE_MONSTERS",
+    "LOST_MINE_SOURCES",
     "MAIN_DOC_KEY",
     "MAX_ENEMIES",
     "MAX_LEVEL",
