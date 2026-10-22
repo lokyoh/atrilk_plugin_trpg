@@ -30,14 +30,13 @@ from pathlib import Path
 from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
-from .monsters import (
+from .monster_types import (
     NPC_KEY_PREFIX,
-    SCALE_SUFFIX,
     Monster,
     MonsterAttack,
-    get_monster,
     proficiency_for_cr,
 )
+from .monsters import SCALE_SUFFIX, get_monster
 from .save_store import Save, save_dir
 
 __all__ = [

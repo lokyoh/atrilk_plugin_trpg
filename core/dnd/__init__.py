@@ -11,6 +11,9 @@
 - :mod:`equipment` 护甲 / 武器 / 装备栈
 - :mod:`spells` 法术数据表（0~3 环 + 法术位表）
 - :mod:`monsters` 怪物数据表（AC / 生命 / 攻击 / 特性）
+- :mod:`monster_types` 怪物数据卡的类型定义（类，不含数据）
+- :mod:`stormwreck` 《风骸岛之龙》附录 B 的 20 只生物
+- :mod:`items` 魔法物品数据表（稀有度 / 调谐 / 消耗 / 附魔）
 - :mod:`npcs` 人形 NPC 档位表（按队伍等级给数值）与 NPC 名单（旧伤 / 关系）
 - :mod:`card` 角色卡（组装 + 检定 + 倒地与死亡豁免）
 - :mod:`combat` 战斗状态（先攻顺序 + 当前回合 + 敌人个体 + 行动经济记账）
@@ -157,6 +160,15 @@ from .event_progress import (
     mark_done,
     note_clue,
     set_current,
+)
+from .items import (
+    ITEM_KINDS,
+    ITEM_RARITIES,
+    ITEMS,
+    Item,
+    format_item_list,
+    get_item,
+    items_of_kind,
 )
 from .judge import (
     DndAction,
@@ -320,6 +332,7 @@ from .spells import (
     spells_of_level,
 )
 from .storage import delete_card, list_cards, load_card, save_card
+from .stormwreck import STORMWRECK_MONSTERS, STORMWRECK_SOURCES
 from .world_bible import (
     BIBLE_FILENAME,
     Entity,
@@ -396,6 +409,9 @@ __all__ = [
     "EVENTS_FILENAME",
     "FULL_CASTER_SLOTS",
     "GROUP_CR_OFFSET",
+    "ITEMS",
+    "ITEM_KINDS",
+    "ITEM_RARITIES",
     "LEVEL_XP_THRESHOLDS",
     "LOOT_TABLE",
     "MAIN_DOC_KEY",
@@ -429,6 +445,8 @@ __all__ = [
     "SPELL_MAP",
     "STANDARD_ARRAY",
     "STEPS",
+    "STORMWRECK_MONSTERS",
+    "STORMWRECK_SOURCES",
     "STORY_FILENAME",
     "STORY_ROUND_KEY",
     "STORY_VOLUME_BYTES",
@@ -456,6 +474,7 @@ __all__ = [
     "EnemySpec",
     "Entity",
     "EventProgress",
+    "Item",
     "ItemStack",
     "Monster",
     "MonsterAttack",
@@ -540,6 +559,7 @@ __all__ = [
     "find_combatant",
     "find_npc",
     "format_ability_block",
+    "format_item_list",
     "format_report",
     "format_spell_lines",
     "format_spell_list",
@@ -549,6 +569,7 @@ __all__ = [
     "get_binding",
     "get_character",
     "get_class",
+    "get_item",
     "get_monster",
     "get_race",
     "get_skill",
@@ -565,6 +586,7 @@ __all__ = [
     "is_incapacitated",
     "is_npc_key",
     "is_out",
+    "items_of_kind",
     "level_for_xp",
     "level_up",
     "list_bindings",

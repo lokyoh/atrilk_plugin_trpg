@@ -77,6 +77,7 @@ from ...dnd.difficulty import (
 from ...dnd.encounter import calibrate_specs
 from ...dnd.equipment import ARMORS, SHIELDS, WEAPONS, get_armor, get_weapon
 from ...dnd.evolution import note_scene_change
+from ...dnd.items import ITEMS, format_item_list, get_item
 from ...dnd.memory import (
     MEMORY_MAX,
     add_memory,
@@ -437,6 +438,20 @@ def _query_skill(name: str) -> str:
     return f"{skill.cn}（{skill.en}）：关联属性 {skill.ability_obj.cn}"
 
 
+def _query_item(name: str) -> str:
+    """查魔法物品：留空按大类列全部，给名字出完整描述。"""
+    if not name:
+        return (
+            f"魔法物品（共 {len(ITEMS)} 件）：\n"
+            + format_item_list(ITEMS)
+            + "\n\n按名字查详情，比如「治疗药水」「+1 武器」。"
+        )
+    item = get_item(name)
+    if item is None:
+        raise KeyError(f"未知物品：{name}")
+    return item.describe()
+
+
 def _query_weapon(name: str) -> str:
     if not name:
         return "武器：" + "、".join(w.cn for w in WEAPONS)
@@ -478,9 +493,11 @@ def _query_monster(name: str) -> str:
                 if first
                 else "—"
             )
+            # 出处只标「模组自带」的（风骸岛之龙等）——系统自带的不用标
+            origin = f"  [{monster.source}]" if monster.source else ""
             lines.append(
                 f"· {monster.cn}（CR {monster.cr_text}）AC {monster.ac}  "
-                f"HP {monster.hp}  攻击 {attack}"
+                f"HP {monster.hp}  攻击 {attack}{origin}"
             )
         return "\n".join(lines)
     monster = get_monster(name)
@@ -674,6 +691,7 @@ _DATA_TABLES = {
     "weapon": _query_weapon,
     "armor": _query_armor,
     "monster": _query_monster,
+    "item": _query_item,
     "spell": _query_spell,
     "npc_tier": _query_npc_tier,
     "condition": _query_condition,
@@ -697,6 +715,12 @@ _DATA_ALIASES = {
     "怪物": "monster",
     "怪物图鉴": "monster",
     "敌人": "monster",
+    "item": "item",
+    "items": "item",
+    "物品": "item",
+    "魔法物品": "item",
+    "道具": "item",
+    "宝物": "item",
     "spell": "spell",
     "spells": "spell",
     "法术": "spell",
@@ -794,7 +818,7 @@ class QueryDataTool(AgentTool):
     function_name = "query_data"
     max_result_chars = 2500
     description = (
-        "查 DND 数据表（race/profession/skill/weapon/armor/monster/spell/condition/"
+        "查 DND 数据表（race/profession/skill/weapon/armor/monster/item/spell/condition/"
         "difficulty/npc_tier/npc）或世界库文档（world/realm/province/city/place/"
         "dungeon/scene/event），table 可写中文"
     )
@@ -827,7 +851,7 @@ class QueryDataTool(AgentTool):
         if handler is None:
             return (
                 "未知数据表，可用：race / profession / skill / weapon / armor / monster / "
-                "spell / condition / difficulty / npc_tier / npc，或世界库文档："
+                "item / spell / condition / difficulty / npc_tier / npc，或世界库文档："
                 "world / realm / province / city / place / dungeon / scene / event"
             )
         try:

@@ -45,6 +45,7 @@ from .equipment import (
     get_weapon,
     parse_item_stack,
 )
+from .items import get_item
 from .profession import DndClass, get_class
 from .race import Race, SubRace, get_race
 from .skills import Skill, get_skill
@@ -682,9 +683,10 @@ class DndCharacter(TrpgCharacter):
     def equip(self, items: str | list[str]) -> tuple[list[str], list[str]]:
         """把东西收进装备栏（追加，不覆盖）。
 
-        认得的（装备表里的武器 / 护甲）换成规范名再收；认不出的**照原样收下**——
-        战利品里有杂物（箭 / 绳索 / 干粮），它们不进 AC 计算但确实是玩家拿到的东西，
-        一律丢掉会让玩家觉得东西凭空消失。DM 工具与玩家侧快捷入口共用这一套。
+        认得的（装备表里的武器 / 护甲、**魔法物品表里的物品**）换成规范名再收；
+        认不出的**照原样收下**——战利品里有杂物（箭 / 绳索 / 干粮），
+        它们不进 AC 计算但确实是玩家拿到的东西，一律丢掉会让玩家觉得东西凭空消失。
+        DM 工具与玩家侧快捷入口共用这一套。
 
         :return: ``(已收下的规范名列表, 认不出的原样列表)``
         """
@@ -697,10 +699,16 @@ class DndCharacter(TrpgCharacter):
         unknown: list[str] = []
         for item in wanted:
             armor = get_armor(item) or get_weapon(item)
-            if armor is None:
-                unknown.append(item)
-            else:
+            if armor is not None:
                 known.append(armor.cn)
+                continue
+            # 魔法物品：认得出就用规范名（「精灵靴」→「精灵之靴」），
+            # 认不出的仍照原样收下（战利品里的杂物不能丢）。
+            magic = get_item(item)
+            if magic is not None:
+                known.append(magic.cn)
+            else:
+                unknown.append(item)
         self.equipment = list(dict.fromkeys([*self.equipment, *known, *unknown]))
         # 盾牌影响 AC 结算，收下盾牌时顺手更新标记
         self.has_shield = any("盾" in str(x) for x in self.equipment)
