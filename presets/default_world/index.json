@@ -1,11 +1,11 @@
 {
   "regions": [
-    "熔渣渠",
-    "霜牙岭",
-    "灰岩原",
-    "盐沼渡",
-    "白港",
-    "灰烬台"
+    "卡兰提尔",
+    "炉心",
+    "钟楼国",
+    "霜牙",
+    "石冢原",
+    "泊银湾"
   ],
   "adjacency": {
     "废炉群": [
@@ -13,9 +13,7 @@
       "焦渣岭",
       "石台地",
       "天坑群",
-      "盐碱河床",
       "湾口深水区",
-      "西盐田",
       "台心",
       "灰沟",
       "落灰带"
@@ -25,9 +23,7 @@
       "焦渣岭",
       "石台地",
       "天坑群",
-      "盐碱河床",
       "湾口深水区",
-      "西盐田",
       "台心",
       "灰沟",
       "落灰带"
@@ -37,132 +33,47 @@
       "熔岩沟",
       "石台地",
       "天坑群",
-      "盐碱河床",
       "湾口深水区",
-      "西盐田",
       "台心",
       "灰沟",
       "落灰带"
     ],
     "冻土台地": [
       "冰裂谷",
-      "盐霜原",
-      "芦苇荡",
-      "潮沟",
-      "泥渡栈道",
       "湾口深水区",
-      "西盐田",
       "台心",
       "灰沟",
       "落灰带"
     ],
     "冰裂谷": [
       "冻土台地",
-      "盐霜原",
-      "芦苇荡",
-      "潮沟",
-      "泥渡栈道",
       "湾口深水区",
-      "西盐田",
-      "台心",
-      "灰沟",
-      "落灰带"
-    ],
-    "盐霜原": [
-      "冻土台地",
-      "冰裂谷",
-      "芦苇荡",
-      "潮沟",
-      "泥渡栈道",
-      "湾口深水区",
-      "西盐田",
       "台心",
       "灰沟",
       "落灰带"
     ],
     "石台地": [
       "天坑群",
-      "盐碱河床",
       "废炉群",
       "熔岩沟",
       "焦渣岭",
-      "湾口深水区",
-      "西盐田"
+      "湾口深水区"
     ],
     "天坑群": [
       "石台地",
-      "盐碱河床",
       "废炉群",
       "熔岩沟",
       "焦渣岭",
-      "湾口深水区",
-      "西盐田"
-    ],
-    "盐碱河床": [
-      "石台地",
-      "天坑群",
-      "废炉群",
-      "熔岩沟",
-      "焦渣岭",
-      "湾口深水区",
-      "西盐田"
-    ],
-    "芦苇荡": [
-      "潮沟",
-      "泥渡栈道",
-      "冻土台地",
-      "冰裂谷",
-      "盐霜原",
-      "台心",
-      "灰沟",
-      "落灰带"
-    ],
-    "潮沟": [
-      "芦苇荡",
-      "泥渡栈道",
-      "冻土台地",
-      "冰裂谷",
-      "盐霜原",
-      "台心",
-      "灰沟",
-      "落灰带"
-    ],
-    "泥渡栈道": [
-      "芦苇荡",
-      "潮沟",
-      "冻土台地",
-      "冰裂谷",
-      "盐霜原",
-      "台心",
-      "灰沟",
-      "落灰带"
+      "湾口深水区"
     ],
     "湾口深水区": [
-      "西盐田",
       "废炉群",
       "熔岩沟",
       "焦渣岭",
       "冻土台地",
       "冰裂谷",
-      "盐霜原",
       "石台地",
       "天坑群",
-      "盐碱河床",
-      "台心",
-      "灰沟",
-      "落灰带"
-    ],
-    "西盐田": [
-      "湾口深水区",
-      "废炉群",
-      "熔岩沟",
-      "焦渣岭",
-      "冻土台地",
-      "冰裂谷",
-      "盐霜原",
-      "石台地",
-      "天坑群",
-      "盐碱河床",
       "台心",
       "灰沟",
       "落灰带"
@@ -175,12 +86,7 @@
       "焦渣岭",
       "冻土台地",
       "冰裂谷",
-      "盐霜原",
-      "芦苇荡",
-      "潮沟",
-      "泥渡栈道",
-      "湾口深水区",
-      "西盐田"
+      "湾口深水区"
     ],
     "灰沟": [
       "台心",
@@ -190,12 +96,7 @@
       "焦渣岭",
       "冻土台地",
       "冰裂谷",
-      "盐霜原",
-      "芦苇荡",
-      "潮沟",
-      "泥渡栈道",
-      "湾口深水区",
-      "西盐田"
+      "湾口深水区"
     ],
     "落灰带": [
       "台心",
@@ -205,12 +106,10 @@
       "焦渣岭",
       "冻土台地",
       "冰裂谷",
-      "盐霜原",
-      "芦苇荡",
-      "潮沟",
-      "泥渡栈道",
-      "湾口深水区",
-      "西盐田"
+      "湾口深水区"
+    ],
+    "剑湾": [
+      "剑湾"
     ]
   },
   "docs": {
@@ -223,192 +122,151 @@
       "三闸关": {
         "title": "三闸关",
         "level": 4,
-        "parent": "",
-        "migrated_from": "area:熔渣渠"
+        "parent": "熔岩沟",
+        "migrated_from": "area:炉心"
       },
       "渣城": {
         "title": "渣城",
         "level": 4,
-        "parent": "",
-        "migrated_from": "area:熔渣渠"
+        "parent": "废炉群",
+        "migrated_from": "area:炉心"
       },
       "千炉塔": {
         "title": "千炉塔",
         "level": 4,
         "parent": "废炉群",
-        "migrated_from": "area:熔渣渠"
-      },
-      "霜牙岭哨站": {
-        "title": "霜牙岭哨站",
-        "level": 4,
-        "parent": "",
-        "migrated_from": "area:霜牙岭"
+        "migrated_from": "area:炉心"
       },
       "断齿关": {
         "title": "断齿关",
         "level": 4,
-        "parent": "",
-        "migrated_from": "area:霜牙岭"
+        "parent": "冰裂谷",
+        "migrated_from": "area:霜牙"
       },
       "骨帐": {
         "title": "骨帐",
         "level": 4,
-        "parent": "",
-        "migrated_from": "area:霜牙岭"
-      },
-      "盐霜原刮盐场": {
-        "title": "盐霜原刮盐场",
-        "level": 4,
-        "parent": "盐霜原",
-        "migrated_from": "area:霜牙岭"
+        "parent": "冰裂谷",
+        "migrated_from": "area:霜牙"
       },
       "万人磨盘": {
         "title": "万人磨盘",
         "level": 4,
-        "parent": "",
-        "migrated_from": "area:灰岩原"
+        "parent": "石台地",
+        "migrated_from": "area:石冢原"
       },
       "磨盘镇": {
         "title": "磨盘镇",
         "level": 4,
         "parent": "石台地",
-        "migrated_from": "area:灰岩原"
-      },
-      "盐道走廊石廊站": {
-        "title": "盐道走廊石廊站",
-        "level": 4,
-        "parent": "",
-        "migrated_from": "area:灰岩原"
-      },
-      "三岔桩": {
-        "title": "三岔桩",
-        "level": 4,
-        "parent": "潮沟",
-        "migrated_from": "area:盐沼渡"
-      },
-      "桩上": {
-        "title": "桩上",
-        "level": 4,
-        "parent": "潮沟",
-        "migrated_from": "area:盐沼渡"
-      },
-      "泥渡栈道口": {
-        "title": "泥渡栈道口",
-        "level": 4,
-        "parent": "泥渡栈道",
-        "migrated_from": "area:盐沼渡"
-      },
-      "盐仓码头": {
-        "title": "盐仓码头",
-        "level": 4,
-        "parent": "西盐田",
-        "migrated_from": "area:白港"
+        "migrated_from": "area:石冢原"
       },
       "渡鸦渡口": {
         "title": "渡鸦渡口",
         "level": 4,
         "parent": "湾口深水区",
-        "migrated_from": "area:白港"
-      },
-      "灰烬台圣灰广场": {
-        "title": "灰烬台圣灰广场",
-        "level": 4,
-        "parent": "",
-        "migrated_from": "area:灰烬台"
+        "migrated_from": "area:泊银湾"
       },
       "灰台城": {
         "title": "灰台城",
         "level": 4,
         "parent": "台心",
-        "migrated_from": "area:灰烬台"
+        "migrated_from": "area:钟楼国"
       },
       "灰门": {
         "title": "灰门",
         "level": 4,
         "parent": "落灰带",
-        "migrated_from": "area:灰烬台"
+        "migrated_from": "area:钟楼国"
+      },
+      "霜牙哨站": {
+        "title": "霜牙岭哨站",
+        "level": 4,
+        "parent": "冻土台地",
+        "migrated_from": "area:霜牙"
+      },
+      "石廊站": {
+        "title": "石廊站",
+        "level": 4,
+        "parent": "石台地",
+        "migrated_from": "area:石冢原"
+      },
+      "钟楼国圣灰广场": {
+        "title": "钟楼国圣灰广场",
+        "level": 4,
+        "parent": "台心",
+        "migrated_from": "area:钟楼国"
+      },
+      "货栈码头": {
+        "title": "货栈码头",
+        "level": 4,
+        "parent": "湾口深水区",
+        "updated_at": 1792637182.3043375
+      },
+      "采石场": {
+        "title": "采石场",
+        "level": 4,
+        "parent": "冰裂谷",
+        "updated_at": 1792637182.3043375
       }
     },
-    "place": {},
+    "place": {
+      "风骸岛": {
+        "title": "风骸岛",
+        "level": 4,
+        "parent": "剑湾",
+        "updated_at": 1792634391.962261
+      }
+    },
     "dungeon": {
       "灰肺坑": {
         "title": "灰肺坑",
         "level": 4,
         "parent": "废炉群",
-        "migrated_from": "area:熔渣渠"
+        "migrated_from": "area:炉心"
       },
       "誓骨窟": {
         "title": "誓骨窟",
         "level": 4,
         "parent": "冰裂谷",
-        "migrated_from": "area:霜牙岭"
+        "migrated_from": "area:霜牙"
       },
       "七十二眼": {
         "title": "七十二眼",
         "level": 4,
         "parent": "天坑群",
-        "migrated_from": "area:灰岩原"
-      },
-      "沉盐塘": {
-        "title": "沉盐塘",
-        "level": 4,
-        "parent": "潮沟",
-        "migrated_from": "area:盐沼渡"
-      },
-      "旧盐井": {
-        "title": "旧盐井",
-        "level": 4,
-        "parent": "西盐田",
-        "migrated_from": "area:白港"
+        "migrated_from": "area:石冢原"
       },
       "圣殿地窖": {
         "title": "圣殿地窖",
         "level": 4,
         "parent": "台心",
-        "migrated_from": "area:灰烬台"
+        "migrated_from": "area:钟楼国"
+      },
+      "旧矿井": {
+        "title": "旧矿井",
+        "level": 4,
+        "parent": "湾口深水区",
+        "updated_at": 1792637182.3043375
       }
     },
     "scene": {
-      "盐仓码头": {
-        "title": "盐仓码头",
-        "region": "白港",
-        "site": "盐仓码头",
-        "updated_at": 1792541967.459666
-      },
       "三闸关": {
         "title": "三闸关",
-        "region": "熔渣渠",
+        "region": "炉心",
         "site": "三闸关",
         "updated_at": 1792541967.459666
       },
       "万人磨盘": {
         "title": "万人磨盘",
-        "region": "灰岩原",
+        "region": "石冢原",
         "site": "万人磨盘",
-        "updated_at": 1792541967.459666
-      },
-      "三岔桩": {
-        "title": "三岔桩",
-        "region": "盐沼渡",
-        "site": "三岔桩",
         "updated_at": 1792541967.459666
       },
       "断齿关": {
         "title": "断齿关",
-        "region": "霜牙岭",
+        "region": "霜牙",
         "site": "断齿关",
-        "updated_at": 1792541967.459666
-      },
-      "霜牙岭哨站": {
-        "title": "霜牙岭哨站",
-        "region": "霜牙岭",
-        "site": "霜牙岭哨站",
-        "updated_at": 1792541967.459666
-      },
-      "灰烬台圣灰广场": {
-        "title": "灰烬台圣灰广场",
-        "region": "灰烬台",
-        "site": "灰烬台圣灰广场",
         "updated_at": 1792541967.459666
       },
       "七十二眼": {
@@ -426,21 +284,6 @@
         "site": "圣殿地窖",
         "updated_at": 1792541967.459666
       },
-      "旧盐井": {
-        "title": "旧盐井",
-        "site": "旧盐井",
-        "updated_at": 1792541967.459666
-      },
-      "沉盐塘": {
-        "title": "沉盐塘",
-        "site": "沉盐塘",
-        "updated_at": 1792541967.459666
-      },
-      "泥渡栈道口": {
-        "title": "泥渡栈道口",
-        "site": "泥渡栈道口",
-        "updated_at": 1792541967.459666
-      },
       "渡鸦渡口": {
         "title": "渡鸦渡口",
         "site": "渡鸦渡口",
@@ -456,11 +299,6 @@
         "site": "灰门",
         "updated_at": 1792541967.459666
       },
-      "盐霜原刮盐场": {
-        "title": "盐霜原刮盐场",
-        "site": "盐霜原刮盐场",
-        "updated_at": 1792541967.459666
-      },
       "磨盘镇": {
         "title": "磨盘镇",
         "site": "磨盘镇",
@@ -470,36 +308,414 @@
         "title": "誓骨窟",
         "site": "誓骨窟",
         "updated_at": 1792541967.459666
+      },
+      "登山路与修道院前厅": {
+        "title": "登山路与修道院前厅",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "巨龙之憩修道院",
+        "neighbors": [
+          "打水房"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "打水房": {
+        "title": "打水房",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "巨龙之憩修道院",
+        "neighbors": [
+          "登山路与修道院前厅",
+          "厨房"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "厨房": {
+        "title": "厨房",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "巨龙之憩修道院",
+        "neighbors": [
+          "打水房",
+          "图书馆"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "图书馆": {
+        "title": "图书馆",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "巨龙之憩修道院",
+        "neighbors": [
+          "厨房",
+          "巴哈姆特神殿"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "巴哈姆特神殿": {
+        "title": "巴哈姆特神殿",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "巨龙之憩修道院",
+        "neighbors": [
+          "图书馆"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "入口隧道": {
+        "title": "入口隧道",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "海藻洞穴",
+        "neighbors": [
+          "真菌农场"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "真菌农场": {
+        "title": "真菌农场",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "海藻洞穴",
+        "neighbors": [
+          "入口隧道",
+          "食品储藏室"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "食品储藏室": {
+        "title": "食品储藏室",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "海藻洞穴",
+        "neighbors": [
+          "真菌农场",
+          "议事圆厅"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "议事圆厅": {
+        "title": "议事圆厅",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "海藻洞穴",
+        "neighbors": [
+          "食品储藏室",
+          "塞娜萨圣殿"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "塞娜萨圣殿": {
+        "title": "塞娜萨圣殿",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "海藻洞穴",
+        "neighbors": [
+          "议事圆厅",
+          "水晶洞穴"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "水晶洞穴": {
+        "title": "水晶洞穴",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "海藻洞穴",
+        "neighbors": [
+          "塞娜萨圣殿"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "主甲板": {
+        "title": "主甲板",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "罗盘玫瑰号残骸",
+        "neighbors": [
+          "前甲板"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "前甲板": {
+        "title": "前甲板",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "罗盘玫瑰号残骸",
+        "neighbors": [
+          "主甲板",
+          "尾甲板"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "尾甲板": {
+        "title": "尾甲板",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "罗盘玫瑰号残骸",
+        "neighbors": [
+          "前甲板",
+          "船长室"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "船长室": {
+        "title": "船长室",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "罗盘玫瑰号残骸",
+        "neighbors": [
+          "尾甲板",
+          "侧房"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "侧房": {
+        "title": "侧房",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "罗盘玫瑰号残骸",
+        "neighbors": [
+          "船长室",
+          "船员宿舍"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "船员宿舍": {
+        "title": "船员宿舍",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "罗盘玫瑰号残骸",
+        "neighbors": [
+          "侧房",
+          "餐厅"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "餐厅": {
+        "title": "餐厅",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "罗盘玫瑰号残骸",
+        "neighbors": [
+          "船员宿舍",
+          "下层甲板"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "下层甲板": {
+        "title": "下层甲板",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "罗盘玫瑰号残骸",
+        "neighbors": [
+          "餐厅",
+          "储藏室"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "储藏室": {
+        "title": "储藏室",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "罗盘玫瑰号残骸",
+        "neighbors": [
+          "下层甲板"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "鸟瞰台": {
+        "title": "鸟瞰台",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "崖顶天文台",
+        "neighbors": [
+          "圆顶大厅废墟"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "圆顶大厅废墟": {
+        "title": "圆顶大厅废墟",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "崖顶天文台",
+        "neighbors": [
+          "鸟瞰台",
+          "狗头人营地"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "狗头人营地": {
+        "title": "狗头人营地",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "崖顶天文台",
+        "neighbors": [
+          "圆顶大厅废墟",
+          "独立研究院"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "独立研究院": {
+        "title": "独立研究院",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "崖顶天文台",
+        "neighbors": [
+          "狗头人营地",
+          "天文台塔楼"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "天文台塔楼": {
+        "title": "天文台塔楼",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "崖顶天文台",
+        "neighbors": [
+          "独立研究院",
+          "秘密图书馆"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "秘密图书馆": {
+        "title": "秘密图书馆",
+        "level": 5,
+        "region": "卡兰提尔",
+        "province": "剑湾",
+        "site": "风骸岛",
+        "group": "崖顶天文台",
+        "neighbors": [
+          "天文台塔楼"
+        ],
+        "updated_at": 1792634391.962261
+      },
+      "霜牙哨站": {
+        "title": "霜牙岭哨站",
+        "region": "霜牙",
+        "site": "霜牙哨站",
+        "updated_at": 1792541967.459666
+      },
+      "钟楼国圣灰广场": {
+        "title": "钟楼国圣灰广场",
+        "region": "钟楼国",
+        "site": "钟楼国圣灰广场",
+        "updated_at": 1792541967.459666
+      },
+      "货栈码头": {
+        "title": "货栈码头",
+        "region": "泊银湾",
+        "site": "货栈码头",
+        "updated_at": 1792637182.3043375
+      },
+      "旧矿井": {
+        "title": "旧矿井",
+        "region": "泊银湾",
+        "site": "旧矿井",
+        "updated_at": 1792637182.3043375
+      },
+      "采石场": {
+        "title": "采石场",
+        "region": "霜牙",
+        "site": "采石场",
+        "updated_at": 1792637182.3043375
+      },
+      "渣城": {
+        "title": "渣城",
+        "region": "炉心",
+        "site": "渣城",
+        "updated_at": 1792637696.3861
+      },
+      "灰台城": {
+        "title": "灰台城",
+        "region": "钟楼国",
+        "site": "灰台城",
+        "updated_at": 1792637696.3861
+      },
+      "石廊站": {
+        "title": "石廊站",
+        "region": "石冢原",
+        "site": "石廊站",
+        "updated_at": 1792637696.3861
       }
     },
     "realm": {
-      "熔渣渠": {
-        "title": "熔渣渠",
+      "卡兰提尔": {
+        "title": "卡兰提尔",
         "level": 2,
         "parent": ""
       },
-      "霜牙岭": {
-        "title": "霜牙岭",
+      "炉心": {
+        "title": "炉心",
         "level": 2,
         "parent": ""
       },
-      "灰岩原": {
-        "title": "灰岩原",
+      "钟楼国": {
+        "title": "钟楼国",
         "level": 2,
         "parent": ""
       },
-      "盐沼渡": {
-        "title": "盐沼渡",
+      "霜牙": {
+        "title": "霜牙",
         "level": 2,
         "parent": ""
       },
-      "白港": {
-        "title": "白港",
+      "石冢原": {
+        "title": "石冢原",
         "level": 2,
         "parent": ""
       },
-      "灰烬台": {
-        "title": "灰烬台",
+      "泊银湾": {
+        "title": "泊银湾",
         "level": 2,
         "parent": ""
       }
@@ -508,223 +724,223 @@
       "废炉群": {
         "title": "废炉群",
         "level": 3,
-        "parent": "熔渣渠"
+        "parent": "炉心"
       },
       "熔岩沟": {
         "title": "熔岩沟",
         "level": 3,
-        "parent": "熔渣渠"
+        "parent": "炉心"
       },
       "焦渣岭": {
         "title": "焦渣岭",
         "level": 3,
-        "parent": "熔渣渠"
+        "parent": "炉心"
       },
       "冻土台地": {
         "title": "冻土台地",
         "level": 3,
-        "parent": "霜牙岭"
+        "parent": "霜牙"
       },
       "冰裂谷": {
         "title": "冰裂谷",
         "level": 3,
-        "parent": "霜牙岭"
-      },
-      "盐霜原": {
-        "title": "盐霜原",
-        "level": 3,
-        "parent": "霜牙岭"
+        "parent": "霜牙"
       },
       "石台地": {
         "title": "石台地",
         "level": 3,
-        "parent": "灰岩原"
+        "parent": "石冢原"
       },
       "天坑群": {
         "title": "天坑群",
         "level": 3,
-        "parent": "灰岩原"
-      },
-      "盐碱河床": {
-        "title": "盐碱河床",
-        "level": 3,
-        "parent": "灰岩原"
-      },
-      "芦苇荡": {
-        "title": "芦苇荡",
-        "level": 3,
-        "parent": "盐沼渡"
-      },
-      "潮沟": {
-        "title": "潮沟",
-        "level": 3,
-        "parent": "盐沼渡"
-      },
-      "泥渡栈道": {
-        "title": "泥渡栈道",
-        "level": 3,
-        "parent": "盐沼渡"
+        "parent": "石冢原"
       },
       "湾口深水区": {
         "title": "湾口深水区",
         "level": 3,
-        "parent": "白港"
-      },
-      "西盐田": {
-        "title": "西盐田",
-        "level": 3,
-        "parent": "白港"
+        "parent": "泊银湾"
       },
       "台心": {
         "title": "台心",
         "level": 3,
-        "parent": "灰烬台"
+        "parent": "钟楼国"
       },
       "灰沟": {
         "title": "灰沟",
         "level": 3,
-        "parent": "灰烬台"
+        "parent": "钟楼国"
       },
       "落灰带": {
         "title": "落灰带",
         "level": 3,
-        "parent": "灰烬台"
+        "parent": "钟楼国"
+      },
+      "剑湾": {
+        "title": "剑湾",
+        "level": 3,
+        "parent": "卡兰提尔",
+        "crossing": 3
       }
     },
-    "chapter": {
-      "ch1_灰岩原": {
-        "title": "磨盘的节拍",
-        "arc": "investigation",
-        "chapter_no": 1,
-        "target_cr": "1",
+    "event": {
+      "ev_巨龙之憩": {
+        "title": "关了三日的门",
+        "scale": "light",
+        "duration_days": 3,
         "locations": [
-          "磨盘镇",
-          "七十二眼"
+          "厨房",
+          "图书馆",
+          "巴哈姆特神殿",
+          "打水房",
+          "登山路与修道院前厅"
         ],
-        "npcs": [
-          "掌磨人老砚"
-        ],
-        "parallel": false,
-        "xp_budget": 4800,
-        "level": 6,
-        "updated_at": 1792541967.459666
+        "event_no": 1,
+        "realm": "卡兰提尔",
+        "province": "剑湾",
+        "updated_at": 1792634391.962261
       },
-      "ch1_灰烬台": {
-        "title": "被关上的门",
-        "arc": "decoding",
-        "chapter_no": 1,
-        "target_cr": "1",
+      "ev_海藻洞穴": {
+        "title": "会认孢子的守卫",
+        "scale": "medium",
+        "duration_days": 4,
         "locations": [
+          "入口隧道",
+          "塞娜萨圣殿",
+          "水晶洞穴",
+          "真菌农场",
+          "议事圆厅",
+          "食品储藏室"
+        ],
+        "event_no": 2,
+        "realm": "卡兰提尔",
+        "province": "剑湾",
+        "updated_at": 1792634391.962261
+      },
+      "ev_罗盘玫瑰号": {
+        "title": "不肯散的船长",
+        "scale": "medium",
+        "duration_days": 4,
+        "locations": [
+          "下层甲板",
+          "主甲板",
+          "侧房",
+          "储藏室",
+          "前甲板",
+          "尾甲板",
+          "船员宿舍",
+          "船长室",
+          "餐厅"
+        ],
+        "event_no": 3,
+        "realm": "卡兰提尔",
+        "province": "剑湾",
+        "updated_at": 1792634391.962261
+      },
+      "ev_崖顶天文台": {
+        "title": "不肯学的幼龙",
+        "scale": "heavy",
+        "duration_days": 4,
+        "locations": [
+          "圆顶大厅废墟",
+          "天文台塔楼",
+          "狗头人营地",
+          "独立研究院",
+          "秘密图书馆",
+          "鸟瞰台"
+        ],
+        "event_no": 4,
+        "realm": "卡兰提尔",
+        "province": "剑湾",
+        "updated_at": 1792634391.962261
+      },
+      "ev_泊银湾": {
+        "title": "夹层翻出来的那件",
+        "scale": "light",
+        "duration_days": 3,
+        "locations": [
+          "渡鸦渡口"
+        ],
+        "realm": "泊银湾",
+        "province": "湾口深水区",
+        "event_no": 1
+      },
+      "ev_炉心": {
+        "title": "递上那件裂了的家伙",
+        "scale": "medium",
+        "duration_days": 4,
+        "locations": [
+          "三闸关",
+          "千炉塔"
+        ],
+        "realm": "炉心",
+        "province": "熔岩沟",
+        "event_no": 2
+      },
+      "ev_霜牙": {
+        "title": "被认出来的那一刻",
+        "scale": "medium",
+        "duration_days": 3,
+        "locations": [
+          "断齿关",
+          "霜牙哨站"
+        ],
+        "realm": "霜牙",
+        "province": "冻土台地",
+        "event_no": 3
+      },
+      "ev_石冢原": {
+        "title": "砸在你脚边的那个人",
+        "scale": "heavy",
+        "duration_days": 4,
+        "locations": [
+          "七十二眼",
+          "万人磨盘",
+          "磨盘镇"
+        ],
+        "realm": "石冢原",
+        "province": "石台地",
+        "event_no": 4
+      },
+      "ev_钟楼国": {
+        "title": "关了三日的门",
+        "scale": "heavy",
+        "duration_days": 3,
+        "locations": [
+          "圣殿地窖",
           "灰门",
-          "圣殿地窖"
+          "钟楼国圣灰广场"
         ],
-        "npcs": [
-          "守灯的老执事"
-        ],
-        "parallel": false,
-        "xp_budget": 4800,
-        "level": 6,
-        "updated_at": 1792541967.459666
-      },
-      "ch1_熔渣渠": {
-        "title": "第七层的火",
-        "arc": "investigation",
-        "chapter_no": 1,
-        "target_cr": "1",
-        "locations": [
-          "千炉塔",
-          "灰肺坑"
-        ],
-        "npcs": [
-          "独眼戚"
-        ],
-        "parallel": false,
-        "xp_budget": 4800,
-        "level": 6,
-        "updated_at": 1792541967.459666
-      },
-      "ch1_白港": {
-        "title": "第二套账",
-        "arc": "investigation",
-        "chapter_no": 1,
-        "target_cr": "1",
-        "locations": [
-          "渡鸦渡口",
-          "旧盐井"
-        ],
-        "npcs": [
-          "老鸦陈"
-        ],
-        "parallel": false,
-        "xp_budget": 4800,
-        "level": 6,
-        "updated_at": 1792541967.459666
-      },
-      "ch1_盐沼渡": {
-        "title": "退潮的两个时辰",
-        "arc": "heist",
-        "chapter_no": 1,
-        "target_cr": "1",
-        "locations": [
-          "泥渡栈道口",
-          "沉盐塘"
-        ],
-        "npcs": [
-          "渡夫阿灰"
-        ],
-        "parallel": false,
-        "xp_budget": 4800,
-        "level": 6,
-        "updated_at": 1792541967.459666
-      },
-      "ch1_霜牙岭": {
-        "title": "空池",
-        "arc": "audit",
-        "chapter_no": 1,
-        "target_cr": "1",
-        "locations": [
-          "盐霜原刮盐场",
-          "誓骨窟"
-        ],
-        "npcs": [
-          "巴音"
-        ],
-        "parallel": false,
-        "xp_budget": 4800,
-        "level": 6,
-        "updated_at": 1792541967.459666
+        "realm": "钟楼国",
+        "province": "台心",
+        "event_no": 5
       }
     }
   },
   "provinces": {
-    "熔渣渠": [
+    "卡兰提尔": [
+      "剑湾"
+    ],
+    "炉心": [
       "废炉群",
       "熔岩沟",
       "焦渣岭"
     ],
-    "霜牙岭": [
-      "冻土台地",
-      "冰裂谷",
-      "盐霜原"
-    ],
-    "灰岩原": [
-      "石台地",
-      "天坑群",
-      "盐碱河床"
-    ],
-    "盐沼渡": [
-      "芦苇荡",
-      "潮沟",
-      "泥渡栈道"
-    ],
-    "白港": [
-      "湾口深水区",
-      "西盐田"
-    ],
-    "灰烬台": [
+    "钟楼国": [
       "台心",
       "灰沟",
       "落灰带"
+    ],
+    "霜牙": [
+      "冻土台地",
+      "冰裂谷"
+    ],
+    "石冢原": [
+      "石台地",
+      "天坑群"
+    ],
+    "泊银湾": [
+      "湾口深水区"
     ]
   }
 }

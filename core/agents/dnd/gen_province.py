@@ -19,12 +19,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from ...dnd.travel import DEFAULT_CROSSING, MAX_CROSSING
 from ..base import AgentInput, AgentResult, TrpgAgent
 
 __all__ = [
     "KIND_ALIASES",
     "ProvinceAgent",
     "ProvinceResult",
+    "parse_crossing",
     "parse_province",
     "province_agent",
 ]
@@ -82,7 +84,7 @@ _SYSTEM_PROMPT = """# 任务
 - 气候：
 - 季节变化：
 - 水源分布：
-- 通行难度：<路况 + 需要什么才能过>
+- 跨越难度：<1-5 的数字>｜<一句理由：什么地形挡路、要什么条件才能过>
 
 ## 三、人文与产出
 - 人口密度：
@@ -118,6 +120,10 @@ _SYSTEM_PROMPT = """# 任务
 - 地点名沿用输入与世界圣经里已有的名字；确需新名字时只新增必要的那几个。
 - 「最可能把玩家卷进去的事」要具体到一个场面（「夜里有人往盐垛里掺水」），
   不要写「这片区域很危险」。
+- 「跨越难度」写 **1–5 的数字**再加一句理由：1 通衢（半天）/ 2 好走（一天）/
+  3 难行（两天）/ 4 险阻（四天）/ 5 几乎不可越（八天起，或要向导 / 季节 / 买路）。
+  这个数字决定玩家跨过这片地方要多久，**必须与上面的地形描述一致**——
+  写「一马平川」却给 5，文档就是自相矛盾的。
 - 不新增输入里没有的王国；与上层法度、军力、外交保持一致（比如重税法度的省，通行规矩要收钱）。
 - 语言简洁，每条一行。"""
 
@@ -142,6 +148,22 @@ def _heading_kind(line: str) -> str:
     if not match:
         return ""
     return KIND_ALIASES.get(match.group("kind").strip(), "")
+
+
+_CROSSING_RE = re.compile(r"跨越难度[：:]\s*([1-5])")
+
+
+def parse_crossing(text: str) -> int:
+    """从区域文档里取**跨越难度**（1–5）；没写或写坏按「好走」算。
+
+    这个数字决定玩家跨过这片地方要多久（见 :mod:`~...dnd.travel`）。
+    程序只做两件事：认数字、钳范围。**不从地形描述反推**——
+    「裂谷」可以是 3 也可以是 5，取决于有没有栈道、有没有人维护，那需要常识。
+    """
+    match = _CROSSING_RE.search(text or "")
+    if not match:
+        return DEFAULT_CROSSING
+    return max(1, min(int(match.group(1)), MAX_CROSSING))
 
 
 def parse_province(text: str) -> list[tuple[str, str, str]]:
@@ -198,6 +220,12 @@ class ProvinceAgent(TrpgAgent):
             "所属王国",
             required=False,
             description="王国文档（政体 / 法度 / 军力 / 外交），用于人文与风险对得上",
+        ),
+        AgentInput(
+            "inhabited",
+            "所属王国的人口状况",
+            required=False,
+            description="只有无人区才传：这片地方没人管事，不该出据点",
         ),
         AgentInput(
             "world",

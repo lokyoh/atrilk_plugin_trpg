@@ -15,6 +15,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ATRI.exceptions import str_traceback
+from ATRI.log import log
+
 from ...dnd.attributes import ABILITIES, get_ability
 from ...dnd.battlemap import (
     battlefield_text,
@@ -25,11 +28,9 @@ from ...dnd.battlemap import (
     set_terrain,
 )
 from ...dnd.card import DndCharacter
+from ...dnd.clock import FATIGUE_DC
 from ...dnd.combat import (
     apply_damage as combat_damage,
-)
-from ...dnd.combat import (
-    attack as combat_attack,
 )
 from ...dnd.combat import (
     apply_threat_profile,
@@ -52,6 +53,9 @@ from ...dnd.combat import (
     summon_reinforcements,
     update_enemy,
     use_resource,
+)
+from ...dnd.combat import (
+    attack as combat_attack,
 )
 from ...dnd.conditions import (
     CONDITION_MAP,
@@ -132,8 +136,8 @@ from ...dnd.storage import load_card, save_card
 from ...dnd.world_store import (
     DOC_KIND_LABELS,
     DOC_KINDS,
-    list_chapters,
     list_docs,
+    list_events,
     load_doc,
     read_doc,
 )
@@ -147,7 +151,6 @@ __all__ = [
     "AttackTool",
     "AwaitPlayersTool",
     "CastSpellTool",
-    "CheckChapterTool",
     "CheckTool",
     "EndCombatTool",
     "EnemyAttackTool",
@@ -155,8 +158,7 @@ __all__ = [
     "MoveSceneTool",
     "MoveTool",
     "NarrateTool",
-    "NoteChapterTool",
-    "OfferChaptersTool",
+    "NoteEventTool",
     "QueryDataTool",
     "ReadSceneTool",
     "RecallTool",
@@ -165,7 +167,6 @@ __all__ = [
     "RollDiceTool",
     "SecretRollTool",
     "StartCombatTool",
-    "TakeChapterTool",
     "UpdateBattlefieldTool",
     "UpdateCharacterTool",
     "UpdateEnemyTool",
@@ -251,8 +252,8 @@ class SecretRollTool(AgentTool):
 
     function_name = "secret_roll"
     description = (
-        "暗骰：结果只有你看得到（玩家不可见、不进复盘）。决定 NPC 行动、NPC 检定、"
-        "隐藏事件、玩家是否被察觉，再据此叙述（别把骰点念出来）"
+        "暗骰：结果只有你看得到。决定 NPC 行动与检定、隐藏事态、"
+        "玩家是否被察觉，再据此叙述（别念骰点）"
     )
     args = (
         ToolArg("expr", "str", "骰子表达式，如 1d20+3"),
@@ -315,13 +316,13 @@ class CheckTool(AgentTool):
     """用玩家角色卡做检定。"""
 
     function_name = "check"
-    description = "用玩家角色卡进行技能 / 属性 / 豁免检定，返回成败"
+    description = "用角色卡做技能 / 属性 / 豁免检定"
     args = (
         ToolArg(
             "kind",
             "str",
-            "检定对象：技能名（如 察觉、隐匿、生存、游说、体操）或属性名"
-            "（如 力量），豁免写作「力量豁免」",
+            "检定对象：技能名（如 察觉、隐匿、游说）或属性名（如 力量），"
+            "豁免写作「力量豁免」",
         ),
         ToolArg("dc", "int", "难度值，留空由系统按技能基准 + 难度词自动定档"),
         ToolArg("advantage", "str", "普通 / 优势 / 劣势，默认普通"),
@@ -379,7 +380,7 @@ class GetRuleTool(AgentTool):
         ToolArg(
             "topic",
             "str",
-            "规则主题关键词，如 优势、死亡豁免、法术位、先攻、暴击、状态、专注、抗性、休息",
+            "规则主题关键词，如 优势、死亡豁免、法术位、暴击、状态、专注",
         ),
     )
 
@@ -721,9 +722,9 @@ _DATA_ALIASES = {
     "world": "world",
     "世界": "world",
     "世界地图": "world",
-    "chapter": "chapter",
-    "章节": "chapter",
-    "章节卡": "chapter",
+    "event": "event",
+    "事件": "event",
+    "事件卡": "event",
     "realm": "realm",
     "王国": "realm",
     "地区": "realm",
@@ -753,13 +754,13 @@ def _query_world_doc(context: AgentContext, kind: str, name: str) -> str:
     save = load_save(context.save_id) if context.save_id else None
     world_key = save.world_key if save is not None else "main"
 
-    if kind == "chapter":
-        # 章节卡的键是自动生成的 ID（形如 ch3_20261021_ab12），按标题找更符合使用习惯
-        cards = list_chapters(world_key)
+    if kind == "event":
+        # 事件卡的键是自动生成的 ID（形如 ch3_20261021_ab12），按标题找更符合使用习惯
+        cards = list_events(world_key)
         if not name:
             if not cards:
-                return "这个世界里还没有章节卡"
-            return "章节卡：" + "；".join(
+                return "这个世界里还没有事件卡"
+            return "事件卡：" + "；".join(
                 f"{c.title}（{c.arc_label}"
                 + (f"· CR {c.target_cr}" if c.target_cr else "")
                 + "）"
@@ -770,11 +771,11 @@ def _query_world_doc(context: AgentContext, kind: str, name: str) -> str:
             None,
         )
         if picked is None:
-            return f"没有找到章节卡「{name}」。现有：" + (
+            return f"没有找到事件卡「{name}」。现有：" + (
                 "、".join(c.title or c.key for c in cards) or "（空）"
             )
-        text = load_doc(world_key, "chapter", picked.key)
-        return text or f"章节卡「{picked.title}」的文档是空的"
+        text = load_doc(world_key, "event", picked.key)
+        return text or f"事件卡「{picked.title}」的文档是空的"
 
     keys = list_docs(world_key, kind).get(kind, [])
     if not name:
@@ -794,8 +795,8 @@ class QueryDataTool(AgentTool):
     max_result_chars = 2500
     description = (
         "查 DND 数据表（race/profession/skill/weapon/armor/monster/spell/condition/"
-        "difficulty/npc_tier/npc）或世界库文档（world/chapter/area/city/place/dungeon/scene），"
-        "table 可写中文"
+        "difficulty/npc_tier/npc）或世界库文档（world/realm/province/city/place/"
+        "dungeon/scene/event），table 可写中文"
     )
     args = (
         ToolArg("table", "str", "表名 / 文档类型"),
@@ -827,7 +828,7 @@ class QueryDataTool(AgentTool):
             return (
                 "未知数据表，可用：race / profession / skill / weapon / armor / monster / "
                 "spell / condition / difficulty / npc_tier / npc，或世界库文档："
-                "world / chapter / area / city / place / dungeon / scene"
+                "world / realm / province / city / place / dungeon / scene / event"
             )
         try:
             return handler(text)
@@ -1119,21 +1120,32 @@ class NarrateTool(AgentTool):
 
 
 def _travel_hint(world_key: str, origin: str, destination: str) -> str:
-    """两地之间要走多久（省与省一天，同省几小时）；认不出就什么都不加。"""
+    """两地之间要走多久（同省几小时，跨省按两侧区域的跨越难度）；认不出就不加。
+
+    **同一个场所里挪位置**（主甲板 → 船长室）单独一档：「片刻」——
+    那不是赶路，是在一个地方里走了几步。
+    """
     if not origin or origin == destination:
         return ""
     try:
         from ...dnd.travel import travel_span
-        from ...dnd.world_store import get_world_map, province_index
+        from ...dnd.world_store import (
+            get_world_map,
+            province_crossing,
+            province_index,
+            scene_site_index,
+        )
 
         span = travel_span(
             origin,
             destination,
             places=province_index(world_key),
             adjacency=get_world_map(world_key)[1],
+            crossing=province_crossing(world_key),
+            sites=scene_site_index(world_key),
         )
         return f"（从「{origin}」过来大约 {span}）" if span else ""
-    except Exception:  # noqa: BLE001 —— 旅行提示是锦上添花，算不出就不说
+    except Exception:  # 旅行提示是锦上添花，算不出就不说
         return ""
 
 
@@ -1146,7 +1158,7 @@ class MoveSceneTool(AgentTool):
         "返回后必须在叙述里交代离场与入场"
     )
     args = (
-        ToolArg("location", "str", "地点 / 场景名，如「白港」「霜牙地窟」"),
+        ToolArg("location", "str", "地点 / 场景名，如「白港」"),
         ToolArg("kind", "str", "可选：城镇据点 / 自然地点 / 地下城"),
         ToolArg("region", "str", "可选：所在区域名"),
     )
@@ -1184,8 +1196,45 @@ class MoveSceneTool(AgentTool):
             )
         key, text = result
         span = _travel_hint(save.world_key, origin, key)
+        # 世界时间与路上的事在这里算：每走一跳判一次（见 event_flow.step_move）
+        report = None
+        try:
+            from .event_flow import step_move
+
+            report = step_move(save, key, origin=origin)
+            journey = report.dm_hint()
+        except Exception as e:  # 事件系统出问题不该让人走不动
+            log.warning(f"推进世界时间失败：{str_traceback(e)}")
+            journey = ""
+        # 放弃掉的事件要收尾（推刻度 / 推进化轨 / 判纪元）。发称号要调模型，
+        # 所以这一步只能在 async 里做——塞进 step_move 会把它逼成 async 函数。
+        if report is not None and report.abandoned_slots:
+            try:
+                from .event_flow import after_move
+                from .gen_epoch import epithet_agent
+
+                await after_move(save, report, agent=epithet_agent)
+            except Exception as e:  # 收尾失败不该让人走不动
+                log.warning(f"放弃事件后的收尾失败：{str_traceback(e)}")
+        # 走够了还没走进当前事件 → 织一件新的。
+        # 模型只写内容，场景候选 / 规模 / id 由程序定，validate 不过就重织。
+        if report is not None and report.weave_due:
+            try:
+                from .event_flow import weave_event
+
+                woven = await weave_event(save)
+                if woven.ok and woven.slot is not None:
+                    where = f"（{woven.slot.stage}）" if woven.slot.stage else ""
+                    journey += f"\n【新的事】{woven.slot.title}{where}"
+                    if woven.notice:
+                        journey += f"\n　{woven.notice}"
+                elif woven.problems:
+                    journey += "\n【没织成】" + "；".join(woven.problems[:2])
+            except Exception as e:  # 织不出新事件也不该让人走不动
+                log.warning(f"织新事件失败：{str_traceback(e)}")
         return (
             f"已切换到场景「{key}」。{span}\n"
+            f"{journey}\n"
             "注意：切换场景是剧情事件，必须由你的叙述来合理化——请在接下来的叙述里"
             "先用一两句交代玩家**如何离开上一处（离场）**，再描述**如何抵达这里（入场）**，"
             "让这次移动自然合理，然后给出新场景的第一印象与 2~3 个可回应的切入点。\n\n"
@@ -1240,8 +1289,8 @@ class ReadSceneTool(AgentTool):
     #: 场景文档要整篇给模型看，别截
     max_result_chars = 6000
     description = (
-        "读取场景的完整文档：布局 / 通道、可交互元素、在场者、隐藏信息、变化记录。"
-        "提示词里只有简介，需要细节（玩家看到什么、有什么能互动、藏着什么、出口在哪）时用它"
+        "读取场景完整文档：布局 / 通道、可交互元素、在场者、隐藏信息、变化记录。"
+        "提示词只有简介，要细节（玩家看到什么、藏着什么、出口在哪）时用它"
     )
     args = (ToolArg("name", "str", "场景名；留空读当前场景"),)
 
@@ -1285,7 +1334,7 @@ class StartCombatTool(AgentTool):
         ToolArg(
             "terrain",
             "str",
-            "战场环境（可选），如「雨夜的窄巷，两侧堆着货箱」；留空就用当前场景自动生成",
+            "战场环境（可选），如「雨夜的窄巷」；留空用当前场景自动生成",
         ),
     )
 
@@ -1341,10 +1390,17 @@ class StartCombatTool(AgentTool):
         # 威胁层级（后期加压，走规则层不动数值）：专攻目标 / 增援 / 首领传奇行动 / 场地规则
         threat_note = ""
         try:
-            from .chapter_flow import chapter_plan
+            from ...dnd.threat import profile_for
+            from .event_flow import current_event_no
 
-            plan = chapter_plan(save)
-            threat_note = apply_threat_profile(state, plan.threat)
+            threat_note = apply_threat_profile(
+                state,
+                profile_for(
+                    event_no=current_event_no(save),
+                    level=level,
+                    party_size=max(1, len(save.player_ids)),
+                ),
+            )
         except Exception as e:  # 威胁层是增强，不该让开战失败
             log.warning(f"应用威胁层级失败（继续开战）：{str_traceback(e)}")
 
@@ -1422,12 +1478,12 @@ class UpdateBattlefieldTool(AgentTool):
 
     function_name = "update_battlefield"
     max_result_chars = 1200
-    description = "改战场某格地形（砸墙 / 推货架 / 点火后让地图跟上叙述）"
+    description = "改战场某格地形（砸墙 / 推货架 / 点火后地图跟上叙述）"
     args = (
         ToolArg("x", "int", "列（从 1 开始）"),
         ToolArg("y", "int", "行（从 1 开始）"),
         ToolArg("terrain", "str", "空地/困难/半掩体/四分之三掩体/障碍/危险/浅水"),
-        ToolArg("note", "str", "这块地形是什么（可选，如「翻倒的马车」）"),
+        ToolArg("note", "str", "这块地形是什么（可选）"),
     )
 
     @staticmethod
@@ -1573,7 +1629,7 @@ class UpdateEnemyTool(AgentTool):
         ToolArg(
             "conditions",
             "str",
-            "状态列表，如「中毒、束缚」；写「清空」移除全部状态（可选）",
+            "状态列表，如「中毒、束缚」；「清空」=全清（可选）",
         ),
     )
 
@@ -1609,7 +1665,7 @@ class HealTool(AgentTool):
 
     function_name = "heal"
     description = (
-        "治疗一名参战者并写回生命值（药水 / 绷带 / 治疗法术 / 神术都走它）。"
+        "治疗参战者并写回生命值（药水 / 绷带 / 法术都走它）。"
         "**治疗倒地濒死者会让他立刻恢复意识并清空死亡豁免**；已阵亡者无效"
     )
     args = (
@@ -2312,9 +2368,39 @@ class RestTool(AgentTool):
                 was_down = card.is_downed
                 card.current_hp = None
                 card.temp_hp = 0
-                if card.exhaustion:
-                    card.exhaustion = max(0, card.exhaustion - 1)
-                    notes.append(f"力竭降至 {card.exhaustion} 级")
+                # 口粮：长休要吃一顿。**5e 的力竭恢复要求进食饮水**，
+                # 所以饿着睡不恢复力竭，反而要按饥饿规则过豁免。
+                if card.rations > 0:
+                    card.rations -= 1
+                    notes.append(f"吃掉 1 份口粮（剩 {card.rations} 份）")
+                    if card.exhaustion:
+                        card.exhaustion = max(0, card.exhaustion - 1)
+                        notes.append(f"力竭降至 {card.exhaustion} 级")
+                elif card.exhaustion:
+                    hungry = card.check_save("con", FATIGUE_DC)
+                    if hungry.success:
+                        notes.append(
+                            f"没有口粮，饿着睡了一夜但撑住了"
+                            f"（体质豁免 {hungry.total} ≥ {FATIGUE_DC}，力竭未降）"
+                        )
+                    else:
+                        card.exhaustion = min(6, card.exhaustion + 1)
+                        notes.append(
+                            f"没有口粮（体质豁免 {hungry.total} < {FATIGUE_DC}，"
+                            f"力竭升到 {card.exhaustion} 级）"
+                        )
+                else:
+                    hungry = card.check_save("con", FATIGUE_DC)
+                    if hungry.success:
+                        notes.append(
+                            f"没有口粮，饿着睡了一夜但撑住了（体质豁免 {hungry.total}）"
+                        )
+                    else:
+                        card.exhaustion = min(6, card.exhaustion + 1)
+                        notes.append(
+                            f"没有口粮，饿到力竭 {card.exhaustion} 级"
+                            f"（体质豁免 {hungry.total} < {FATIGUE_DC}）"
+                        )
                 before = card.spell_slots_text()
                 card.restore_slots(kind="long")
                 card.clear_death_state()
@@ -2378,6 +2464,14 @@ class RestTool(AgentTool):
             lines.append("（中毒 / 疾病 / 诅咒等是否解除由你判断）")
         else:
             lines.append("（短休不回复法术位——契约魔法除外；状态不会自动清除）")
+        # 休息要占掉时间：长休 8 小时、短休 1 小时。世界时钟靠这个走，
+        # 否则「打三场仗、长休两次，世界日还是第 1 天」。
+        try:
+            from .event_flow import rest_time
+
+            lines.extend(rest_time(save, long=long_rest))
+        except Exception as e:  # 时间推进失败不该毁掉一次休息
+            log.warning(f"推进休息时间失败：{str_traceback(e)}")
         return "\n".join(lines)
 
 
@@ -2394,8 +2488,8 @@ class UpdateNpcTool(AgentTool):
         ToolArg(
             "note",
             "str",
-            "身份、关系、欠的账，**以及他的说话风格**（口头禅、语气、称呼习惯）；"
-            "下次遇到时照着写就不会换了个人（可选）",
+            "身份、关系、欠的账、**说话风格**（口头禅、语气、称呼习惯）；"
+            "下次照着写就不会换了个人（可选）",
         ),
         ToolArg("place", "str", "最后出现的地点（可选）"),
     )
@@ -2589,98 +2683,30 @@ class RecallTool(AgentTool):
 
 
 # --------------------------------------------------------------------------- #
-# 章节
+# 事件
 # --------------------------------------------------------------------------- #
 
 
-class OfferChaptersTool(AgentTool):
-    """织出下一章的候选走向（纯程序，不调模型）。"""
+class NoteEventTool(AgentTool):
+    """记一条线索；事件进行中写局面名即结算该节点，写「新局面 {json}」现场造节点。"""
 
-    function_name = "offer_chapters"
-    description = "织出下一章的候选走向（纯程序）给玩家挑；开局会自动织一次"
-    args = (
-        ToolArg("count", "int", "几个走向，默认 3，最多 5"),
-        ToolArg("difficulty", "str", "easy/medium/hard/deadly，默认 medium"),
+    function_name = "note_event"
+    description = (
+        "记一条线索或物件名；事件里写局面名即结算、写「新局面 {json}」现场造节点"
+        "接进图（过校验才接），事实由程序发"
     )
-
-    @staticmethod
-    async def call(
-        context: AgentContext, count: Any = 3, difficulty: Any = "medium", **kwargs: Any
-    ) -> str:
-        from .chapter_flow import branch_choices_text, offer_branches
-
-        save = load_save(context.save_id) if context.save_id else None
-        if save is None:
-            return "当前没有存档，无法织章节"
-        if load_combat(save) is not None:
-            return "战斗还没结束，先 end_combat 再开新章"
-        want = max(1, min(_parse_int(count, 3), 5))
-        offer_branches(save, difficulty=str(difficulty or "medium"), branch_count=want)
-        return branch_choices_text(save)
-
-
-class TakeChapterTool(AgentTool):
-    """把选中的走向织成完整的章节卡（会调模型写正文）。"""
-
-    function_name = "take_chapter"
-    description = "选定一个走向，织成这一章的任务卡（会调模型）并挂进存档"
-    args = (ToolArg("ref", "str", "走向的序号（1 起）或标题"),)
-
-    @staticmethod
-    async def call(context: AgentContext, ref: Any = "", **kwargs: Any) -> str:
-        from .chapter_flow import weave_chapter
-
-        save = load_save(context.save_id) if context.save_id else None
-        if save is None:
-            return "当前没有存档，无法织章节"
-        if load_combat(save) is not None:
-            return "战斗还没结束，先 end_combat 再开新章"
-        outcome = await weave_chapter(save, str(ref or ""))
-        if not outcome.ok:
-            return outcome.summary()
-        tail = f"（校验提醒：{'；'.join(outcome.problems)}）" if outcome.problems else ""
-        return outcome.summary() + tail
-
-
-class CheckChapterTool(AgentTool):
-    """勾 / 取消一条完成条件。"""
-
-    function_name = "check_chapter"
-    description = "勾 / 取消一条完成条件（描述性目标由你判定）"
     args = (
-        ToolArg("index", "int", "条件序号，从 1 起"),
-        ToolArg("done", "bool", "true 勾上 / false 取消，默认 true"),
+        ToolArg(
+            "clue",
+            "str",
+            '线索或局面名；或 新局面 {"title":"…","grants":["…"]}'
+            "（at/kind/requires/cost 可选）；「失败：」前缀=谈崩",
+        ),
     )
-
-    @staticmethod
-    async def call(
-        context: AgentContext, index: Any = 0, done: Any = True, **kwargs: Any
-    ) -> str:
-        from ...dnd.chapter import auto_sync_objectives, check_objective, chapter_summary
-
-        save = load_save(context.save_id) if context.save_id else None
-        if save is None:
-            return "当前没有存档"
-        auto_sync_objectives(save)
-        pos = _parse_int(index, 0) - 1
-        if pos < 0:
-            return "条件序号从 1 起"
-        checked = check_objective(save, pos, done=bool(done))
-        return f"{'已勾上' if done else '已取消'}第 {pos + 1} 条（{checked} 条已完成）\n" + (
-            chapter_summary(save, for_player=False)
-        )
-
-
-class NoteChapterTool(AgentTool):
-    """记一条线索（客观完成条件会自动勾上）。"""
-
-    function_name = "note_chapter"
-    description = "记一条线索或物件名；线索 / 物品类的完成条件会自动勾上"
-    args = (ToolArg("clue", "str", "线索或物件的名字，20 字以内"),)
 
     @staticmethod
     async def call(context: AgentContext, clue: Any = "", **kwargs: Any) -> str:
-        from ...dnd.chapter import auto_sync_objectives, note_clue
+        from ...dnd.event_progress import _load, note_clue
 
         save = load_save(context.save_id) if context.save_id else None
         if save is None:
@@ -2688,9 +2714,58 @@ class NoteChapterTool(AgentTool):
         body = str(clue or "").strip()
         if not body:
             return "线索内容为空"
+
+        # 现场造节点：写「新局面 {json}」→ 过校验才接进图。
+        # **要在剥「失败：」之前判**：造节点的 clue 不是局面名，剥了前缀反而认不出。
+        from .event_flow import grow_graph
+
+        grown = grow_graph(save, body)
+        if grown is not None:
+            return grown
+
+        # 事件节点结算：前缀「失败：」= 谈崩（走 on_fail，失败也前进）
+        ok = True
+        ref = body
+        if ref.startswith(("失败：", "失败:")):
+            ok = False
+            ref = ref[3:].strip()
+        from .event_flow import current_slot, load_pool, settle_node
+
+        # 结算前先记下正在跑的是哪一件——结算可能顺手把它关掉。
+        slot_before = current_slot(load_pool(save))
+        slot_id = slot_before.id if slot_before is not None else ""
+        settled = settle_node(save, ref, ok=ok)
+        if settled is not None:
+            if slot_id:
+                after = load_pool(save).slots.get(slot_id)
+                if after is not None and not after.open:
+                    # 这件事了结了：走统一收尾（推刻度 + 推进化轨 + 判纪元），
+                    # 别在这里另写一套——两条路各算一份，纪元与难度轨就对不上了。
+                    try:
+                        from .event_flow import finish_event
+                        from .gen_epoch import epithet_agent
+
+                        lines = await finish_event(
+                            save, after, note=ref, agent=epithet_agent
+                        )
+                        if lines:
+                            settled = f"{settled}\n\n" + "\n".join(lines)
+                    except Exception as e:  # 纪元结算是增强，不该吞掉局面的结算结果
+                        log.warning(
+                            f"事件了结后的纪元结算失败（忽略）：{str_traceback(e)}"
+                        )
+            return settled
+        if not ok:
+            return "当前没有事件在进行，「失败：」前缀用不上——这条没有记录。"
         note_clue(save, body)
-        done, total = auto_sync_objectives(save)
-        return f"已记下线索「{body}」；完成条件进度 {done}/{total}"
+        state = _load(save)
+        tail = ""
+        if state.current:
+            tail = (
+                f"；眼下这件事还开着 {len(state.open_nodes)} 个局面，"
+                f"已经了结 {len(state.done_nodes)} 个"
+            )
+        return f"已记下线索「{body}」{tail}"
 
 
 # --------------------------------------------------------------------------- #
@@ -2750,10 +2825,7 @@ DM_TOOLS: tuple[type[AgentTool], ...] = (
     RestTool,
     RememberTool,
     RecallTool,
-    OfferChaptersTool,
-    TakeChapterTool,
-    CheckChapterTool,
-    NoteChapterTool,
+    NoteEventTool,
     AwaitPlayersTool,
     WrapUpTool,
     NarrateTool,

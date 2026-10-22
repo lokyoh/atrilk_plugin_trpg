@@ -1,18 +1,18 @@
 """纪元：每若干章一个纪元，纪元末做一次**收束判定**，然后发称号。
 
-===========  ==================  ==============================================
-本模块          负责                不负责
-===========  ==================  ==============================================
-纯逻辑层        纪元边界、收束判定  读存档、调模型、写圣经
-:mod:`.chapter`  ——                （那些在 :mod:`...agents.dnd.epoch_flow`）
-===========  ==================  ==============================================
+===============  ==================  ==============================================
+本模块            负责                不负责
+===============  ==================  ==============================================
+纯逻辑层          纪元边界、收束判定  读存档、调模型、写圣经
+:mod:`.event_progress`  事件刻度        （那些在 :mod:`...agents.dnd.epoch_flow`）
+===============  ==================  ==============================================
 
 **为什么收束判定必须是纯函数**：判定要回答「这个纪元算不算达成了」，而答案只应该
 取决于可数的事实——目标勾了几条、期限逾期几条、有没有清偿过旧账。让它可枚举、
 可在测试里断言，比让模型「读一遍历史然后感觉一下」可靠得多，也便宜得多。
 
 **为什么结局条件长这样**：旧设计里的 ``endings`` 挂在 frame 文档上，而 frame 与 story
-都已经下线（章节卡是唯一机制），所以条件必须换成**当前程序真有的事实**。
+都已经下线（事件卡是唯一机制），所以条件必须换成**当前程序真有的事实**。
 现在的三个出口覆盖了所有情况，且互斥：
 
 ============  ==========================================  ==============
@@ -86,7 +86,7 @@ def epoch_index(completed: int, length: int = DEFAULT_EPOCH_LENGTH) -> int:
 
 
 def epoch_span(index: int, length: int = DEFAULT_EPOCH_LENGTH) -> tuple[int, int]:
-    """第 ``index`` 个纪元覆盖的章节区间（闭区间，1 起）。"""
+    """第 ``index`` 个纪元覆盖的事件区间（闭区间，1 起）。"""
     step = max(1, int(length))
     idx = max(1, int(index))
     return ((idx - 1) * step + 1, idx * step)
@@ -106,9 +106,9 @@ def is_epoch_end(completed: int, length: int = DEFAULT_EPOCH_LENGTH) -> bool:
 def epoch_length_of(data: Any) -> int:
     """从 ``progress["_epoch"]`` 里取纪元长度；没配就用默认。
 
-    **刻意不放在 :class:`~.chapter.Recipe` 里**：织法那套参数一个写入点都没有
-    （``progress["_recipe"]`` 全仓只有读、没有写），往里加字段等于加一个
-    永远读不到的可调项。纪元长度自己带一份，缺省就是 4，不需要谁去写。
+    **刻意不放在 :class:`~.event_progress.Recipe` 里**：纪元长度是**玩法**的一部分，
+    由 :func:`~.gamemode.start_mode` 一次性写进 ``progress["_epoch"]``，
+    而织法只管难度怎么算。两件事分开，改玩法不用碰难度公式。
     """
     raw = data if isinstance(data, dict) else {}
     try:
@@ -131,11 +131,11 @@ class EpochFacts:
     index: int = 1
     #: 纪元长度（章）
     length: int = DEFAULT_EPOCH_LENGTH
-    #: 本纪元覆盖的章节区间
-    first_chapter: int = 1
-    last_chapter: int = 0
+    #: 本纪元覆盖的事件区间
+    first_event: int = 1
+    last_event: int = 0
     #: 本纪元实际完成的章数
-    chapters: int = 0
+    events: int = 0
     #: 完成条件：已勾 / 总数（跨本纪元所有章累加）
     done: int = 0
     total: int = 0
@@ -166,9 +166,9 @@ class EpochFacts:
         return {
             "index": self.index,
             "length": self.length,
-            "first_chapter": self.first_chapter,
-            "last_chapter": self.last_chapter,
-            "chapters": self.chapters,
+            "first_event": self.first_event,
+            "last_event": self.last_event,
+            "events": self.events,
             "done": self.done,
             "total": self.total,
             "open_deadlines": self.open_deadlines,
@@ -182,26 +182,26 @@ class EpochFacts:
 
 
 def epoch_facts(
-    chapter_state: Any,
+    event_state: Any,
     evolution: WorldEvolution | None = None,
     *,
     index: int = 1,
     length: int = DEFAULT_EPOCH_LENGTH,
     pressure: int = 0,
 ) -> EpochFacts:
-    """从章节状态与演化轨算出这个纪元的事实（**不碰存档**）。
+    """从事件状态与演化轨算出这个纪元的事实（**不碰存档**）。
 
-    :param chapter_state: :class:`~.chapter.ChapterState`，只用它的
+    :param event_state: :class:`~.event_progress.EventProgress`，只用它的
         ``completed`` 与 ``progresses``（每章收尾时记下的 ``[已勾, 总数]``）。
     :param evolution: 世界演化轨；缺省按空轨道算（自检 / 单测友好）。
     """
     step = max(1, int(length))
     idx = max(1, int(index))
     first, last = epoch_span(idx, step)
-    completed = int(getattr(chapter_state, "completed", 0) or 0)
+    completed = int(getattr(event_state, "completed", 0) or 0)
 
     # 只取本纪元覆盖到的那几章的进度记录（progresses 是从第 1 章起顺序记的）
-    records = list(getattr(chapter_state, "progresses", None) or [])
+    records = list(getattr(event_state, "progresses", None) or [])
     window = records[max(0, first - 1) : last]
     done = sum(int(r[0]) for r in window if len(r) >= 2)
     total = sum(int(r[1]) for r in window if len(r) >= 2)
@@ -211,9 +211,9 @@ def epoch_facts(
     facts = EpochFacts(
         index=idx,
         length=step,
-        first_chapter=first,
-        last_chapter=last,
-        chapters=len(window),
+        first_event=first,
+        last_event=last,
+        events=len(window),
         done=done,
         total=total,
         open_deadlines=len(evo.open_deadlines()),
@@ -225,7 +225,7 @@ def epoch_facts(
         pressure=int(pressure),
     )
     # 纪元覆盖到的章不该超过实际完成的章数（局还没打到那里）
-    facts.chapters = max(0, min(facts.chapters, completed - first + 1))
+    facts.events = max(0, min(facts.events, completed - first + 1))
     return facts
 
 
@@ -300,7 +300,7 @@ def apply_epoch_cost(
     evolution: WorldEvolution,
     costs: tuple[str, ...] | list[str],
     *,
-    chapter: int,
+    event_no: int,
 ) -> list[str]:
     """把代价施加到演化轨上，返回给玩家 / DM 看的一行行说明。
 
@@ -329,7 +329,7 @@ def apply_epoch_cost(
             hit = False
             for deadline in evo.open_deadlines():
                 # 不收紧到「本章之内就到期」——那不是代价，是立刻引爆
-                deadline.due = max(chapter + 1, deadline.due - 1)
+                deadline.due = max(event_no + 1, deadline.due - 1)
                 lines.append(f"{cost}：{deadline.line()}")
                 hit = True
             if not hit:
@@ -340,8 +340,10 @@ def apply_epoch_cost(
                 continue
             place = max(marked, key=lambda p: (len(p.marks), -p.since))
             mark = mark_place(
-                evo, place.name, PLACE_MARKS[len(place.marks) % len(PLACE_MARKS)],
-                chapter=chapter,
+                evo,
+                place.name,
+                PLACE_MARKS[len(place.marks) % len(PLACE_MARKS)],
+                event_no=event_no,
             )
             lines.append(f"{cost}：{mark.name}：{mark.marks[-1]}")
         else:
@@ -365,7 +367,7 @@ class EpithetGrant:
     #: 称号正文
     name: str = ""
     #: 授予时的章号
-    chapter: int = 0
+    event_no: int = 0
     #: 判定出口（结局名或代价摘要）
     verdict: str = ""
 
@@ -373,7 +375,7 @@ class EpithetGrant:
         return {
             "index": self.index,
             "name": self.name,
-            "chapter": self.chapter,
+            "event": self.event_no,
             "verdict": self.verdict,
         }
 
@@ -386,7 +388,7 @@ class EpithetGrant:
         return cls(
             index=int(d.get("index", 1) or 1),
             name=name,
-            chapter=int(d.get("chapter", 0) or 0),
+            event_no=int(d.get("event", 0) or 0),
             verdict=str(d.get("verdict") or ""),
         )
 
@@ -413,7 +415,7 @@ class EpochState:
 
     设计稿写的是 ``progress["_frame"]["epithets"]``——frame 与 story 一起下线了，
     所以纪元自成一个键：它有自己的一组字段（长度、序号、称号、结局），
-    硬塞进章节状态里会让那儿的字段变成两件不相关的事。
+    硬塞进事件状态里会让那儿的字段变成两件不相关的事。
     """
 
     #: 纪元长度（章）；缺省 4
@@ -422,7 +424,7 @@ class EpochState:
     settled_epochs: int = 0
     #: 已授予的称号（新→旧）
     epithets: list[EpithetGrant] = field(default_factory=list)
-    #: 结局记录（``{index, ending, chapter}``）
+    #: 结局记录（``{index, ending, event_no}``）
     endings: list[dict[str, Any]] = field(default_factory=list)
     #: 最后一个未达成纪元的代价摘要（给 DM 看）
     last_costs: list[str] = field(default_factory=list)
@@ -448,9 +450,7 @@ class EpochState:
             settled_epochs=int(d.get("settled_epochs", 0) or 0),
             epithets=[
                 e
-                for e in (
-                    EpithetGrant.from_dict(x) for x in (d.get("epithets") or [])
-                )
+                for e in (EpithetGrant.from_dict(x) for x in (d.get("epithets") or []))
                 if e
             ],
             endings=[dict(x) for x in (d.get("endings") or []) if isinstance(x, dict)],
@@ -519,7 +519,7 @@ def epoch_text(
             lines.append(f"  - 第{grant.index}纪元：{grant.name}{tail}")
     if facts is not None and not state.ending:
         lines.append(
-            f"· 当前第{facts.index}纪元（第 {facts.first_chapter}-{facts.last_chapter} 章）："
+            f"· 当前第{facts.index}纪元（第 {facts.first_event}-{facts.last_event} 章）："
             f"目标 {facts.done}/{facts.total}，未结的账 {facts.open_deadlines} 桩"
             + (f"（逾期 {facts.overdue}）" if facts.overdue else "")
         )

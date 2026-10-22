@@ -30,7 +30,6 @@ from ATRI.log import log
 from ... import settings
 from ...dnd.battlemap import map_digest
 from ...dnd.billing import bind_save, record_result
-from ...dnd.chapter import chapter_summary, current_card
 from ...dnd.combat import (
     advance_turn,
     all_enemies_out,
@@ -48,6 +47,7 @@ from ...dnd.combat import (
     use_resource,
 )
 from ...dnd.epoch import ENDINGS
+from ...dnd.event_progress import event_summary
 from ...dnd.judge import dnd_judge
 from ...dnd.memory import memory_text
 from ...dnd.names import player_name
@@ -324,18 +324,19 @@ def _progress_text(save) -> str:
     return "\n".join(lines)
 
 
-def _chapter_brief(save) -> str:
-    """当前章节的构架文本（给 DM 与场景构建器看）。
+def _event_brief(save) -> str:
+    """当前事件的构架文本（给 DM 与场景构建器看）。
 
-    用 :func:`~...dnd.chapter.chapter_summary` 的 DM 侧形态，所以这一段里
+    用 :func:`~...dnd.event_progress.event_summary` 的 DM 侧形态，所以这一段里
     **包含难度数值与 fail_forward**——那是 DM 该知道、玩家不该看到的。
     后面接世界演化轨的 DM 侧形态（势力位置、痕迹、未结期限），
-    再接纪元轨（称号、结局、上一纪元的代价）。
+    再接纪元轨（称号、结局、上一纪元的代价），最后接**事件运行时**
+    （世界时间、当前事件、玩家留下的账）。
     """
     try:
-        text = chapter_summary(save, for_player=False)
-    except Exception as e:  # 章节状态读不出来不该拦住切换场景
-        log.warning(f"读章节进度失败：{str_traceback(e)}")
+        text = event_summary(save, for_player=False)
+    except Exception as e:  # 事件状态读不出来不该拦住切换场景
+        log.warning(f"读事件进度失败：{str_traceback(e)}")
         return ""
     extra = ""
     try:
@@ -350,23 +351,34 @@ def _chapter_brief(save) -> str:
         ep = load_epoch(save)
         extra = "\n\n".join(
             x
-            for x in (extra, epoch_text(ep, _epoch_facts_of(save, ep), for_player=False))
+            for x in (
+                extra,
+                epoch_text(ep, _epoch_facts_of(save, ep), for_player=False),
+            )
             if x
         )
     except Exception as e:
         log.warning(f"读纪元状态失败：{str_traceback(e)}")
+    try:
+        from .event_flow import event_brief
+
+        extra = "\n\n".join(x for x in (extra, event_brief(save)) if x)
+    except Exception as e:  # 事件系统是增强，读不出来不该拦住一轮
+        log.warning(f"读事件状态失败：{str_traceback(e)}")
     return f"{text}\n\n{extra}".strip() if extra else text
 
 
 def _epoch_facts_of(save, ep) -> object | None:
     """当前纪元的进度事实（读不出来就返回 ``None``，那一段整块不出现）。"""
-    from ...dnd.chapter import _load
     from ...dnd.epoch import epoch_facts
+    from ...dnd.event_progress import _load
     from ...dnd.evolution import load_evolution
 
     if ep.ending:
         return None
-    return epoch_facts(_load(save), load_evolution(save), index=ep.current, length=ep.length)
+    return epoch_facts(
+        _load(save), load_evolution(save), index=ep.current, length=ep.length
+    )
 
 
 #: 复盘「裁定」一行要收进来的功能（其余是查询 / 叙述 / 世界书类，不必进流水）
@@ -535,7 +547,7 @@ def _finish_save(save, chat_id: str, *, note: str = "本局就此结档。") -> 
 async def build_scene_for_save(save, generic: str) -> str | None:
     """用场景构建器把**通用场景**改造成**本局专属场景**；失败返回 ``None``。
 
-    这是链路上**唯一**允许看章节卡的地方：本局专属化只发生在存档的场景副本里，
+    这是链路上**唯一**允许看事件卡的地方：本局专属化只发生在存档的场景副本里，
     世界库那份通用场景原样不动——所以换一个存档、换一条路线跑，
     同一个世界的骨架还是同一副。
     """
@@ -543,7 +555,7 @@ async def build_scene_for_save(save, generic: str) -> str | None:
         with bind_save(save.save_id):
             result = await scene_builder_agent.run(
                 scene=generic,
-                adventure=_chapter_brief(save),
+                adventure=_event_brief(save),
                 party=_party_text(save),
                 progress=_progress_text(save),
                 history=events_text(save, 10),
@@ -566,9 +578,7 @@ async def open_scene(
 
     :return: ``(场景键, 场景正文)``；无法定位地点时返回 ``None``。
     """
-    resolved = await ensure_scene(
-        save.world_key, location, kind=kind, region=region
-    )
+    resolved = await ensure_scene(save.world_key, location, kind=kind, region=region)
     if resolved is None:
         return None
     _kind, key, generic = resolved
@@ -1225,7 +1235,7 @@ async def run_dm_round(
                 scene=scene,
                 npcs=roster,
                 bible=bible,
-                chapter=_chapter_brief(save),
+                event_no=_event_brief(save),
                 ending=_ending_text(save),
                 combat=combat_block,
                 history=history,
@@ -1261,6 +1271,34 @@ async def run_dm_round(
             resolved=resolved_any,
             rulings=rulings_for_player,
         )
+
+    # 程序生成的时间与小事件**直接播给玩家**，不指望 DM 转述
+    # （「DM 的功能调用结果只有 DM 看得到」）。放在 archived 之后取走，
+    # 所以它们进玩家消息、不进事件日志与复盘。
+    try:
+        from .event_flow import take_notices
+
+        notices = take_notices(save)
+    except Exception as e:
+        log.warning(f"取世界播报失败：{str_traceback(e)}")
+        notices = []
+    for notice in notices:
+        narration = f"{narration}\n\n{notice}"
+
+    # 世界时间：一轮对话 / 调查过去 10 分钟（这类动作没有客观时长，给固定值），
+    # 然后判「太久没休息」。**战斗中不在这里加**——一场战斗的时间在结束时按场记，
+    # 逐轮加 6 秒等于没加。
+    if load_combat(save) is None:
+        try:
+            from .event_flow import check_fatigue, turn_time
+
+            turn_time(save)
+            fatigue = check_fatigue(save)
+        except Exception as e:  # 时间推进失败不该毁掉这一轮
+            log.warning(f"推进世界时间失败：{str_traceback(e)}")
+            fatigue = []
+        for line in fatigue:
+            narration = f"{narration}\n\n🌙 {line}"
 
     # 下一轮要等谁：DM 可以用 await_players 声明；战斗中则由先攻顺序决定。
     declared = context.data.get("await_players")
@@ -1299,6 +1337,13 @@ async def run_dm_round(
         report = settle_combat(save, combat)
         clear_combat(save)
         settlement = report.text()
+        # 一场战斗的时长按「场」记（含收尸、包扎、喘气），不按轮数 × 6 秒
+        try:
+            from .event_flow import combat_time
+
+            settlement = f"{settlement}\n{combat_time(save)}"
+        except Exception as e:
+            log.warning(f"结算战斗时间失败：{str_traceback(e)}")
         log_event(save, "combat", "战斗结束：敌人全部退场\n" + settlement, actor="dm")
         # 结算要玩家也看得见：XP / 升级 / 战利品是他们的
         narration = f"{narration}\n\n{settlement}"
@@ -1371,8 +1416,8 @@ async def run_opening(*, save_id: str, chat_id: str = "") -> TurnResult:
     ``/跑团.开局`` 只建存档、不跑开场；等玩家陆续 ``/跑团.加入`` 之后，由任意
     已加入的玩家发 ``/跑团.开始`` 调到这里正式开局。
 
-    开局前会先织出**第一章**：这是章节线唯一「不问玩家」的自动一步——第一张卡
-    由 DM 依章节规则选定走向（``take_chapter("1")``），之后再每一章都由玩家挑。
+    开局时会先把**预写事件**装进事件池（预设世界里每省一件），这样 DM 的
+    开场白里就能把眼前这件正事摆出来，而不是让玩家先空走几步。
     """
     save = load_save(save_id)
     if save is None:
@@ -1380,19 +1425,15 @@ async def run_opening(*, save_id: str, chat_id: str = "") -> TurnResult:
             Verdict.NEED_INFO,
             message="这局冒险的存档不见了，发送 /跑团.开局 重新开启。",
         )
-    if current_card(save) is None:
-        from .chapter_flow import ensure_opening_chapter, weave_chapter
+    # 预写事件在开局就装好：DM 的开场白里就能提到眼前这件正事，
+    # 不必等玩家先走几步。装不上不影响开局。
+    try:
+        from .event_flow import preset_events
 
-        try:
-            await ensure_opening_chapter(save)
-            outcome = await weave_chapter(save, "1")
-        except Exception as e:
-            # 织不出章节不该拦住开局：DM 照样能主持，只是这一局没有任务卡
-            log.warning(f"开局织第一章失败（继续开局）：{str_traceback(e)}")
-            outcome = None
-        if outcome is not None and outcome.problems:
-            log.warning(f"开局第一章有校验提醒：{outcome.problems}")
-        save_save(save)
+        preset_events(save)
+    except Exception as e:
+        log.warning(f"装预写事件失败（继续开局）：{str_traceback(e)}")
+    save_save(save)
     actions = {str(uid): {"action": "", "resolution": ""} for uid in save.player_ids}
     result = await run_dm_round(
         save_id=save.save_id, actions=actions, chat_id=chat_id, opening=True

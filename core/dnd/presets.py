@@ -33,10 +33,10 @@ from .world_store import (
     DOC_KINDS,
     MAIN_DOC_KEY,
     list_worlds,
-    set_provinces,
     load_doc,
     new_world_id,
     save_doc,
+    set_provinces,
     set_world_map,
     upsert_world,
 )
@@ -103,6 +103,10 @@ def _collect_docs(
     """汇总索引里的全部文档条目；任何一个文件缺失都直接报错（列全部缺失，不逐个炸）。
 
     先校验再安装，避免「装了一半才发现缺文件」。
+
+    **子目录只是给人看的**（按归属分：``docs/scene/盐仓区/盐仓码头.md``），
+    程序不靠目录找文件——这里对每一类先建一张「文档名 → 路径」的表，
+    递归扫一遍就够，索引里仍然是平铺的键。
     """
     docs = index.get("docs")
     if not isinstance(docs, dict):
@@ -113,10 +117,15 @@ def _collect_docs(
         section = docs.get(kind)
         if not isinstance(section, dict):
             continue
+        base = directory / "docs" / kind
+        table: dict[str, Path] = {}
+        if base.is_dir():
+            for path in base.rglob("*.md"):
+                table.setdefault(path.stem, path)
         for key, entry in section.items():
-            path = directory / "docs" / kind / f"{key}.md"
-            if not path.is_file():
-                missing.append(str(path))
+            path = table.get(str(key))
+            if path is None or not path.is_file():
+                missing.append(str(base / f"{key}.md"))
                 continue
             entries.append(
                 (kind, str(key), dict(entry) if isinstance(entry, dict) else {}, path)
@@ -148,10 +157,15 @@ def _seed_bible(key: str, index: dict[str, Any]) -> None:
     登记成 ``place`` 而不是给层级各开一个种类：圣经是**名字登记簿**，
     层级在 ``index.json`` 的 ``provinces`` 与文档 ``meta.parent`` 里。
 
-    章节卡不在这里播种：它是**游玩过程中**织出来才落库的，开局时一章都没有。
+    事件卡不在这里播种：它是**游玩过程中**织出来才落库的，开局时一章都没有。
     """
     from ..agents.dnd.gen_scene import parse_scene_npcs
-    from .world_bible import Entity, entities_from_json, register_entities, seed_from_world
+    from .world_bible import (
+        Entity,
+        entities_from_json,
+        register_entities,
+        seed_from_world,
+    )
     from .world_store import SITE_KINDS
 
     seed_from_world(key)
@@ -161,12 +175,20 @@ def _seed_bible(key: str, index: dict[str, Any]) -> None:
         source="world",
     )
     docs = index.get("docs") or {}
-    level_notes = {"realm": "王国/地区", "province": "区域", **{k: "" for k in SITE_KINDS}}
+    level_notes = {
+        "realm": "王国/地区",
+        "province": "区域",
+        **dict.fromkeys(SITE_KINDS, ""),
+    }
     for kind, note in level_notes.items():
         for name in docs.get(kind) or {}:
             register_entities(
                 key,
-                [Entity(name=str(name), kind="place", note=note, source=f"preset:{kind}")],
+                [
+                    Entity(
+                        name=str(name), kind="place", note=note, source=f"preset:{kind}"
+                    )
+                ],
                 source="preset",
             )
     for scene_key in docs.get("scene") or {}:

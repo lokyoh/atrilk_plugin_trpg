@@ -32,8 +32,9 @@
 from __future__ import annotations
 
 import random
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 from .encounter_budget import DEFAULT_TIERS, ThreatTier, active_tiers
 
@@ -116,12 +117,14 @@ ARENA_RULES: tuple[ArenaRule, ...] = (
 )
 
 
-def arena_rule_for(chapter: int, rules: Iterable[ArenaRule] = ARENA_RULES) -> ArenaRule | None:
+def arena_rule_for(
+    event_no: int, rules: Iterable[ArenaRule] = ARENA_RULES
+) -> ArenaRule | None:
     """按章号取场地规则（轮换）。没有 rulebreak 档生效时不该调用本函数。"""
     items = list(rules)
     if not items:
         return None
-    return items[(max(1, int(chapter)) - 1) % len(items)]
+    return items[(max(1, int(event_no)) - 1) % len(items)]
 
 
 # --------------------------------------------------------------------------- #
@@ -138,7 +141,7 @@ class ThreatProfile:
     """
 
     #: 章号
-    chapter: int = 1
+    event_no: int = 1
     #: 生效的层级（累积，按生效章号升序）
     tiers: list[ThreatTier] = field(default_factory=list)
     #: 专攻目标：敌方优先攻击的玩家的 cid（elite 档）
@@ -180,7 +183,11 @@ class ThreatProfile:
                 count = int(self.reinforcement.get("count", 0) or 0)
                 lines.append(
                     f"【{tier.name}】每场战斗结束前追加一波增援"
-                    + (f"（本次：{count} 只 {self.reinforcement.get('label', '杂兵')}）" if count else "")
+                    + (
+                        f"（本次：{count} 只 {self.reinforcement.get('label', '杂兵')}）"
+                        if count
+                        else ""
+                    )
                 )
             elif tier.tag == "legendary":
                 lines.append(
@@ -196,7 +203,7 @@ class ThreatProfile:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "chapter": self.chapter,
+            "event": self.event_no,
             "tiers": [tier.name for tier in self.tiers],
             "tags": self.tags,
             "focus_cid": self.focus_cid,
@@ -272,7 +279,7 @@ def pick_boss(combatants: Iterable[Any], monster_lookup: Any = None) -> str:
 
 def reinforcement_plan(
     *,
-    chapter: int,
+    event_no: int,
     level: int,
     party_size: int = 4,
     count: int = 2,
@@ -316,7 +323,7 @@ def _cr_text(cr: float) -> str:
 
 def profile_for(
     *,
-    chapter: int,
+    event_no: int,
     level: int = 1,
     party_size: int = 4,
     combatants: Iterable[Any] = (),
@@ -328,7 +335,7 @@ def profile_for(
 ) -> ThreatProfile:
     """算出这一章的威胁剖面。
 
-    :param chapter: 章号（决定哪些档生效）。
+    :param event_no: 章号（决定哪些档生效）。
     :param level: 队伍平均等级（增援的 CR 打折基准）。
     :param party_size: 队伍人数（影响增援数量）。
     :param combatants: 全部参战者（算专攻目标用）。
@@ -339,8 +346,8 @@ def profile_for(
     **没有敌人时也算得出来**：专攻目标与首领会在战斗真正开始时补算
     （见 :func:`~.combat.apply_threat_profile`），这里的入参只是提前量。
     """
-    chapter = max(1, int(chapter))
-    profile = ThreatProfile(chapter=chapter, tiers=active_tiers(chapter, tiers))
+    event_no = max(1, int(event_no))
+    profile = ThreatProfile(event_no=event_no, tiers=active_tiers(event_no, tiers))
     if not profile.tiers:
         return profile
 
@@ -350,14 +357,14 @@ def profile_for(
         profile.boss_cid = pick_boss(enemies, monster_lookup)
     if profile.has("attrition"):
         profile.reinforcement = reinforcement_plan(
-            chapter=chapter,
+            event_no=event_no,
             level=level,
             party_size=party_size,
             count=reinforcement_count,
             rng=rng,
         )
     if profile.has("rulebreak"):
-        profile.arena = arena_rule_for(chapter)
+        profile.arena = arena_rule_for(event_no)
     return profile
 
 
@@ -407,4 +414,3 @@ def apply_arena_terrain(
         tiles[f"{x},{y}"] = rule.terrain
         changed += 1
     return changed
-

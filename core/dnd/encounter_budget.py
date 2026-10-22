@@ -1,8 +1,8 @@
-"""章节难度预算与表现系数。
+"""事件难度预算与表现系数。
 
 这一模块回答两个问题：
 
-1. **这一章该给玩家多少压力？** —— :func:`chapter_cr`
+1. **这一章该给玩家多少压力？** —— :func:`event_cr`
 2. **玩家打得太顺 / 打得太惨，该不该调？** —— :func:`performance_factor`
 
 它只做算术与统计，**不碰存档、不调模型**。所有入参都是从存档与事件日志里取出来的
@@ -12,10 +12,10 @@
 「阈值低档 × 人数 × 难度倍率」，难度倍率 easy 2 / medium 4 / hard 6。
 难度倍率直接除以 4 得到「每场遭遇」的口径，因为一场遭遇大约吃掉一个时段的四分之一到三分之一。
 
-三层混合难度（见 :func:`chapter_cr`）：
+三层混合难度（见 :func:`event_cr`）：
 
 - **基础轨**：队伍平均等级，与 :func:`~.encounter.target_cr_for` 的单人口径一致；
-- **章节轨**：随章节序号缓慢爬升，并叠加威胁层级（20 级后的压力走**规则层**，不动数值）；
+- **事件轨**：随事件序号缓慢爬升，并叠加威胁层级（20 级后的压力走**规则层**，不动数值）；
 - **表现轨**：:func:`performance_factor`，玩家打得太顺就加压、翻车就减压。
 
 > 为什么 20 级后不堆怪：等级表（:data:`~.progression.MAX_LEVEL`）与
@@ -25,14 +25,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import exp as _exp
-from typing import Any, Iterable
+from typing import Any
 
 try:  # pragma: no cover - typing 只在 3.9+ 存在
     from collections.abc import Mapping
 except ImportError:  # pragma: no cover
-    from typing import Mapping  # type: ignore[assignment]
+    from collections.abc import Mapping  # type: ignore[assignment]
 
 __all__ = [
     "DEFAULT_TIERS",
@@ -42,11 +43,11 @@ __all__ = [
     "ThreatTier",
     "active_tier",
     "active_tiers",
-    "chapter_cr",
-    "chapter_cr_text",
-    "chapter_xp_budget",
     "day_budget",
     "encounter_budget",
+    "event_cr",
+    "event_cr_text",
+    "event_xp_budget",
     "performance_factor",
     "summarize_performance",
 ]
@@ -65,18 +66,18 @@ _ENCOUNTER_SHARE = 1.0 / 3.0
 
 #: 难度倍率 → 表现系数的缓动系数。困难局本就该一直紧绷，不该由表现大幅摆动。
 _EASE_BY_RATIO: dict[float, float] = {
-    2.0: 0.45,   # easy
-    4.0: 0.38,   # medium
-    6.0: 0.30,   # hard
-    8.0: 0.24,   # deadly
+    2.0: 0.45,  # easy
+    4.0: 0.38,  # medium
+    6.0: 0.30,  # hard
+    8.0: 0.24,  # deadly
 }
 
 #: 表现系数各项的权重。四项相加为 1，单项封顶，保证系数落在 [-1, +1]。
 PERFORMANCE_WEIGHTS: dict[str, float] = {
-    "combat_speed": 0.3,   # 打得太快 → 说明太轻松 → 加压
-    "knockdown": 0.35,     # 倒地次数 → 越多次说明越吃力 → 减压
-    "resource": 0.2,       # 长休次数 → 消耗不起 → 减压
-    "attrition": 0.15,     # 战斗场次偏多 → 战线拉太长 → 减压
+    "combat_speed": 0.3,  # 打得太快 → 说明太轻松 → 加压
+    "knockdown": 0.35,  # 倒地次数 → 越多次说明越吃力 → 减压
+    "resource": 0.2,  # 长休次数 → 消耗不起 → 减压
+    "attrition": 0.15,  # 战斗场次偏多 → 战线拉太长 → 减压
 }
 
 
@@ -102,17 +103,21 @@ def day_budget(level: int, party_size: int = 4, difficulty: str = "medium") -> i
     :param party_size: 参与玩家人数
     :param difficulty: ``easy`` / ``medium`` / ``hard`` / ``deadly``
     """
-    ratio = DIFFICULTY_RATIO.get(str(difficulty or "medium"), DIFFICULTY_RATIO["medium"])
+    ratio = DIFFICULTY_RATIO.get(
+        str(difficulty or "medium"), DIFFICULTY_RATIO["medium"]
+    )
     size = max(1, int(party_size))
-    return int(round(_threshold_low(level) * size * ratio))
+    return round(_threshold_low(level) * size * ratio)
 
 
-def encounter_budget(level: int, party_size: int = 4, difficulty: str = "medium") -> int:
+def encounter_budget(
+    level: int, party_size: int = 4, difficulty: str = "medium"
+) -> int:
     """单场遭遇该给的经验量（时段预算 ÷ 3）。"""
-    return int(round(day_budget(level, party_size, difficulty) * _ENCOUNTER_SHARE))
+    return round(day_budget(level, party_size, difficulty) * _ENCOUNTER_SHARE)
 
 
-def chapter_xp_budget(
+def event_xp_budget(
     level: int, story_points: int = 3, party_size: int = 4, difficulty: str = "medium"
 ) -> int:
     """一章该花掉的经验总量。
@@ -122,7 +127,7 @@ def chapter_xp_budget(
     让「这一章打几场」有据可依，而不是靠 DM 自觉。
     """
     points = max(1, min(int(story_points), 12))
-    return int(round(encounter_budget(level, party_size, difficulty) * points))
+    return round(encounter_budget(level, party_size, difficulty) * points)
 
 
 # --------------------------------------------------------------------------- #
@@ -164,7 +169,6 @@ def summarize_performance(events: Iterable[Any]) -> Performance:
     for item in events:
         kind, content = _event_fields(item)
         low_kind = kind.lower()
-        low_text = content.lower()
         if "combat" in low_kind or "战斗" in content:
             perf.combats += 1
             perf.rounds_total += _rounds_from(content)
@@ -186,7 +190,7 @@ def _event_fields(item: Any) -> tuple[str, str]:
         return str(item.get("kind") or ""), str(item.get("content") or "")
     kind = getattr(item, "kind", "")
     content = getattr(item, "content", "")
-    if not kind and isinstance(item, (tuple, list)) and len(item) >= 2:
+    if not kind and isinstance(item, tuple | list) and len(item) >= 2:
         kind, content = str(item[0] or ""), str(item[1] or "")
     return str(kind or ""), str(content or "")
 
@@ -213,10 +217,10 @@ def _rounds_from(content: str) -> int:
 #: ``combat_speed`` 是**回合数**：DMG 口径下一场战斗通常 3 轮左右结束，
 #: 所以甜点位取 3——比它快算轻松，比它慢才算吃力。
 _SWEET_SPOT: dict[str, float] = {
-    "combat_speed": 3.0,   # 平均回合数：3 轮以内算打得快
-    "knockdown": 0.0,      # 一次不倒最好
-    "resource": 0.0,       # 不长休最好
-    "attrition": 2.0,      # 两场以内算正常
+    "combat_speed": 3.0,  # 平均回合数：3 轮以内算打得快
+    "knockdown": 0.0,  # 一次不倒最好
+    "resource": 0.0,  # 不长休最好
+    "attrition": 2.0,  # 两场以内算正常
 }
 
 #: 「打满负面」所需的回合数。DMG 的 5e 战斗通常 3 轮左右结束，
@@ -261,11 +265,15 @@ def performance_factor(
         return 0.0
     if perf.combats <= 0 and perf.knockdowns <= 0 and perf.long_rests <= 0:
         return 0.0
-    ratio = DIFFICULTY_RATIO.get(str(difficulty or "medium"), DIFFICULTY_RATIO["medium"])
+    ratio = DIFFICULTY_RATIO.get(
+        str(difficulty or "medium"), DIFFICULTY_RATIO["medium"]
+    )
     scale = _EASE_BY_RATIO.get(ratio, 0.38)
 
     terms = {
-        "combat_speed": _normalize("combat_speed", perf.rounds_avg if perf.combats else 0.0),
+        "combat_speed": _normalize(
+            "combat_speed", perf.rounds_avg if perf.combats else 0.0
+        ),
         "knockdown": _normalize("knockdown", perf.knockdowns),
         "resource": _normalize("resource", perf.long_rests),
         # 只有真的打过两场以上才谈得上「消耗」：0 场不是「消耗为零」，
@@ -279,7 +287,7 @@ def performance_factor(
 
 
 # --------------------------------------------------------------------------- #
-# 章节难度合成
+# 事件难度合成
 # --------------------------------------------------------------------------- #
 
 
@@ -297,19 +305,47 @@ class ThreatTier:
     tag: str = ""
 
 
-#: 默认的四档威胁层级。``after_chapter`` 是「从第几章之后生效」。
+#: 默认的四档威胁层级。``after_event`` 是「从第几章之后生效」。
 DEFAULT_TIERS: tuple[tuple[int, ThreatTier], ...] = (
-    (5, ThreatTier("白银压境", "敌方专攻：优先攻击看起来最脆弱的冒险者，而不是 AC 最高的", "elite")),
-    (9, ThreatTier("灰潮涨落", "每场战斗结束前追加一波增援（杂兵，按剩余预算打折）", "attrition")),
-    (13, ThreatTier("冬王亲临", "首领具传奇行动：每个自己的回合额外一次行动，不占动作", "legendary")),
-    (17, ThreatTier("世界律失效", "场地规则改变（如涨潮、落雪、灯火限制），并叠加天气代价", "rulebreak")),
+    (
+        5,
+        ThreatTier(
+            "白银压境",
+            "敌方专攻：优先攻击看起来最脆弱的冒险者，而不是 AC 最高的",
+            "elite",
+        ),
+    ),
+    (
+        9,
+        ThreatTier(
+            "灰潮涨落",
+            "每场战斗结束前追加一波增援（杂兵，按剩余预算打折）",
+            "attrition",
+        ),
+    ),
+    (
+        13,
+        ThreatTier(
+            "冬王亲临",
+            "首领具传奇行动：每个自己的回合额外一次行动，不占动作",
+            "legendary",
+        ),
+    ),
+    (
+        17,
+        ThreatTier(
+            "世界律失效",
+            "场地规则改变（如涨潮、落雪、灯火限制），并叠加天气代价",
+            "rulebreak",
+        ),
+    ),
 )
 
 
 def active_tiers(
-    chapter: int, tiers: Iterable[tuple[int, ThreatTier]] = DEFAULT_TIERS
+    event_no: int, tiers: Iterable[tuple[int, ThreatTier]] = DEFAULT_TIERS
 ) -> list[ThreatTier]:
-    """取该章节**全部**生效的威胁层级（按生效章号升序）。
+    """取该事件**全部**生效的威胁层级（按生效章号升序）。
 
     **层级是叠加的，不是互斥的。** 第 13 章同时满足 elite（第 5 章后）、
     attrition（第 9 章后）与 legendary（第 13 章后）三档——它们加压的方式各不相同
@@ -318,25 +354,27 @@ def active_tiers(
     早先这里只返回最高的一档（:func:`active_tier` 仍是那个行为），
     结果第 13 章时前两档被静默丢弃——压力凭空少了两层。
     """
-    chapter = max(1, int(chapter))
+    event_no = max(1, int(event_no))
     picked: list[tuple[int, ThreatTier]] = []
     for after, tier in tiers:
-        if chapter > after:
+        if event_no > after:
             picked.append((after, tier))
     picked.sort(key=lambda item: item[0])
     return [tier for _after, tier in picked]
 
 
-def active_tier(chapter: int, tiers: Iterable[tuple[int, ThreatTier]] = DEFAULT_TIERS) -> ThreatTier | None:
-    """取该章节生效的**最高**威胁层级（兼容旧调用；多数场合该用 :func:`active_tiers`）。"""
-    picked = active_tiers(chapter, tiers)
+def active_tier(
+    event_no: int, tiers: Iterable[tuple[int, ThreatTier]] = DEFAULT_TIERS
+) -> ThreatTier | None:
+    """取该事件生效的**最高**威胁层级（兼容旧调用；多数场合该用 :func:`active_tiers`）。"""
+    picked = active_tiers(event_no, tiers)
     return picked[-1] if picked else None
 
 
-def chapter_cr(
+def event_cr(
     *,
     level: int,
-    chapter: int = 1,
+    event_no: int = 1,
     party_size: int = 4,
     difficulty: str = "medium",
     perf_factor: float = 0.0,
@@ -351,7 +389,7 @@ def chapter_cr(
     三层混合：
 
     - **基础轨**：队伍平均等级（与 :func:`~.encounter.target_cr_for` 的单人口径一致）；
-    - **章节轨**：随章节序号爬升，**递减趋近** :paramref:`ladder_cap`
+    - **事件轨**：随事件序号爬升，**递减趋近** :paramref:`ladder_cap`
       （指数半衰），所以前期涨得明显、后期每几章才动一点，不会早早撞到天花板变平；
     - **表现轨**：`perf_factor`（-1~+1），难度越高越收敛；
     - **世界演化轨**：:paramref:`world_pressure`（见 :func:`~.evolution.pressure_bonus`），
@@ -360,7 +398,7 @@ def chapter_cr(
     威胁层级**不参与**这里的加法——它是规则层的压力，混进 CR 会让数值失真。
     但演化轨**要**参与：它是「同一个 NPC 位置变高了」，本来就该换更硬的怪。
     所以本模块不import :mod:`.evolution`（纯层之间不互相依赖），
-    由编排层 :mod:`..agents.dnd.chapter_flow` 算出再传进来。
+    由编排层 :mod:`..agents.dnd.event_progress_flow` 算出再传进来。
 
     **为什么高等级要收敛表现轨**：5e 里等级阈值涨得越来越慢（1→10 级是十倍经验，
     17→20 级只多一半），所以「这一章打得顺不顺」对高等级队伍的影响本就该更小。
@@ -368,7 +406,7 @@ def chapter_cr(
     那是在噪声上加压。见 :func:`_adapt_damp`。
     """
     lv = max(1, int(level))
-    ch = max(1, int(chapter))
+    ch = max(1, int(event_no))
     size = max(1, int(party_size))
 
     base = float(lv) + 0.5 * (size - 4)
@@ -386,14 +424,14 @@ _ADAPT_FLOOR = 0.45
 
 
 def _adapt_damp(level: int) -> float:
-    """等级越高，表现轨的加压/减压幅度越小（见 :func:`chapter_cr` 的说明）。"""
+    """等级越高，表现轨的加压/减压幅度越小（见 :func:`event_cr` 的说明）。"""
     return max(_ADAPT_FLOOR, 1.0 - _ADAPT_DECAY * (max(1, int(level)) - 1))
 
 
-def chapter_cr_text(
+def event_cr_text(
     *,
     level: int,
-    chapter: int = 1,
+    event_no: int = 1,
     party_size: int = 4,
     difficulty: str = "medium",
     perf_factor: float = 0.0,
@@ -401,12 +439,12 @@ def chapter_cr_text(
     tiers: Iterable[tuple[int, ThreatTier]] = DEFAULT_TIERS,
     adapt: bool = True,
 ) -> str:
-    """:func:`chapter_cr` 的文本写法（CR 0.5 → ``1/2``），附威胁层级提示。"""
+    """:func:`event_cr` 的文本写法（CR 0.5 → ``1/2``），附威胁层级提示。"""
     from .encounter import _cr_text
 
-    cr = chapter_cr(
+    cr = event_cr(
         level=level,
-        chapter=chapter,
+        event_no=event_no,
         party_size=party_size,
         difficulty=difficulty,
         perf_factor=perf_factor,
@@ -415,7 +453,7 @@ def chapter_cr_text(
         adapt=adapt,
     )
     text = _cr_text(cr)
-    tiers_on = active_tiers(chapter, tiers)
+    tiers_on = active_tiers(event_no, tiers)
     if tiers_on:
         detail = "；".join(f"{t.name}——{t.mod}" for t in tiers_on)
         text = f"{text}（威胁层级：{detail}）"

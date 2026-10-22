@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 import time
 from collections import Counter
@@ -650,7 +651,13 @@ def resources_text(combatant: Combatant) -> str:
     return "、".join(used) if used else "无"
 
 
-def tick_dot(save: Save, state: CombatState, combatant: Combatant) -> str:
+def tick_dot(
+    save: Save,
+    state: CombatState,
+    combatant: Combatant,
+    *,
+    rng: random.Random | None = None,
+) -> str:
     """回合开始时结算持续伤害（中毒等），返回给 DM 的一句话。
 
     5e 里中毒是「**每个自己的回合开始时**失去等于中毒等级的生命」，本该自动
@@ -658,6 +665,9 @@ def tick_dot(save: Save, state: CombatState, combatant: Combatant) -> str:
     多扣一次就误伤。现在挂在回合推进里，按时点自动扣。
 
     扣到 0 血按规则走倒地濒死（并掷死亡豁免），不是简单地少一格血。
+
+    :param rng: 死亡豁免用的随机源。留空用全局随机——**测试要传一个固定的**，
+        否则掷出天然 20 会回 1 血脱离濒死，让「扣到 0 就倒地」这条断言时过时不过。
     """
     effect = merge_effects(combatant_conditions(save, combatant))
     if not effect.dot or effect.dot[1] <= 0:
@@ -687,7 +697,7 @@ def tick_dot(save: Save, state: CombatState, combatant: Combatant) -> str:
     # 扣到 0 血：按 5e 走倒地濒死，接着掷死亡豁免（否则玩家会一直停在 0 血）
     card = get_character(save, combatant.cid) if combatant.kind == "player" else None
     if card is not None and card.is_dying:
-        outcome = card.death_save(rng=None)
+        outcome = card.death_save(rng=rng)
         set_character(save, card)
         note += f"；随即{outcome.describe()}"
     return f"🔥 {combatant.name} 受到持续伤害（{damage_type}）：{note}"
@@ -785,7 +795,7 @@ def _walk(
             continue
         # —— 玩家：回合开始先结算持续伤害（中毒等），再走倒地濒死 / 跳过 ——
         if commit and can_act(save, combatant):
-            dot = tick_dot(save, state, combatant)
+            dot = tick_dot(save, state, combatant, rng=rng)
             if dot:
                 state.pending.append(dot)
         card = get_character(save, combatant.cid)
@@ -1145,9 +1155,7 @@ def apply_threat_profile(
     if profile.has("legendary"):
         boss = str(profile.boss_cid or "")
         if not boss:
-            boss = pick_boss(
-                [c for c in state.order if c.is_enemy], resolve_monster
-            )
+            boss = pick_boss([c for c in state.order if c.is_enemy], resolve_monster)
         state.threat_boss = boss
         state.legendary_round = 0
         state.legendary_counts = {}
@@ -1167,9 +1175,7 @@ def apply_threat_profile(
                 state.width,
                 state.height,
                 profile.arena,
-                occupied=[
-                    (c.x, c.y) for c in state.order if c.x >= 0 and c.y >= 0
-                ],
+                occupied=[(c.x, c.y) for c in state.order if c.x >= 0 and c.y >= 0],
                 rng=rng,
             )
 
@@ -2072,7 +2078,9 @@ def threat_text(state: CombatState) -> str:
             if combatant.cid == str(getattr(state, "threat_boss", "") or ""):
                 boss = combatant.name
                 break
-        parts.append(f"首领{boss}每轮有 1 次传奇行动" if boss else "首领每轮有 1 次传奇行动")
+        parts.append(
+            f"首领{boss}每轮有 1 次传奇行动" if boss else "首领每轮有 1 次传奇行动"
+        )
     if "rulebreak" in tags:
         key = str(getattr(state, "arena_rule", "") or "")
         for rule in ARENA_RULES:

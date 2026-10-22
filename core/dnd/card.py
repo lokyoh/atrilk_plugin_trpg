@@ -142,6 +142,10 @@ class DndCharacter(TrpgCharacter):
     conditions: list[str] = field(default_factory=list)
     #: 力竭等级（0~6）
     exhaustion: int = 0
+    #: 口粮份数。5e 的初始装备包给 10 份，长休吃一份；
+    #: 吃不上就按饥饿规则过一次体质豁免（见 ``agents/dnd/tools.py`` 的 rest）。
+    #: **刻意不做逐日口粮清单**：一个整数够回答「还剩几顿」，多一套物品记录只是负担。
+    rations: int = 10
     #: 已知 / 可用法术（法术 key，法师为法术书收录，其他职业为已习得 / 可准备）
     spells: list[str] = field(default_factory=list)
     #: 已消耗的法术位：``{"1": 2}`` 表示 1 环已用 2 个（上限由职业与等级推出）
@@ -1089,6 +1093,7 @@ class DndCharacter(TrpgCharacter):
             "temp_hp",
             "conditions",
             "exhaustion",
+            "rations",
             "spells",
             "spell_slots_used",
             "death_saves_success",

@@ -25,7 +25,7 @@
 后果（:func:`pressure_bonus` 把它换成难度上的实际让步），模型只负责叙述。
 
 落盘在 ``save.progress["_world_state"]``（下划线开头 = 内部键，不会被原样发给玩家）。
-这一模块**不碰存档**：读存档的活儿在 :mod:`..agents.dnd.chapter_flow`，
+这一模块**不碰存档**：读存档的活儿在 :mod:`..agents.dnd.event_progress_flow`，
 和 :mod:`.threat` 一样的分层纪律。
 """
 
@@ -40,9 +40,9 @@ __all__ = [
     "DEADLINE_MAX",
     "EVOLUTION_KEY",
     "FACTION_STAGES",
-    "FactionState",
     "LOG_MAX",
     "PLACE_MARKS",
+    "FactionState",
     "PlaceState",
     "WorldEvolution",
     "advance_world",
@@ -126,6 +126,7 @@ def place_mark_for(kind: str = "", text: str = "") -> str:
         if word in haystack:
             return mark
     return ""
+
 
 #: 每个势力在这一地区留下的痕迹条数门槛（每 ``_MARK_EVERY`` 章加一条）
 _MARK_EVERY = 2
@@ -326,8 +327,8 @@ class Deadline:
 class WorldEvolution:
     """世界演化轨的完整状态，落在 ``save.progress["_world_state"]``。"""
 
-    #: 已推进到的章节序号（同一章重复推进是幂等的）
-    chapter: int = 0
+    #: 已推进到的事件序号（同一章重复推进是幂等的）
+    event_no: int = 0
     factions: list[FactionState] = field(default_factory=list)
     places: list[PlaceState] = field(default_factory=list)
     deadlines: list[Deadline] = field(default_factory=list)
@@ -338,7 +339,7 @@ class WorldEvolution:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "chapter": self.chapter,
+            "event": self.event_no,
             "factions": [f.to_dict() for f in self.factions],
             "places": [p.to_dict() for p in self.places],
             "deadlines": [d.to_dict() for d in self.deadlines],
@@ -350,7 +351,7 @@ class WorldEvolution:
     def from_dict(cls, data: Any) -> WorldEvolution:
         d = data if isinstance(data, dict) else {}
         return cls(
-            chapter=int(d.get("chapter", 0) or 0),
+            event_no=int(d.get("event", 0) or 0),
             factions=[
                 f
                 for f in (FactionState.from_dict(x) for x in (d.get("factions") or []))
@@ -443,11 +444,11 @@ def note_scene_change(save: Any, place: str, kind: str = "", text: str = "") -> 
     if not mark or not str(place or "").strip():
         return ""
     state = load_evolution(save)
-    chapter = 0
-    done = (getattr(save, "progress", None) or {}).get("_chapter")
+    event_no = 0
+    done = (getattr(save, "progress", None) or {}).get("_event")
     if isinstance(done, dict):
-        chapter = int(done.get("completed", 0) or 0)
-    mark_place(state, place, mark, chapter=chapter)
+        event_no = int(done.get("completed", 0) or 0)
+    mark_place(state, place, mark, event_no=event_no)
     store_evolution(save, state)
     return mark
 
@@ -468,11 +469,11 @@ def faction_agenda(faction: FactionState) -> str:
     if faction.note:
         return faction.note
     where = faction.region or "本地"
-    verb = ("扩张在%s的盘子" % where, "把%s握在自己手里" % where)[_h(faction.name) % 2]
+    verb = (f"扩张在{where}的盘子", f"把{where}握在自己手里")[_h(faction.name) % 2]
     return f"{faction.name}想要{verb}"
 
 
-def _seed_factions(state: WorldEvolution, entities: list[Any], chapter: int) -> None:
+def _seed_factions(state: WorldEvolution, entities: list[Any], event_no: int) -> None:
     """从圣经里的势力登记播种（零模型成本，重复调用幂等）。"""
     known = {f.name for f in state.factions}
     for entity in entities:
@@ -486,17 +487,17 @@ def _seed_factions(state: WorldEvolution, entities: list[Any], chapter: int) -> 
                 name=name,
                 region=str(getattr(entity, "region", "") or ""),
                 note=str(getattr(entity, "note", "") or ""),
-                since=chapter,
+                since=event_no,
             )
         )
         known.add(name)
 
 
-def _advance_factions(state: WorldEvolution, chapter: int) -> list[str]:
+def _advance_factions(state: WorldEvolution, event_no: int) -> list[str]:
     """推进所有势力的位置，返回本次要记的日志。"""
     lines: list[str] = []
     for faction in state.factions:
-        span = chapter - faction.since
+        span = event_no - faction.since
         if span <= 0:
             continue
         # 每个势力的相位错开（按名字散列），否则所有势力同一章一起动，太整齐
@@ -513,7 +514,9 @@ def _advance_factions(state: WorldEvolution, chapter: int) -> list[str]:
         # 痕迹累积：势力在自己地区留下的痕迹逐章变多
         mark_target = (span + offset) // _MARK_EVERY
         if mark_target > faction.marks:
-            state.note(f"{faction.region or faction.name}：{_mark_text(state, faction)}")
+            state.note(
+                f"{faction.region or faction.name}：{_mark_text(state, faction)}"
+            )
             faction.marks = mark_target
     return lines
 
@@ -531,16 +534,20 @@ def _mark_text(state: WorldEvolution, faction: FactionState) -> str:
     return mark
 
 
-def mark_place(state: WorldEvolution, name: str, mark: str, *, chapter: int = 0) -> PlaceState:
+def mark_place(
+    state: WorldEvolution, name: str, mark: str, *, event_no: int = 0
+) -> PlaceState:
     """给一个地点记一条痕迹（战斗打过的场景、外部事件都能往这儿挂）。"""
     where = str(name or "").strip()
     if not where:
         raise ValueError("地点名为空")
     place = state.place(where)
     if place is None:
-        place = PlaceState(name=where, since=chapter)
+        place = PlaceState(name=where, since=event_no)
         state.places.append(place)
-    body = str(mark or "").strip()[:20] or PLACE_MARKS[len(place.marks) % len(PLACE_MARKS)]
+    body = (
+        str(mark or "").strip()[:20] or PLACE_MARKS[len(place.marks) % len(PLACE_MARKS)]
+    )
     place.marks.append(body)
     state.note(f"{where}：{body}")
     return place
@@ -557,13 +564,13 @@ def deadline_names(count: int) -> tuple[str, str]:
     return f"第{count}件事·{key}", note.format(n=count)
 
 
-def _advance_deadlines(state: WorldEvolution, chapter: int) -> list[str]:
+def _advance_deadlines(state: WorldEvolution, event_no: int) -> list[str]:
     """推进期限：到期的结算后果，逾期的继续挂（**不会因为玩家做完事就停下**）。"""
     lines: list[str] = []
     for deadline in state.deadlines:
         if deadline.settled:
             continue
-        if chapter >= deadline.due:
+        if event_no >= deadline.due:
             if not deadline.outcome:
                 key, text = _DEADLINE_OUTCOMES[
                     _h(deadline.name) % len(_DEADLINE_OUTCOMES)
@@ -571,21 +578,21 @@ def _advance_deadlines(state: WorldEvolution, chapter: int) -> list[str]:
                 deadline.outcome = text
                 deadline.outcome_key = key
             deadline.settled = True
-            deadline.overdue = chapter - deadline.due
+            deadline.overdue = event_no - deadline.due
             lines.append(f"{deadline.name}到期了：{deadline.outcome}")
             continue
         deadline.overdue = max(0, deadline.overdue)
-        if deadline.due - chapter <= 1:
-            lines.append(f"{deadline.name}只差 {deadline.due - chapter} 章了")
+        if deadline.due - event_no <= 1:
+            lines.append(f"{deadline.name}只差 {deadline.due - event_no} 章了")
 
     # 生成新期限：按 DEADLINE_EVERY 的节拍，超上限就强制结清最老的一个
-    if chapter > 0 and chapter % DEADLINE_EVERY == 0:
+    if event_no > 0 and event_no % DEADLINE_EVERY == 0:
         state.deadline_count += 1
         name, note = deadline_names(state.deadline_count)
         fresh = Deadline(
             name=name,
-            born=chapter,
-            due=chapter + _h(name) % 3 + 2,
+            born=event_no,
+            due=event_no + _h(name) % 3 + 2,
             note=note,
         )
         state.deadlines.append(fresh)
@@ -607,29 +614,29 @@ def _advance_deadlines(state: WorldEvolution, chapter: int) -> list[str]:
 
 def advance_world(
     state: WorldEvolution,
-    chapter: int,
+    event_no: int,
     *,
     entities: list[Any] | None = None,
 ) -> WorldEvolution:
-    """把世界推进到第 ``chapter`` 章（就地修改并返回同一个对象）。
+    """把世界推进到第 ``event_no`` 章（就地修改并返回同一个对象）。
 
-    **幂等**：同一章重复推进不会重复加压——``chapter`` 不比当前大就直接返回。
+    **幂等**：同一章重复推进不会重复加压——``event_no`` 不比当前大就直接返回。
     这样「结束一章」「建下一章」两处都能放心调用。
 
     :param entities: 圣经里的实体（用于播种势力），一般由调用方读好传进来。
     """
-    chapter = max(0, int(chapter))
+    event_no = max(0, int(event_no))
     if entities:
-        _seed_factions(state, entities, chapter)
-    if chapter <= state.chapter:
+        _seed_factions(state, entities, event_no)
+    if event_no <= state.event_no:
         return state
 
     lines: list[str] = []
-    lines.extend(_advance_factions(state, chapter))
-    lines.extend(_advance_deadlines(state, chapter))
+    lines.extend(_advance_factions(state, event_no))
+    lines.extend(_advance_deadlines(state, event_no))
     for line in lines:
         state.note(line)
-    state.chapter = chapter
+    state.event_no = event_no
     return state
 
 
@@ -678,7 +685,9 @@ def evolution_text(state: WorldEvolution, *, for_player: bool = False) -> str:
     if for_player:
         return "\n".join(lines)
     if state.open_deadlines():
-        lines.append("· 未结的期限：" + "；".join(d.line() for d in state.deadlines[:4]))
+        lines.append(
+            "· 未结的期限：" + "；".join(d.line() for d in state.deadlines[:4])
+        )
     if state.log:
         lines.append("· 最近：" + "；".join(state.log[-3:]))
     return "\n".join(lines)

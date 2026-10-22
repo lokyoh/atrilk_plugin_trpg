@@ -1,18 +1,18 @@
 """纪元编排：把「一章结束了」变成「一个纪元结算了」。
 
 这一层在 :mod:`...agents.dnd` 而不是 :mod:`...dnd.epoch`，因为它要**读存档**
-（章节状态、事件日志、世界圣经）、**调模型**（给称号命名）、**写世界库**
+（事件状态、事件日志、世界圣经）、**调模型**（给称号命名）、**写世界库**
 （称号进圣经）。纯判定与代价施加都在 :mod:`...dnd.epoch` 里，那边一概不碰存档。
 
 一次结算走五步：
 
-1. 读章节状态与演化轨，算出这个纪元的事实（:func:`~...dnd.epoch.epoch_facts`）；
+1. 读事件状态与演化轨，算出这个纪元的事实（:func:`~...dnd.epoch.epoch_facts`）；
 2. :func:`~...dnd.epoch.verdict` 收束判定——**纯函数**，同样的事实给同样的结论；
 3. 达成的结局 → 记进存档并把 ``wrapping_up`` 立起来（本局收）；
    未达成 → :func:`~...dnd.epoch.apply_epoch_cost` 给代价（落在演化轨上）；
 4. :class:`~.gen_epoch.EpithetAgent` 按纪元内的实际行为命名一次，失败用程序兜底；
 5. 称号同时进存档与**世界圣经**（``kind="person"``），所以它会出现在
-   玩家向的世界背景手册里，也会被后面的章节生成器当成既有专有名词复用。
+   玩家向的世界背景手册里，也会被后面的事件生成器当成既有专有名词复用。
 
 **触发时机是「一章结束」而不是「织下一章」**：织下一章时结算会让第 4 章的
 结算晚到第 5 章才发生，那样「第 4 章触发一次结算」就不成立了。
@@ -26,7 +26,11 @@ from dataclasses import dataclass, field
 from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
-from ...dnd.chapter import ChapterState
+from ...dnd.encounter_budget import (
+    Performance,
+    performance_factor,
+    summarize_performance,
+)
 from ...dnd.epoch import (
     EPOCH_COSTS,
     EpithetGrant,
@@ -42,6 +46,7 @@ from ...dnd.epoch import (
     store_epoch,
     verdict,
 )
+from ...dnd.event_progress import EventProgress, Recipe, mark_done
 from ...dnd.evolution import load_evolution, pressure_bonus, store_evolution
 from ...dnd.save_store import Save, log_event, recent_events, save_save
 from ...dnd.world_bible import Entity, register_entities
@@ -51,7 +56,7 @@ from .gen_epoch import EpithetAgent, epithet_agent
 
 __all__ = [
     "EpochOutcome",
-    "close_chapter",
+    "advance_event",
     "epoch_deeds",
     "settle_epoch",
 ]
@@ -59,8 +64,11 @@ __all__ = [
 #: 进度回调
 ProgressCallback = Callable[[str], "Awaitable[None] | None"]
 
-#: 列进行为事实时读多少条事件日志。同一档取法见
-#: :data:`...agents.dnd.chapter_flow._PERF_EVENT_LIMIT`。
+#: 参与难度自适应的事件条数上限。取最近 200 条：够覆盖两三次战斗的
+#: 回合与倒地记录，又不会把整局日志都读进来（存档跑久了事件文件会很长）。
+_PERF_EVENT_LIMIT = 200
+
+#: 列进行为事实时读多少条事件日志。与上面同一档，两处刻意取同一个数。
 _DEED_EVENT_LIMIT = 200
 
 #: 事实清单里各类各取几条。刻意都很少——称号的输入是「几个抓手」，
@@ -98,42 +106,59 @@ class EpochOutcome:
         """给 DM 看的结算摘要（也会拼进玩家消息）。"""
         if not self.settled:
             return ""
-        head = f"第{self.index}纪元结算（截至第 {self.facts.last_chapter} 章）"
+        head = f"第{self.index}纪元结算（截至第 {self.facts.last_event} 章）"
         if self.ending:
             return f"{head}：达成结局【{self.ending}】。称号「{self.epithet}」。"
-        tail = f"代价：{'；'.join(self.costs)}" if self.costs else "这一纪元没有留下代价"
+        tail = (
+            f"代价：{'；'.join(self.costs)}" if self.costs else "这一纪元没有留下代价"
+        )
         return f"{head}：未达成收束。称号「{self.epithet}」。{tail}。"
 
 
 # --------------------------------------------------------------------------- #
-# 结束一章（生产路径上「completed 推进」的那一步）
+# 结束一个事件（生产路径上「completed 推进」的那一步）
 # --------------------------------------------------------------------------- #
 
 
-def close_chapter(
+def _perf_of(
+    save: Save, *, enabled: bool = True, difficulty: str = "medium"
+) -> tuple[Performance, float]:
+    """从事件日志算表现统计与系数。
+
+    第一次读世界时事件文件可能还不存在，``recent_events`` 会返回空列表——
+    那是正常的（新档没有任何历史），系数为 0 表示「按基准难度来」。
+    """
+    try:
+        events = recent_events(save, limit=_PERF_EVENT_LIMIT)
+    except OSError as e:  # 事件文件读不到不该拦住开局
+        log.warning(f"读事件日志失败，表现系数按 0 处理：{e}")
+        events = []
+    perf = summarize_performance(events)
+    return perf, performance_factor(perf, difficulty=difficulty, enabled=enabled)
+
+
+def advance_event(
     save: Save,
     *,
     difficulty: str = "medium",
     note: str = "",
-) -> object | None:
-    """结束当前章，返回被结束的卡（没有当前章则 ``None``）。
+    done: int = 0,
+    total: int = 0,
+) -> str:
+    """记下「一件事了结了」，推进「已完成事件数」，返回进手册的那一句。
 
-    **这一函数是 :attr:`~...dnd.chapter.ChapterState.completed` 唯一的生产写入点**。
-    之前 ``start_chapter`` 只覆盖卡、不结束旧章，于是完成章数永远停在 0——
-    难度三轨的章节序号轨、威胁层级、世界演化轨、纪元结算全跟着停在第 1 章。
+    唯一的生产写入点在 :func:`~...dnd.event_progress.mark_done`，这里只是带上
+    **表现系数**——难度序号轨、威胁层级、世界演化轨、纪元结算全靠这个数往前走；
+    没人推它，整局就会一直停在第 1 个事件。
 
-    表现系数要在结束**之前**算：那一步读最近的事件日志，顺序上刚好还是
-    刚打完的这一章。是否启用自适应从存档的织法里读，与
-    :func:`~.chapter_flow.chapter_plan` 保持一致。
+    表现系数要在记录**之前**算：那一步读最近的事件日志，顺序上刚好还是
+    刚打完的这件事。是否启用自适应从存档的织法里读。
+
+    :param done: 这件事了结了几个局面（与 ``total`` 一起算本件完成率）
     """
-    from ...dnd.chapter import Recipe, _load, complete_chapter
-    from .chapter_flow import _perf_of
-
-    if _load(save).card.id == "":
-        return None
     rec = Recipe.from_dict((save.progress or {}).get("_recipe") or {})
     _perf, factor = _perf_of(save, enabled=rec.adapt, difficulty=difficulty)
-    return complete_chapter(save, factor=factor, note=note)
+    return mark_done(save, factor=factor, note=note, done=done, total=total)
 
 
 # --------------------------------------------------------------------------- #
@@ -141,20 +166,20 @@ def close_chapter(
 # --------------------------------------------------------------------------- #
 
 
-def epoch_deeds(save: Save, state: ChapterState, facts: EpochFacts) -> list[str]:
+def epoch_deeds(save: Save, state: EventProgress, facts: EpochFacts) -> list[str]:
     """列出一个纪元里实际发生的事——**全是程序提取的，不调模型**。
 
-    这些是称号的「抓手」：战斗与倒地读事件日志，章节与线索读章节状态，
+    这些是称号的「抓手」：战斗与倒地读事件日志，事件与线索读事件状态，
     痕迹与账期读演化轨。刻意不给原始流水，模型看到的是结论而不是素材。
     """
-    first = facts.first_chapter
-    last = facts.last_chapter
+    first = facts.first_event
+    last = facts.last_event
     deeds: list[str] = []
 
-    if facts.chapters:
+    if facts.events:
         window = state.history[first - 1 : last]
         if window:
-            deeds.append("打过的章节：" + "、".join(window[-_DEED_TITLES:]))
+            deeds.append("打过的事件：" + "、".join(window[-_DEED_TITLES:]))
 
     try:
         events = recent_events(save, limit=_DEED_EVENT_LIMIT)
@@ -167,7 +192,9 @@ def epoch_deeds(save: Save, state: ChapterState, facts: EpochFacts) -> list[str]
         perf = summarize_performance(events)
         bits: list[str] = []
         if perf.combats:
-            bits.append(f"打了 {perf.combats} 场硬仗（平均 {perf.rounds_avg:.1f} 回合）")
+            bits.append(
+                f"打了 {perf.combats} 场硬仗（平均 {perf.rounds_avg:.1f} 回合）"
+            )
         if perf.knockdowns:
             bits.append(f"有 {perf.knockdowns} 人次被打倒过")
         if perf.long_rests:
@@ -182,15 +209,19 @@ def epoch_deeds(save: Save, state: ChapterState, facts: EpochFacts) -> list[str]
     if evo.factions:
         top = evo.dominant_faction()
         if top is not None:
-            deeds.append(f"{top.name}（{top.region or '本地'}）现在的位置：{top.stage_label}")
+            deeds.append(
+                f"{top.name}（{top.region or '本地'}）现在的位置：{top.stage_label}"
+            )
     marked = [p for p in evo.places if p.marks][-_DEED_MARKS:]
     if marked:
         deeds.append(
-            "留下的痕迹：" + "；".join(f"{p.name}（{'、'.join(p.marks)}）" for p in marked)
+            "留下的痕迹："
+            + "；".join(f"{p.name}（{'、'.join(p.marks)}）" for p in marked)
         )
     if evo.open_deadlines():
         deeds.append(
-            "还压着的账：" + "；".join(d.line() for d in evo.open_deadlines()[:_DEED_LOG])
+            "还压着的账："
+            + "；".join(d.line() for d in evo.open_deadlines()[:_DEED_LOG])
         )
     if evo.log:
         deeds.append("最近：" + "；".join(evo.log[-_DEED_LOG:]))
@@ -216,12 +247,12 @@ async def settle_epoch(
     （:func:`~...dnd.epoch.is_epoch_end`）刻意要求 ``completed > 0``，
     这样开局的第一章不会误触发。
     """
-    from ...dnd.chapter import _load
+    from ...dnd.event_progress import _load
 
     outcome = EpochOutcome()
-    chapter_state = _load(save)
+    event_state = _load(save)
     ep_state = load_epoch(save)
-    completed = chapter_state.completed
+    completed = event_state.completed
     if not is_epoch_end(completed, ep_state.length):
         return outcome
 
@@ -229,7 +260,7 @@ async def settle_epoch(
     index = epoch_index(completed, ep_state.length)
     first, last = epoch_span(index, ep_state.length)
     facts = epoch_facts(
-        chapter_state,
+        event_state,
         evo,
         index=index,
         length=ep_state.length,
@@ -246,19 +277,21 @@ async def settle_epoch(
         outcome.ending = decision.ending
         ep_state.ending = decision.ending
         ep_state.endings.append(
-            {"index": index, "ending": decision.ending, "chapter": completed}
+            {"index": index, "ending": decision.ending, "event": completed}
         )
     else:
         # 未达成**不硬拦**：把代价落在演化轨上，然后照常进下一纪元
-        lines = apply_epoch_cost(evo, decision.costs, chapter=completed)
+        lines = apply_epoch_cost(evo, decision.costs, event_no=completed)
         outcome.costs = lines
         ep_state.last_costs = list(lines)
         store_evolution(save, evo)
-        log_event(save, "note", f"第{index}纪元未达成收束：" + "；".join(lines), actor="dm")
+        log_event(
+            save, "note", f"第{index}纪元未达成收束：" + "；".join(lines), actor="dm"
+        )
 
     # -- 称号：一次模型调用，失败就用程序兜底 -------------------------------- #
     name = ""
-    deeds = epoch_deeds(save, chapter_state, facts)
+    deeds = epoch_deeds(save, event_state, facts)
     if agent is not None:
         try:
             result = await agent.run(
@@ -285,7 +318,7 @@ async def settle_epoch(
         EpithetGrant(
             index=index,
             name=name,
-            chapter=completed,
+            event_no=completed,
             verdict=decision.ending or f"未达成（{decision.reason}）",
         ),
     )

@@ -1,7 +1,7 @@
 """DND 5e 规则条目（供 DM 的 ``get_rule`` 功能按需查询）。
 
 规则正文来自插件内置资源 ``res/rule.md``（随插件一起分发，不依赖仓库外部文件），
-按 ``##`` 章节切分后缓存；:func:`match_rules` 用关键词 / 相似度挑出最相关的
+按 ``##`` 事件切分后缓存；:func:`match_rules` 用关键词 / 相似度挑出最相关的
 若干条返回，未命中时回退到相似度最高的一条。
 """
 
@@ -28,13 +28,13 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 RULE_FILE = PLUGIN_ROOT / "res" / "rule.md"
 
 _SECTION_RE = re.compile(r"^##\s+(?P<title>.+?)\s*$")
-#: 章节标题的序号前缀，如「一、」「3.」
+#: 事件标题的序号前缀，如「一、」「3.」
 _ORDER_RE = re.compile(r"^[一二三四五六七八九十百零\d]+[、.．]\s*")
 
 
 @lru_cache(maxsize=1)
 def load_rule_sections() -> dict[str, str]:
-    """读取并切分规则文件，返回 ``章节标题 -> 正文``（标题已去掉序号）。"""
+    """读取并切分规则文件，返回 ``事件标题 -> 正文``（标题已去掉序号）。"""
     try:
         text = RULE_FILE.read_text(encoding="utf-8")
     except OSError as e:
@@ -80,7 +80,7 @@ def match_rules(topic: str, limit: int = 3) -> str:
             ratio += 1.0
         elif topic in body:
             # 标题没提但正文讲到的（如「专注」在「法术规则」里）也算沾边；
-            # 提得越多的章节排得越前
+            # 提得越多的事件排得越前
             ratio += 0.4 + min(0.5, body.count(topic) * 0.05)
         # 有条目直接以该词开头且带解释（「- **中毒**：……」）时，这节就是它的主场
         for line in body.splitlines():

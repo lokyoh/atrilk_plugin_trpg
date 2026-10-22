@@ -76,7 +76,7 @@ from .core.dnd import (
     set_binding,
     story_files,
 )
-from .core.dnd.chapter import chapter_summary
+from .core.dnd.event_progress import event_summary
 from .core.trpg import DiceError, roll
 from .matchers import (
     create_card,
@@ -563,7 +563,7 @@ class _StartPending:
 
     user_id: str
     #: 当前阶段：只剩 "world"（选世界）。原先还有 "story"（选故事），
-    #: 故事推力文档下线后没有第二阶段了——章节是**建档之后**才织的。
+    #: 故事推力文档下线后没有第二阶段了——事件是**建档之后**才织的。
     stage: str
     #: 已选中的世界键（预留：将来若要分阶段选择时用）
     world_key: str = ""
@@ -629,7 +629,7 @@ def _world_chooser(worlds, note: str = "") -> str:
         "· 生成一个新世界 → /跑团.开局 生成 [主题]（不给主题就随机）",
         "· 一条命令开无尽局 → /跑团.开局 无尽（装预设世界 + 按无尽节奏跑）",
         "",
-        "世界是所有存档共享的；选完之后每一局会自己织自己的章节，互不影响。",
+        "世界是所有存档共享的；选完之后每一局会自己织自己的事件，互不影响。",
     ]
     return "\n".join(lines)
 
@@ -720,7 +720,7 @@ def _open_save(
     text = (
         f"🎲 冒险已就绪：存档 {save.save_id}\n"
         f"世界「{world_name}」· {mode_text(save)}\n"
-        "这一局的章节会在**开局时按队伍的实际水平织出来**；"
+        "这一局的事件会在**开局时按队伍的实际水平织出来**；"
         "区域 / 城镇 / 自然地点 / 地下城 / 场景同样在用到时按需生成。\n\n"
         "先等大家加入，人齐了再开局：\n"
         f"· 加入：/跑团.加入 {save.save_id}（本群直接发 /跑团.加入 也行）\n"
@@ -818,7 +818,8 @@ async def _start_game(
     head = parts[0] if parts else ""
     rest = parts[1].strip() if len(parts) > 1 else ""
     worlds = list_worlds()
-    pending = _pending_pick(key, user_id)
+    # 顺手清掉过期的开局选择状态（这个调用的副作用就是清理，返回值用不上）
+    _pending_pick(key, user_id)
 
     # ·「无尽」：一条命令开局。装预设世界（零模型调用，已装则复用）+ 建档 +
     #   把无尽玩法写进存档。之前要先「开局 预设」再「开局 选世界」，两步。
@@ -855,12 +856,12 @@ async def _start_game(
         info = get_world(preset_key)
         await start_game.finish(
             f"📦 已装好预设世界「{info.title if info is not None else preset_key}」"
-            "（世界里的章节会在开局时按队伍水平织出来）。\n"
+            "（世界里的事件会在开局时按队伍水平织出来）。\n"
             "· 用它开局 → /跑团.开局（会在世界列表里列出来）\n"
             "· 想现生成一个 → /跑团.开局 生成 [主题]"
         )
 
-    # ·「生成」：生成一个新世界（章节在建档、开局时才织，不在这一步）
+    # ·「生成」：生成一个新世界（事件在建档、开局时才织，不在这一步）
     if head in _GEN_WORDS:
         _START_PENDING.pop(key, None)
         await matcher.send(
@@ -900,7 +901,7 @@ async def _start_game(
                     _world_chooser(worlds, note=f"没有找到世界「{target}」。")
                 )
 
-        # 选中世界：直接建档。章节在建档后由 /跑团.开始 织，所以这里不再多问一轮。
+        # 选中世界：直接建档。事件在建档后由 /跑团.开始 织，所以这里不再多问一轮。
         # ``/跑团.开局 3 无尽`` 这种写法也认——玩法跟在世界名或序号后面。
         _START_PENDING.pop(key, None)
         mode = "endless" if rest.lower() in _ENDLESS_WORDS else ""
@@ -1313,17 +1314,17 @@ async def _show_save(event: MessageEvent, args: Message = CommandArg()):
 
     world = get_world(save.world_key)
     world_name = world.title if world else save.world_key
-    chapter_line = chapter_summary(save, for_player=False).splitlines()
-    chapter_no = ""
-    if chapter_line:
-        chapter_no = chapter_line[0].split("】")[-1].strip()
+    event_line = event_summary(save, for_player=False).splitlines()
+    event_no = ""
+    if event_line:
+        event_no = event_line[0].split("】")[-1].strip()
 
     started = is_started(save)
     names = _save_player_names(save)
     lines = [
         f"存档 {save.save_id}",
         f"玩家 {len(save.player_ids)} 人" + (f"：{'、'.join(names)}" if names else ""),
-        f"世界：{world_name}    章节：{chapter_no or '（未开第一章）'}    "
+        f"世界：{world_name}    事件：{event_no or '（未开第一章）'}    "
         f"当前场景：{save.current_scene or ('（还没开局）' if not started else '（未设置）')}",
         "",
     ]

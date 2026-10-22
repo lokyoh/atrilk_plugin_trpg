@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 from ..base import AgentInput, AgentResult, TrpgAgent
 
-__all__ = ["RealmAgent", "RealmResult", "parse_realm", "realm_agent"]
+__all__ = ["RealmAgent", "RealmResult", "parse_inhabited", "parse_realm", "realm_agent"]
 
 
 _SYSTEM_PROMPT = """# 任务
@@ -46,6 +46,7 @@ _SYSTEM_PROMPT = """# 任务
 # <王国/地区名称>
 
 ## 一、政体
+- 地区类型：<有政体 | 无人区>
 - 国名或通称：
 - 政体：<君主制 / 寡头 / 教权 / 商会共和 / 部族联盟……>
 - 统治者：<称号 + 名字，或「空位」>
@@ -98,6 +99,12 @@ _SYSTEM_PROMPT = """# 任务
 - 统治者、势力、要地一律沿用输入与世界圣经里已有的名字；确需新名字时只新增必要的那几个。
 - 「当前局势」写进「一、政体」的「一句话性格」与「五、要地」的现状里，不单独开节。
 - 省（区域）划到 **3–6 个**，名字要能指认地貌或产业（「废炉群」「西盐田」），不要叫「北省」「南省」。
+- **「地区类型」必须是「有政体」或「无人区」之一**。无人区指的是**这片地方没人管事**：
+  没有政体、没有常驻人口、没有驿站与关卡——不是因为穷，是因为没有建制。
+  无人区仍要写满六节，但每节写的是「这里没有什么」以及**为什么**：
+  政体写清为什么没人（天灾 / 战争打空了 / 诅咒 / 从来就没人 / 被谁清空了）；
+  法度写「没有法度时这里靠什么」；军力写「谁会来」；外交写邻国怎么看待这片空地；
+  要地写地标与废墟；区域划分照常。**无人区的区域里不该出现据点**，「主要据点」一栏写「无」。
 - 不新增输入里没有的国家或势力；不与已有设定矛盾。
 - 语言简洁，每条一行，可直接用于后续生成区域与场景。"""
 
@@ -144,6 +151,27 @@ def _field(block: str, *labels: str) -> str:
     return ""
 
 
+_INHABITED_RE = re.compile(r"地区类型[：:]\s*(.+)")
+
+
+def parse_inhabited(text: str) -> bool:
+    """这个王国是不是**有人管事**；读不出来的一律按「有政体」算。
+
+    无人区不是「种地少」，是**没人管事**：没有政体、没有常驻人口、没有驿站与关卡。
+    它对下游有三条连锁（见 ``docs/trpg-world-timeline-design.md``）：
+
+    1. 区域里不该出现据点，只会有野外地点与地下城；
+    2. 跨越它时没有补给，长休质量差；
+    3. **不产流言**——荒野里没有目击者，也就没有人传话。
+
+    **读不出来按「有政体」算**：旧文档没有这个字段，默认按有人处理，行为不变。
+    """
+    match = _INHABITED_RE.search(text or "")
+    if not match:
+        return True
+    return "无人" not in match.group(1)
+
+
 def parse_realm(text: str) -> list[tuple[str, str, str]]:
     """解析 realm 文档的「区域划分」，返回 ``[(省名, 地形底色, 主要据点)]``。
 
@@ -178,7 +206,9 @@ class RealmAgent(TrpgAgent):
 
     name = "realm"
     title = "王国/地区生成"
-    description = "根据地区与周边信息，生成政体 / 法度 / 军力 / 外交，并给出区域（省）划分"
+    description = (
+        "根据地区与周边信息，生成政体 / 法度 / 军力 / 外交，并给出区域（省）划分"
+    )
     system_prompt = _SYSTEM_PROMPT
     inputs = (
         AgentInput("realm", "本地区信息", description="该地区在世界地图里的设定"),

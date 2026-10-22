@@ -6,7 +6,7 @@
 同一个世界。
 
 库里的文档分两层：**世界骨架**（world / area / city / place / dungeon / scene）
-在任何存档之间共享，换一局、换一条路线都不变；**章节卡**（``chapter``）是剧本层，
+在任何存档之间共享，换一局、换一条路线都不变；**事件卡**（``event``）是剧本层，
 织出来就落在这个世界里，所以织过的章可以复玩。
 
 落盘形态为「markdown 文件 + JSON 索引 + 世界注册表」：
@@ -20,7 +20,7 @@
             docs/<kind>/<key>.md        # 每个文档一个 markdown 文件
 
 ``kind`` 取 :data:`DOC_KINDS`；每个世界的主文档（世界地图）键固定为 ``main``，
-章节卡键由 :func:`new_chapter_id` 生成（并复用卡自身的 id，所以重复保存幂等）。
+事件卡键由 :func:`new_event_id` 生成（并复用卡自身的 id，所以重复保存幂等）。
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ __all__ = [
     "SITE_KINDS",
     "WORLDS_DIRNAME",
     "WORLD_DIRNAME",
-    "ChapterRefInfo",
+    "EventRefInfo",
     "WorldDoc",
     "WorldInfo",
     "add_provinces",
@@ -60,19 +60,22 @@ __all__ = [
     "index_path",
     "kinds_at",
     "level_of",
-    "list_chapters",
     "list_docs",
+    "list_events",
     "list_worlds",
     "load_doc",
     "load_index",
     "names_at_level",
-    "new_chapter_id",
+    "new_event_id",
     "new_world_id",
+    "province_crossing",
     "province_index",
     "read_at_level",
     "read_doc",
+    "realm_inhabited",
     "registry_path",
     "save_doc",
+    "scene_site_index",
     "set_provinces",
     "set_world_map",
     "upsert_world",
@@ -87,7 +90,7 @@ __all__ = [
 #: 有管事的人）、野外地点（地形与遭遇）、地下城（多房间的探索空间）三者的生成模板与
 #: 下游用法本来就不一样，合成一个再靠子类型分派，只是把区别藏进 meta 里。
 #:
-#: ``chapter`` 不属于地理层级，它是挂在存档上的剧本卡。
+#: ``event`` 不属于地理层级，它是挂在存档上的剧本卡。
 DOC_KINDS: tuple[str, ...] = (
     "world",
     "realm",
@@ -96,7 +99,7 @@ DOC_KINDS: tuple[str, ...] = (
     "place",
     "dungeon",
     "scene",
-    "chapter",
+    "event",
 )
 
 #: 文档种类 -> 中文名
@@ -108,13 +111,13 @@ DOC_KIND_LABELS: dict[str, str] = {
     "place": "野外地点",
     "dungeon": "地下城",
     "scene": "场景",
-    "chapter": "章节",
+    "event": "事件",
 }
 
 #: 第 4 层的三个种类（地点）
 SITE_KINDS: tuple[str, ...] = ("city", "place", "dungeon")
 
-#: 文档种类 -> 地理层级（世界 = 1）。``chapter`` 不在地理层级里，记为 0。
+#: 文档种类 -> 地理层级（世界 = 1）。``event`` 不在地理层级里，记为 0。
 KIND_LEVEL: dict[str, int] = {
     "world": 1,
     "realm": 2,
@@ -123,7 +126,7 @@ KIND_LEVEL: dict[str, int] = {
     "place": 4,
     "dungeon": 4,
     "scene": 5,
-    "chapter": 0,
+    "event": 0,
 }
 
 #: 层级 -> 该层全部种类
@@ -493,7 +496,7 @@ def list_docs(world_key: str, kind: str | None = None) -> dict[str, list[str]]:
 
 
 def level_of(kind: str) -> int:
-    """某个文档种类属第几层（世界 = 1；``chapter`` 不在地理层级里，返回 0）。"""
+    """某个文档种类属第几层（世界 = 1；``event`` 不在地理层级里，返回 0）。"""
     return KIND_LEVEL.get(str(kind or "").strip().lower(), 0)
 
 
@@ -569,6 +572,39 @@ def get_provinces(world_key: str) -> dict[str, list[str]]:
     return {str(k): list(v) for k, v in (index.get("provinces") or {}).items()}
 
 
+def scene_site_index(world_key: str) -> dict[str, str]:
+    """「场景 → 它属于哪个场所」的映射（**场景组**）。
+
+    一个 ``place``（第 4 层）可以挂着好几个 ``scene``（第 5 层）——
+    官方模组里一艘船有主甲板、船长室、储藏室，**它们是同一个场所里的房间**。
+
+    判据是场景文档的 ``meta.group``：修道院 / 洞穴 / 船骸 / 天文台这种
+    「岛上的分组」不是独立的一层，它们只作为 ``group`` 出现，
+    而 ``meta.site`` 仍然指向真正的地点文档名（风骸岛）。
+    没写 ``group`` 的老场景回落到 ``meta.site``——那时地点与场景同名，
+    落在同一个地点里的场景自然算一组。
+
+    **为什么需要它**：移动系统要分清两种走法——
+
+    - **组内移动**（主甲板 → 船长室）：在同一处地方里挪个位置。
+      不该扣世界时间（官方是几分钟），也不该判一次「路上有没有事」；
+    - **跨组移动**（船上 → 修道院）：换地方了，该按跨越难度算时间、
+      该每跳判一次路上有没有事。
+
+    没有这个区分，玩家在船舱里走一圈会被算成三十二小时 + 八次遭遇判定。
+
+    取不到 ``meta.site`` 的场景不在表里——那时它没有组，
+    移动按普通场景处理（不特殊照顾，也不特殊对待）。
+    """
+    index = load_index(world_key)
+    sites: dict[str, str] = {}
+    for name, meta in (index["docs"].get("scene") or {}).items():
+        site = str((meta or {}).get("group") or (meta or {}).get("site") or "")
+        if site:
+            sites[str(name)] = site
+    return sites
+
+
 def province_index(world_key: str) -> dict[str, str]:
     """「地名 → 它属于哪个省」的映射，供旅行时间换算用。
 
@@ -576,7 +612,12 @@ def province_index(world_key: str) -> dict[str, str]:
 
     - 省自己映射到自己（``盐仓区 → 盐仓区``）；
     - 地点文档的 ``meta.parent``（``盐仓码头 → 盐仓区``）；
-    - 场景文档的 ``meta.site``（``盐仓码头夜景 → 盐仓码头``，再由上一条接上去）。
+    - 场景文档的 ``meta.province``（直接挂省），或 ``meta.site``
+      （指向所属地点，再由上一条接上去）。
+
+    两种场景写法都在用：老世界的场景只写 ``meta.site``；一个场所挂多个
+    房间场景时（风骸岛有 26 个），场所本身可能只是**分组标签**而不是文档，
+    这时场景直接写 ``meta.province``——否则那一串房间都定位不到省。
 
     **王国不在表里**：它不是旅行单位，从王国出发得先说清去哪个省。
     取不到的（比如没归到省的地点）就不在表里——那样旅行时间会算成「不知道」，
@@ -593,10 +634,47 @@ def province_index(world_key: str) -> dict[str, str]:
             if parent:
                 places[str(name)] = parent
     for name, meta in (index["docs"].get("scene") or {}).items():
+        province = str((meta or {}).get("province") or "")
+        if province in places:
+            places[str(name)] = province
+            continue
         site = str((meta or {}).get("site") or "")
         if site and site in places:
             places[str(name)] = places[site]
     return places
+
+
+def province_crossing(world_key: str) -> dict[str, int]:
+    """「省 → 跨越难度 1–5」映射，供旅行时间换算用。
+
+    取的是区域文档的 ``meta.crossing``：``gen_province`` 生成区域时一并写好。
+    **为什么让模型给而不是程序推断**——地形到难度的映射不唯一，「裂谷」可以是
+    3 也可以是 5，取决于有没有栈道、有没有人维护，这需要常识。
+
+    **没有这个字段的旧世界，那一项直接缺席**，:func:`~...dnd.travel.crossing_level`
+    按「好走」兜底——于是旧世界的行为与加权之前完全一致，不需要迁移。
+    """
+    index = load_index(world_key)
+    out: dict[str, int] = {}
+    for name, meta in (index["docs"].get("province") or {}).items():
+        try:
+            out[str(name)] = int((meta or {}).get("crossing"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def realm_inhabited(world_key: str) -> dict[str, bool]:
+    """「王国 → 这里有没有人管事」。没标过的一律按 ``True``。
+
+    无人区不是「穷」，是**没有建制**：没有政体、没有驿站、没有常驻人口。
+    它对下游有三条连锁：区域里不产据点、跨越时没补给、**不产流言**（荒野里没有目击者）。
+    """
+    index = load_index(world_key)
+    out: dict[str, bool] = {}
+    for name, meta in (index["docs"].get("realm") or {}).items():
+        out[str(name)] = bool((meta or {}).get("inhabited", True))
+    return out
 
 
 def add_provinces(world_key: str, realm: str, names: list[str]) -> None:
@@ -638,40 +716,40 @@ def clean_name(value: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# 章节卡（剧本层，织出来就落在世界里）
+# 事件卡（剧本层，织出来就落在世界里）
 # --------------------------------------------------------------------------- #
 
 
 @dataclass(slots=True)
-class ChapterRefInfo:
-    """世界内一张章节卡的注册信息（来自该世界索引的 ``chapter`` 条目）。"""
+class EventRefInfo:
+    """世界内一张事件卡的注册信息（来自该世界索引的 ``event`` 条目）。"""
 
     key: str
     title: str = ""
     arc: str = ""
-    #: 织出这张卡的难度档与章节序号（写进索引元信息，方便按难度挑卡）
-    chapter_no: int = 0
+    #: 织出这张卡的难度档与事件序号（写进索引元信息，方便按难度挑卡）
+    event_no: int = 0
     target_cr: str = ""
     updated_at: float = 0.0
 
     @property
     def arc_label(self) -> str:
-        from .chapter import ARC_LABELS
+        from .event_progress import ARC_LABELS
 
         return ARC_LABELS.get(self.arc, self.arc)
 
 
-def list_chapters(world_key: str) -> list[ChapterRefInfo]:
-    """某个世界里的全部章节卡（按更新时间倒序；最新织的在前）。"""
+def list_events(world_key: str) -> list[EventRefInfo]:
+    """某个世界里的全部事件卡（按更新时间倒序；最新织的在前）。"""
     index = load_index(world_key)
-    items: list[ChapterRefInfo] = []
-    for key, entry in index["docs"]["chapter"].items():
+    items: list[EventRefInfo] = []
+    for key, entry in index["docs"]["event"].items():
         items.append(
-            ChapterRefInfo(
+            EventRefInfo(
                 key=str(key),
                 title=clean_name(str(entry.get("title") or key)),
                 arc=str(entry.get("arc") or ""),
-                chapter_no=int(entry.get("chapter_no") or 0),
+                event_no=int(entry.get("event_no") or 0),
                 target_cr=str(entry.get("target_cr") or ""),
                 updated_at=float(entry.get("updated_at") or 0.0),
             )
@@ -680,14 +758,14 @@ def list_chapters(world_key: str) -> list[ChapterRefInfo]:
     return items
 
 
-def new_chapter_id(world_key: str, prefix: str = "ch") -> str:
-    """在世界里生成一个不冲突的章节键，形如 ``ch1_20261021_a1b2``。
+def new_event_id(world_key: str, prefix: str = "ch") -> str:
+    """在世界里生成一个不冲突的事件键，形如 ``ch1_20261021_a1b2``。
 
-    带章节序号前缀是为了让人一眼看出这是第几章的卡，也方便按序排。
+    带事件序号前缀是为了让人一眼看出这是第几章的卡，也方便按序排。
     """
     stamp = time.strftime("%Ym%d")
     tag = _safe_key(prefix) or "ch"
-    existing = set(load_index(world_key)["docs"]["chapter"])
+    existing = set(load_index(world_key)["docs"]["event"])
     for _ in range(20):
         candidate = f"{tag}_{stamp}_{uuid.uuid4().hex[:4]}"
         if candidate not in existing:

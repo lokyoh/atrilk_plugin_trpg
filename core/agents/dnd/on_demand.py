@@ -41,6 +41,7 @@ from ...dnd.world_store import (
     get_provinces,
     get_world_map,
     load_doc,
+    load_index,
     names_at_level,
     read_at_level,
     read_doc,
@@ -49,8 +50,8 @@ from ...dnd.world_store import (
 from .gen_city import city_agent
 from .gen_dungeon import dungeon_agent
 from .gen_place import place_agent
-from .gen_province import parse_province, province_agent
-from .gen_realm import parse_realm, realm_agent
+from .gen_province import parse_crossing, parse_province, province_agent
+from .gen_realm import parse_inhabited, parse_realm, realm_agent
 from .gen_scene import parse_scene_npcs, scene_agent
 
 __all__ = [
@@ -219,7 +220,7 @@ async def ensure_realm(world_key: str, realm: str, world_text: str = "") -> str 
         realm,
         content,
         title=realm,
-        meta={"level": 2, "parent": ""},
+        meta={"level": 2, "parent": "", "inhabited": parse_inhabited(content)},
     )
     provinces = _register_realm(world_key, realm, content)
     if provinces:
@@ -254,7 +255,9 @@ def _neighbor_realms(world_key: str, realm: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def _province_hint(world_key: str, province: str, realm: str = "") -> tuple[str, str, str]:
+def _province_hint(
+    world_key: str, province: str, realm: str = ""
+) -> tuple[str, str, str]:
     """找某个省的基础数据，返回 ``(省名, 基础正文, 所属王国)``。
 
     来源是王国文档的「区域划分」一节（``### 区域：<名>``）。
@@ -279,7 +282,9 @@ def _province_hint(world_key: str, province: str, realm: str = "") -> tuple[str,
 
     # 2. 表里没有：可能是个还没登记进表的省，逐个王国文档解析一遍
     realms = (
-        [realm] if realm else [*get_world_map(world_key)[0], *names_at_level(world_key, 2)]
+        [realm]
+        if realm
+        else [*get_world_map(world_key)[0], *names_at_level(world_key, 2)]
     )
     for owner in dict.fromkeys(r for r in realms if r):
         doc = read_at_level(world_key, 2, owner)
@@ -317,8 +322,11 @@ async def ensure_province(
         regions, _adjacency = get_world_map(world_key)
         owner = regions[0] if regions else ""
     realm_text = ""
+    uninhabited = False
     if owner:
         realm_text = await ensure_realm(world_key, owner) or ""
+        realm_meta = (load_index(world_key)["docs"].get("realm") or {}).get(owner) or {}
+        uninhabited = not bool(realm_meta.get("inhabited", True))
     if not base and realm_text:
         base = slice_block(realm_text, "区域", province)
     world_text = load_doc(world_key, "world", "main") or ""
@@ -331,6 +339,11 @@ async def ensure_province(
         or f"### 区域：{province}\n（暂无设定，请结合所属王国与地形合理设定）",
         realm=realm_text,
         world=_world_context(world_text, [owner] if owner else []),
+        # 无人区不占 prompt（空值会被 build_prompt 跳过）
+        inhabited=""
+        if not uninhabited
+        else "无人区：这片地方没人管事，没有政体、没有驿站、没有常驻人口。"
+        "只出野外地点与地下城，**不要生成据点**。",
     )
     if content is None:
         return None
@@ -340,7 +353,7 @@ async def ensure_province(
         province,
         content,
         title=province,
-        meta={"level": 3, "parent": owner},
+        meta={"level": 3, "parent": owner, "crossing": parse_crossing(content)},
     )
     if owner:
         add_provinces(world_key, owner, [province])
@@ -348,7 +361,9 @@ async def ensure_province(
     return content
 
 
-def _register_sites(world_key: str, province: str, content: str) -> list[tuple[str, str]]:
+def _register_sites(
+    world_key: str, province: str, content: str
+) -> list[tuple[str, str]]:
     """把省文档「地点」一节的地点名登记进圣经（零模型成本）。"""
     sites = parse_province(content)
     register_entities(
@@ -539,7 +554,9 @@ async def ensure_scene(
         )
         if detailed is None:
             return None
-        return await _make_scene(world_key, name, detailed[0], detailed[1], province_text)
+        return await _make_scene(
+            world_key, name, detailed[0], detailed[1], province_text
+        )
 
     region_name = clean_name(str(region or ""))
     world_text = load_doc(world_key, "world", "main") or ""
@@ -548,7 +565,9 @@ async def ensure_scene(
     # 4. location 本身是某个**省** → 落省 → 取它辖下第一个地点
     _province, base_hint, owner = _province_hint(world_key, name, region_name)
     if base_hint or name in get_provinces(world_key).get(region_name, []):
-        province_text = await ensure_province(world_key, name, realm=owner, hint=base_hint)
+        province_text = await ensure_province(
+            world_key, name, realm=owner, hint=base_hint
+        )
         if province_text:
             picked = _first_site(province_text, want)
             if picked is not None:

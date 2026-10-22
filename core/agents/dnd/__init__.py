@@ -3,7 +3,6 @@
 生成类（入场流程，走工作模型 ``WORK``）：
 
 - :mod:`.gen_world`：世界地图生成（``world``）
-- :mod:`.gen_chapter`：章节卡生成（``chapter``）——取代原先的「世界起点与推力」
 - :mod:`.gen_realm`：王国/地区生成（``realm``）——政体 / 法度 / 军力 / 外交 + 区域划分
 - :mod:`.gen_province`：区域（省）生成（``province``）——地形气候 / 人文产出 / 风险 + 地点索引
 - :mod:`.gen_epoch`：纪元称号命名（``epithet``）——按纪元内的实际行为起名
@@ -20,7 +19,6 @@
 流程类：
 
 - :mod:`.entry`：入场编排（``run_entry_flow`` 生成新世界；``run_world_refresh`` 补齐残缺世界）
-- :mod:`.chapter_flow`：章节线编排（算难度 → 织候选走向 → 选定后织正文 → 推进下一章）
 - :mod:`.epoch_flow`：纪元编排（收束判定 → 代价 → 称号 → 称号进圣经）
 - :mod:`.on_demand`：按需补齐区域 / 地点 / 场景（缺什么生成什么，按存档的世界作用域）
 - :mod:`.game`：本轮行动编排（``submit_action`` / ``run_dm_round``）与场景切换（``open_scene``）
@@ -39,15 +37,6 @@ from __future__ import annotations
 
 from .build_scene import SceneBuilderAgent, scene_builder_agent
 from .dm import DMAgent, DungeonMasterAgent, dm_agent
-from .chapter_flow import (
-    ChapterPlan,
-    advance_chapter,
-    branch_choices_text,
-    chapter_plan,
-    ensure_opening_chapter,
-    offer_branches,
-    weave_chapter,
-)
 from .entry import (
     DEFAULT_OPTIONS,
     EntryOptions,
@@ -55,7 +44,7 @@ from .entry import (
     run_entry_flow,
     run_world_refresh,
 )
-from .epoch_flow import EpochOutcome, close_chapter, epoch_deeds, settle_epoch
+from .epoch_flow import EpochOutcome, advance_event, epoch_deeds, settle_epoch
 from .game import (
     TurnResult,
     build_scene_for_save,
@@ -71,8 +60,9 @@ from .gen_city import CityAgent, city_agent
 from .gen_dungeon import DungeonAgent, dungeon_agent
 from .gen_epoch import EpithetAgent, EpithetResult, epithet_agent
 from .gen_place import PlaceAgent, place_agent
+from .gen_province import ProvinceAgent, ProvinceResult, parse_province, province_agent
+from .gen_realm import RealmAgent, RealmResult, parse_realm, realm_agent
 from .gen_scene import SceneAgent, scene_agent
-from .gen_chapter import ChapterAgent, ChapterResult, chapter_agent
 from .gen_world import (
     WorldAgent,
     WorldMapResult,
@@ -80,8 +70,6 @@ from .gen_world import (
     parse_world_profile,
     world_agent,
 )
-from .gen_province import ProvinceAgent, ProvinceResult, parse_province, province_agent
-from .gen_realm import RealmAgent, RealmResult, parse_realm, realm_agent
 from .on_demand import (
     ensure_area,
     ensure_province,
@@ -99,7 +87,6 @@ __all__ = [
     "DM_TOOLS",
     "AreaAgent",
     "AreaResult",
-    "ChapterAgent",
     "CityAgent",
     "DMAgent",
     "DungeonAgent",
@@ -116,34 +103,27 @@ __all__ = [
     "RealmResult",
     "SceneAgent",
     "SceneBuilderAgent",
-    "ChapterPlan",
-    "ChapterResult",
     "TurnResult",
     "WorldAgent",
     "WorldMapResult",
-    "advance_chapter",
+    "advance_event",
     "area_agent",
-    "branch_choices_text",
     "build_scene_for_save",
-    "chapter_agent",
-    "chapter_plan",
     "city_agent",
-    "close_chapter",
     "dm_agent",
     "dungeon_agent",
     "ensure_area",
-    "ensure_opening_chapter",
     "ensure_province",
     "ensure_realm",
     "ensure_scene",
     "ensure_site",
-    "epoch_deeds",
     "epithet_agent",
+    "epoch_deeds",
+    "event_plan",
     "get_agent",
     "is_started",
     "normalize_kind",
     "open_scene",
-    "offer_branches",
     "parse_area",
     "parse_province",
     "parse_realm",
@@ -162,7 +142,6 @@ __all__ = [
     "settle_epoch",
     "slice_block",
     "submit_action",
-    "weave_chapter",
     "world_agent",
 ]
 
@@ -171,7 +150,6 @@ AGENTS = {
     world_agent.name: world_agent,
     realm_agent.name: realm_agent,
     province_agent.name: province_agent,
-    chapter_agent.name: chapter_agent,
     area_agent.name: area_agent,
     place_agent.name: place_agent,
     city_agent.name: city_agent,

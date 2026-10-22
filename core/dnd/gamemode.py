@@ -1,9 +1,8 @@
 """开局配置：一局怎么跑，从开局那一刻就定下来。
 
-**为什么需要这一层**：织法（:class:`~.chapter.Recipe`）与纪元长度原先只有「读」没有「写」——
-``save.progress["_recipe"]`` 全仓一个写入点都没有，于是所有参数实际都跑在
-``from_dict({})`` 的缺省上，``parallel_every`` 更因为一处 ``or 0`` 变成 0
-（并行支线从来没触发过）。参数不落盘，就等于没有参数。
+**为什么需要这一层**：织法（:class:`~.event_progress.Recipe`）与纪元长度原先只有「读」
+没有「写」——``save.progress["_recipe"]`` 全仓一个写入点都没有，于是所有参数实际都跑在
+``from_dict({})`` 的缺省上。参数不落盘，就等于没有参数。
 
 现在的分工：
 
@@ -19,7 +18,7 @@
 （换条故事线来跑该是同一副骨架）。玩法是一组参数，不是一段内容，所以它存在**存档**里，
 一个世界可以用不同玩法开很多局。
 
-两种玩法现在只差参数，不差机制——章节线本来就是无尽的，区别在于
+两种玩法现在只差参数，不差机制——事件线本来就是无尽的，区别在于
 节奏更密（支线更频繁）还是更松。谁也别假装「无尽」是个新引擎。
 """
 
@@ -28,8 +27,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .chapter import Recipe
 from .epoch import DEFAULT_EPOCH_LENGTH, load_epoch, store_epoch
+from .event_progress import Recipe
 
 __all__ = [
     "DEFAULT_MODE",
@@ -76,17 +75,19 @@ class GameMode:
 
 #: 全部玩法。键是 :attr:`GameMode.key`。
 #:
-#: ``standard``：按默认织法跑，四个章一个纪元。``parallel_every=6`` 是 dataclass
-#: 的缺省值，也是「一局里偶尔一条支线」的节奏。
+#: ``standard``：四个事件一个纪元，收束节奏适中。
 #:
-#: ``endless``：支线更密（每 4 章一条）、去重窗口更长（5 章）、元素配额略高（3），
-#: 纪元也短一档（3 章一次收束）。理由是长跑最怕两件事：**骨架重复**与
-#: **一个纪元拖太久失去形状**；把窗口与收束频率一起调紧，比单纯加压更能撑住 20 章以后。
+#: ``endless``：三个事件一个纪元。理由是长跑最怕**一个纪元拖太久失去形状**——
+#: 走太远才结算一次，玩家早忘了自己做过什么，称号也就说不出东西。收得紧一点，
+#: 每个纪元都像一段有头有尾的故事。
+#:
+#: 两种玩法只差纪元长度，不差机制：事件线本来就是无尽的，
+#: 谁也别假装「无尽」是个新引擎。
 MODES: dict[str, GameMode] = {
     "standard": GameMode(
         key="standard",
         title="标准",
-        note="按默认节奏织章，四章一个纪元",
+        note="按默认节奏推进，四个事件一个纪元",
         recipe=Recipe(),
         epoch_length=DEFAULT_EPOCH_LENGTH,
         words=(),
@@ -94,13 +95,8 @@ MODES: dict[str, GameMode] = {
     "endless": GameMode(
         key="endless",
         title="无尽",
-        note="支线更密、去重窗口更长、三章一次收束，能一直往下跑",
-        recipe=Recipe(
-            no_repeat_window=5,
-            element_quota=3,
-            parallel_every=4,
-            story_points=3,
-        ),
+        note="三个事件一次收束，每个纪元都收得拢，能一直往下跑",
+        recipe=Recipe(),
         epoch_length=3,
         words=("无尽", "endless", "--无尽", "--endless"),
     ),

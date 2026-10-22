@@ -19,7 +19,7 @@ DM 提示词里已经有世界圣经、故事文档、场景副本，但那些�
 设计取向：
 
 - **宁缺毋滥**：缺哪块就少一节，绝不为了凑齐去调模型；
-- **不剧透**：故事只取「世界起点」这类开篇设定，不取后续章节与场景里的隐藏信息；
+- **不剧透**：故事只取「世界起点」这类开篇设定，不取后续事件与场景里的隐藏信息；
 - **幂等**：重写同一份文件即可，不按版本累积。
 """
 
@@ -235,6 +235,7 @@ def _geography_section(save: Save) -> list[str]:
         get_world_map,
         load_doc,
         load_index,
+        realm_inhabited,
     )
 
     world_key = save.world_key
@@ -254,11 +255,17 @@ def _geography_section(save: Save) -> list[str]:
                 sites.setdefault(parent, []).append((str(name), label))
 
     lines = ["## 地理", ""]
-    lines.append("> 时间尺度：同一个区域里走动是几小时，相邻两个区域之间约一天。")
+    lines.append(
+        "> 时间尺度：同一个区域里走动是几小时，相邻两个区域之间约一天；"
+        "同一个场所内部挪个位置（比如从主甲板走到船长室）只要片刻。"
+    )
+    inhabited = realm_inhabited(world_key)
     for realm in realms or list(table):
         realm_doc = load_doc(world_key, "realm", realm) or ""
         lines.append("")
-        lines.append(f"### {realm}")
+        # 无人区要在手册里说出来：玩家得知道那里没有驿站、没有补给、也没人打听得到消息
+        wild = not inhabited.get(realm, True)
+        lines.append(f"### {realm}（无人区）" if wild else f"### {realm}")
         if realm_doc:
             one = _realm_headline(realm_doc)
             if one:
@@ -325,10 +332,10 @@ def _label_value_any(text: str, *labels: str) -> str:
     return ""
 
 
-def _chapter_section(save: Save) -> list[str]:
-    """冒险目标：当前章节的目标、完成条件、已知线索与已完成章节。
+def _event_no_section(save: Save) -> list[str]:
+    """冒险目标：当前事件的目标、完成条件、已知线索与已完成事件。
 
-    章节卡取代了原来的故事推力，所以手册这一节从「故事背景」变成了
+    事件卡取代了原来的故事推力，所以手册这一节从「故事背景」变成了
     「现在该干什么」——玩家最需要知道的是**下一步问什么**。
 
     难度数值、威胁层级、fail_forward 这些**不进手册**：
@@ -337,10 +344,10 @@ def _chapter_section(save: Save) -> list[str]:
     非默认玩法会多一行说明（「无尽模式：支线更密、三章一次收束」）——
     玩家该知道自己这一局是按哪套节奏在跑，否则「怎么这么快又结算了」没法解释。
     """
-    from .chapter import chapter_summary
+    from .event_progress import event_summary
     from .gamemode import mode_of, mode_text
 
-    text = chapter_summary(save, for_player=True)
+    text = event_summary(save, for_player=True)
     if not text.strip():
         return []
     lines = ["## 冒险目标", ""]
@@ -362,7 +369,7 @@ def _epoch_section(save: Save) -> list[str]:
     from .epoch import epoch_facts, epoch_text, load_epoch
 
     ep = load_epoch(save)
-    state = _chapter_state(save)
+    state = _event_state(save)
     # 一章都没打过、也没发过称号时不显示这一节——手册的取向是「宁缺毋滥」，
     # 「当前第 1 纪元：目标 0/0」对玩家没有任何信息量。
     if not ep.ending and not ep.epithets and state.completed <= 0:
@@ -380,9 +387,9 @@ def _epoch_section(save: Save) -> list[str]:
     return ["## 纪元与称号", "", text]
 
 
-def _chapter_state(save: Save):
-    """取存档里的章节状态（薄封装，避免顶层直接摸 ``progress``）。"""
-    from .chapter import _load
+def _event_state(save: Save):
+    """取存档里的事件状态（薄封装，避免顶层直接摸 ``progress``）。"""
+    from .event_progress import _load
 
     return _load(save)
 
@@ -442,12 +449,12 @@ def _party_section(save: Save) -> list[str]:
 
 
 #: 各分节的构建器（按展示顺序）
-#: 手册各节的拼装顺序。章节节取代了原来的故事节——
-#: 章节卡既然接手了「玩家该干什么」，手册就该讲这个，而不是讲背景故事。
+#: 手册各节的拼装顺序。事件节取代了原来的故事节——
+#: 事件卡既然接手了「玩家该干什么」，手册就该讲这个，而不是讲背景故事。
 _BUILDERS = (
     _world_section,
     _geography_section,
-    _chapter_section,
+    _event_no_section,
     _epoch_section,
     _evolution_section,
     _bible_section,
