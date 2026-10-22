@@ -11,7 +11,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from random import Random
 from typing import Any
 
@@ -51,7 +53,14 @@ from .race import Race, SubRace, get_race
 from .skills import Skill, get_skill
 from .spells import Spell, get_spell, max_slots, slot_text
 
-__all__ = ["DEATH_CONDITIONS", "DeathSaveOutcome", "DndCharacter", "ability_roll_pool"]
+__all__ = [
+    "DEATH_CONDITIONS",
+    "DeathSaveOutcome",
+    "DndCharacter",
+    "ability_roll_pool",
+    "equipment_vocabulary",
+    "split_glued_items",
+]
 
 #: 系统维护的倒地相关状态文本（``conditions`` 里这几项不是 DM 的自由文本）
 DEATH_CONDITIONS: tuple[str, ...] = ("倒地", "稳定", "死亡")
@@ -62,6 +71,111 @@ def _join_reason(reason: str, extra: str) -> str:
     if not reason:
         return f"（{extra}）"
     return reason[:-1] + f"；{extra}）"
+
+
+#: 「武器」「服装」这类**泛称**：起始包上写的是「任意军用武器」，
+#: 玩家照着抄的时候常只抄后半截。切粘连的时候得把它们也认成一个个东西。
+_GENERIC_EQUIP_WORDS: tuple[str, ...] = (
+    "武器",
+    "军用武器",
+    "简易武器",
+    "护甲",
+    "铠甲",
+    "服装",
+    "衣物",
+    "背包",
+    "盾牌",
+    "戒指",
+    "卷轴",
+    "圣徽",
+    "药水",
+    "绳索",
+    "火把",
+    "干粮",
+    "口粮",
+    "箭",
+    "弩矢",
+)
+
+#: 起始包里带数量的写法：「5 支香」只留「支香」，「箭×20」只留「箭」
+_GLUE_COUNT_RE = re.compile(r"^\d+\s*")
+_GLUE_STACK_RE = re.compile(r"[×xX]\d+$")
+
+
+@lru_cache(maxsize=1)
+def equipment_vocabulary() -> frozenset[str]:
+    """所有**认得出的装备名**：装备表 + 魔法物品 + 各职业与背景的起始包。
+
+    为什么要连起始包一起算：圣徽 / 祭司包 / 族谱卷轴 / 精致服装 / 印章戒指
+    这些散件不在装备表里，但它们是「一个东西」而不是玩家随口编的杂物。
+    """
+    from .background import BACKGROUNDS
+    from .equipment import ARMORS, WEAPONS
+    from .items import ITEMS
+    from .profession import CLASSES
+
+    words: set[str] = set(_GENERIC_EQUIP_WORDS)
+    for thing in (*ARMORS, *WEAPONS, *ITEMS):
+        words.add(str(thing.cn))
+        words.update(str(x) for x in (getattr(thing, "aliases", ()) or ()))
+    for job in CLASSES:
+        for package in job.equipment_packages:
+            words.update(str(x).strip() for x in package.items)
+    for past in BACKGROUNDS:
+        words.update(str(x).strip() for x in past.equipment)
+    # 带数量 / 堆叠的写法：把去掉数量那份也收进词表
+    for word in list(words):
+        head = _GLUE_STACK_RE.sub("", _GLUE_COUNT_RE.sub("", word)).strip()
+        if head and head != word:
+            words.add(head)
+    return frozenset(w for w in words if w)
+
+
+def split_glued_items(text: str, *, minimum: int = 2) -> list[str]:
+    """把「武器盾牌链甲圣徽」这种**没有分隔符的一串**按已知装备名切回几件。
+
+    为什么要有这一步：玩家会照着卡上的装备名连读下来
+    （「我装备上武器盾牌链甲圣徽印章戒指精致服装」）——没有顿号、没有空格。
+    整串当成一件收下，装备栏里就多出一条十六个字的「装备」，
+    之后任何规则都认不出它，玩家只会看见自己多了一件不存在的东西。
+
+    切法是**最长优先 + 回溯**，要求整串拼得满、且至少拼出 ``minimum`` 件；
+    拼不满就原样返回一件——「发霉的绳索」这种真·单件不能被拆坏。
+    """
+    body = str(text or "").strip()
+    if not body:
+        return []
+    if len(body) < 3:
+        return [body]
+    words = equipment_vocabulary()
+    if body in words:
+        return [body]
+
+    memo: dict[int, list[str] | None] = {}
+
+    def solve(start: int) -> list[str] | None:
+        if start == len(body):
+            return []
+        if start in memo:
+            return memo[start]
+        best: list[str] | None = None
+        for end in range(len(body), start, -1):
+            piece = body[start:end]
+            if piece not in words:
+                continue
+            rest = solve(end)
+            if rest is None:
+                continue
+            candidate = [piece, *rest]
+            if best is None or len(candidate) < len(best):
+                best = candidate
+        memo[start] = best
+        return best
+
+    parts = solve(0)
+    if parts and len(parts) >= minimum:
+        return parts
+    return [body]
 
 
 #: 种族 / 亚种自带的伤害抗性（建卡时自动写进
@@ -680,6 +794,38 @@ class DndCharacter(TrpgCharacter):
         if profession and profession.caster_kind == "pact":
             self.spell_slots_used = {}
 
+    def _owns(self, item: str, *, extra: list[str] | None = None) -> bool:
+        """这件东西是不是**已经在身上**了（泛称也算：``武器`` 被 ``任意军用武器`` 盖住）。
+
+        :param extra: 同一次调用里刚收下的几件——一次收「圣徽、圣徽」不该落两条。
+        """
+        name = str(item or "").strip()
+        if not name:
+            return True
+        for owned in [*self.equipment, *(extra or [])]:
+            owned = str(owned)
+            if name == owned:
+                return True
+            # 泛称被具体名盖住：身上有「任意军用武器」时，再收一条「武器」是噪音。
+            # 只对两个字以上的名字这么做，免得单字被随便吞掉。
+            if len(name) >= 2 and name in owned:
+                return True
+        return False
+
+    def knows_item(self, item: str) -> bool:
+        """这个名字是不是**「一个东西」**：装备表 / 魔法物品 / 起始包散件 / 身上已有。
+
+        玩家侧的快捷收纳只收认得出的——「喷火龙鳞甲」这种编出来的名字，系统
+        没有本事判断它存不存在，所以不接管、原话交回 DM（它才是知道箱子里
+        有什么的那一个）。DM 侧的工具不走这道门：它说箱子里有，那就是有。
+        """
+        name = str(item or "").strip()
+        if not name:
+            return False
+        if name in equipment_vocabulary():
+            return True
+        return self._owns(name)
+
     def equip(self, items: str | list[str]) -> tuple[list[str], list[str]]:
         """把东西收进装备栏（追加，不覆盖）。
 
@@ -688,27 +834,47 @@ class DndCharacter(TrpgCharacter):
         它们不进 AC 计算但确实是玩家拿到的东西，一律丢掉会让玩家觉得东西凭空消失。
         DM 工具与玩家侧快捷入口共用这一套。
 
-        :return: ``(已收下的规范名列表, 认不出的原样列表)``
+        **身上已经有的不再收一遍**：否则「把起始装备再装备上」会留下一串重复，
+        而泛称（「武器」）会跟具体名（「任意军用武器」）并存成两条。
+
+        :return: ``(这次真收下的规范名列表, 这次真收下的认不出的原名列表)``
         """
         wanted = (
             [str(x).strip() for x in items if str(x).strip()]
             if isinstance(items, list | tuple)
             else split_text(str(items or ""))
         )
+        # 自愈：旧记录里可能躺着一条「把几件装备粘成一串」的假条目
+        # （曾经把「武器盾牌链甲圣徽印章戒指精致服装」当一件收下）。能完整拆回
+        # 几件的就拆开；拆出来的泛称（「武器」）若已被更具体的名字盖住就不留，
+        # 于是那条假条目自然消失。
+        flat = [piece for item in self.equipment for piece in split_glued_items(str(item))]
+        self.equipment = [
+            name
+            for name in dict.fromkeys(flat)
+            if not any(
+                name != other and len(name) >= 2 and name in other for other in flat
+            )
+        ]
         known: list[str] = []
         unknown: list[str] = []
         for item in wanted:
+            # 先按**玩家写的那个名字**判一次：他写「盾牌」而身上就写着「盾牌」时，
+            # 规范化会把它换成「木盾」，于是同一个盾又被收成第二件。
+            if self._owns(item, extra=[*known, *unknown]):
+                continue
             armor = get_armor(item) or get_weapon(item)
             if armor is not None:
-                known.append(armor.cn)
+                if not self._owns(armor.cn, extra=[*known, *unknown]):
+                    known.append(armor.cn)
                 continue
             # 魔法物品：认得出就用规范名（「精灵靴」→「精灵之靴」），
             # 认不出的仍照原样收下（战利品里的杂物不能丢）。
             magic = get_item(item)
-            if magic is not None:
-                known.append(magic.cn)
-            else:
-                unknown.append(item)
+            name = magic.cn if magic is not None else item
+            if self._owns(name, extra=[*known, *unknown]):
+                continue
+            (known if magic is not None else unknown).append(name)
         self.equipment = list(dict.fromkeys([*self.equipment, *known, *unknown]))
         # 盾牌影响 AC 结算，收下盾牌时顺手更新标记
         self.has_shield = any("盾" in str(x) for x in self.equipment)

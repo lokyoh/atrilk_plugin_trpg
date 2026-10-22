@@ -30,6 +30,7 @@ from ATRI.log import log
 from ... import settings
 from ...dnd.battlemap import map_digest
 from ...dnd.billing import bind_save, record_result
+from ...dnd.card import split_glued_items
 from ...dnd.combat import (
     advance_turn,
     all_enemies_out,
@@ -816,7 +817,46 @@ def _equip_take_request(text: str) -> list[str]:
     body = _EQUIP_SHELL_RE.sub("", body, count=1).strip("，,、 ")
     names = [n.strip() for n in _SPLIT_RE.split(body) if n.strip()]
     names = [n for n in names if not _EQUIP_NOISE_RE.fullmatch(n)]
-    return names[:6]
+    # 「我装备上武器盾牌链甲圣徽印章戒指精致服装」——照着卡上的装备连读下来，
+    # 没有顿号也没有空格。整串当成一件的话，装备栏里会多出一条十六个字的「装备」，
+    # 之后任何规则都认不出它。所以先按已知装备名把粘连的一串切回几件。
+    expanded: list[str] = []
+    for name in names:
+        expanded.extend(split_glued_items(name))
+    return expanded[:6]
+
+
+def _equip_take_names(card, text: str) -> list[str]:
+    """玩家这句话要收的东西——**全都认得出**才接管。
+
+    玩家侧是便利入口，不是裁判：认不出的名字可能是真的战利品（DM 刚写下的
+    「发霉的羊皮纸」），也可能根本不存在（「喷火龙鳞甲」）。系统分不清这两者，
+    所以一个名字认不出就整句不接管，原话照常交给 DM——它才是知道箱子里
+    有什么的那一个。宁可漏接（多一轮模型往返），也不要替玩家凭空造一件装备。
+    """
+    take = _equip_take_request(text)
+    if not take:
+        return []
+    if any(not card.knows_item(name) for name in take):
+        return []
+    return take
+
+
+def _can_take_quietly(card, combat) -> bool:
+    """现在能不能走「安静收拾东西」这条快捷入口。
+
+    这条入口图的是省一轮模型往返，所以它只该在**能安静收拾东西的时候**生效：
+
+    - **战斗中不接管**：「收下」在战斗里可能是要用掉一个动作，也可能根本做不到
+      （手上还抡着斧子，箱子在三丈外的敌人脚下）。而且这条入口不扣行动经济——
+      战斗里放开，等于白送一次动作，还能在别人的回合里用。
+    - **倒地 / 阵亡不接管**：他们动不了，那句话该按呓语 / 遗言交给 DM。
+
+    两种情况都原样交回 DM 判，宁可多一轮往返。
+    """
+    if card is None or combat is not None:
+        return False
+    return not (card.is_dead or card.is_downed)
 
 
 def resolve_players(save, text: str) -> tuple[list[str], list[str]]:
@@ -951,10 +991,15 @@ async def submit_action(
     if not text:
         return TurnResult(Verdict.NEED_INFO, message="请描述你想让角色做什么。")
 
-    # 「把 X 收下」这类纯收纳动作：东西已经在战利品里，不需要 DM 裁决，
+    # 「把 X 收下」这类纯收纳动作：东西已经在手边，不需要 DM 裁决，
     # 系统直接落盘并回执——省掉一整轮模型往返，也省玩家等。
-    take = _equip_take_request(text)
-    if take and card is not None:
+    #
+    # **只在能安静收拾东西的时候接管**（战斗里 / 倒地阵亡时交回 DM，见
+    # :func:`_can_take_quietly`）——否则这条入口会绕过先攻、行动经济与
+    # 「倒地不能行动」，变成一句自然语言就能白拿的一次操作。
+    combat = load_combat(save)
+    take = _equip_take_names(card, text) if _can_take_quietly(card, combat) else []
+    if take:
         known, unknown = card.equip(take)
         set_character(save, card)
         got = [*known, *unknown]
@@ -966,6 +1011,15 @@ async def submit_action(
                     f"当前装备：{'、'.join(card.equipment) or '（空）'}"
                 ),
             )
+        # 一件新的都没收进来：这些东西本来就在身上（比如把起始装备又「装备上」
+        # 一遍）。别把话吞掉交给 DM——那会让它去演一遍其实没发生的事。
+        return TurnResult(
+            Verdict.ACCEPT,
+            message=(
+                f"🎒 这些已经在【{card.name}】身上了，没有重复收：{'、'.join(take)}\n"
+                f"当前装备：{'、'.join(card.equipment) or '（空）'}"
+            ),
+        )
 
     # 倒地 / 阵亡的玩家：不能真正行动，但**不硬挡**——他提交的内容会带上标注
     # 交给 DM（当作呓语 / 遗言），这样全队倒下时剧情也不会卡死。
@@ -979,7 +1033,6 @@ async def submit_action(
     resolution = judged.judge.reason if judged.needs_check else ""
 
     state = load_round(save)
-    combat = load_combat(save)
     # 「打空气」提醒（只有战斗里才有）；不拦，只是提醒，见 _precheck_note。
     stale_note = ""
     stale_brief = ""
@@ -1167,8 +1220,23 @@ async def run_dm_round(
     scene = scene_brief(save)
 
     # 世界圣经：专有名词与事实的唯一来源（人名 / 势力 / 地名不跑偏的关键）；
-    # 没有圣经的老世界照常空着，不影响主持。
-    bible = bible_text(save.world_key, max_chars=settings.world_bible_max_chars())
+    # 没有圣经的老世界照常空着，不影响主持。**按距离裁**：额度固定，装进来的
+    # 就是 DM 看得见的——远处那一国的账房先生不该占眼前这几百字。
+    # 开局那一轮还没有当前场景（场景是 DM 这一轮才 move_scene 进去的），
+    # 就拿入场事件的入口地点当「玩家在哪儿」；都取不到才不裁。
+    near = save.current_scene
+    if not near and opening:
+        try:
+            from ...dnd.openings import entry_place
+
+            near = entry_place(save.world_key, str(getattr(save, "story_key", "") or ""))
+        except Exception as e:  # 裁不了就不裁，别影响开局
+            log.debug(f"取入场事件的地点失败：{str_traceback(e)}")
+    bible = bible_text(
+        save.world_key,
+        near=near,
+        max_chars=settings.world_bible_max_chars(),
+    )
 
     # 全队阵亡：自动进入收尾流程，让这一轮就能收尾（wrap_up 才不会被拦）
     if not partial and _party_wiped(save):

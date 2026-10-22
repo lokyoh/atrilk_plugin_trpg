@@ -16,6 +16,9 @@
   （人物 / 势力这些自由文本里提不出来的），故事文档按固定小标题程序提取；
 - **消费**：:func:`bible_text` 生成一块有字数上限的紧凑文本，注入 DM 提示词与
   按需生成（区域 / 城镇 / 地点 / 地下城 / 场景）的输入——命名与事实以它为准。
+  **额度按距离花**：调用方给一个 ``near``（玩家 / 这次生成对象所在的地方），
+  只把同一个省、同一个王国、分不出地区的登记摆进来，别处的压成末行一句
+  「另有 N 条未列出」。额度固定，装谁进来就是让 DM 看得见谁。
 
 设计取向：**能不调用模型就不调用**。程序能可靠提取的（索引、小标题、「」引文）
 绝不麻烦模型；模型只在顺手输出结构化 JSON 时补上程序提不出来的人物与势力。
@@ -432,11 +435,172 @@ def _slice_section(region_body: str, title: str) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def bible_text(world_key: str, *, max_chars: int = 0) -> str:
+# --------------------------------------------------------------------------- #
+# 距离：这个实体离「玩家现在在哪儿」有多远
+# --------------------------------------------------------------------------- #
+
+#: 距离档，越小越靠前。同一个省 → 同一个王国 → 分不出地区（多半是世界级设定）
+#: → 邻国 → 别处。邻国排在前面的「分不出地区」之后，是因为这些登记本来往往
+#: 就是邻国的人（名字里带「泊银湾收账人」这种），只是没填 region。
+_DIST_SAME_PROVINCE = 0
+_DIST_SAME_REALM = 1
+_DIST_UNKNOWN = 2
+_DIST_NEIGHBOUR = 3
+_DIST_ELSEWHERE = 4
+
+#: 截断时给「另有 N 条在别处」那行预留的字数（放不下就少放一条实体）
+_OMITTED_RESERVE = 40
+
+
+class _Atlas:
+    """一次 :func:`bible_text` 调用里的地理索引（零模型成本，只读世界库的表）。
+
+    三张表：省归属（``province_index``：场景 / 地点 → 省）、王国归属
+    （``get_provinces``：省 → 王国）、邻接（``get_world_map``：省与省相邻）。
+
+    实体落在哪儿，按**可靠性从高到低**依次试：
+
+    1. ``region`` 字段（模型登记时会写，可能是王国也可能是省）；
+    2. ``source`` 里带的那个名字（``scene:主甲板`` / ``province:剑湾``）——
+       场景与地点能经 ``province_index`` 上溯到王国，比 region 更常见；
+    3. 实体名本身（``凡达林`` 这种地名，名字就是它所在的地方）。
+
+    三条都问不出来才当「分不出地区」——不猜。
+    """
+
+    def __init__(self, world_key: str, near: str = "") -> None:
+        from .world_store import get_provinces, province_index
+
+        self.world_key = world_key
+        self.table = get_provinces(world_key)
+        self.owner = {
+            province: realm
+            for realm, provinces in self.table.items()
+            for province in provinces
+        }
+        self.places = province_index(world_key)
+        self.province, self.realm = self._locate(clean_name(str(near or "")))
+        self.neighbours = self._neighbours()
+
+    # ---- 建表 ----
+
+    def _locate(self, name: str) -> tuple[str, str]:
+        """一个名字 → ``(省, 王国)``；认不出返回空串（不猜）。"""
+        if not name:
+            return "", ""
+        if name in self.owner:
+            return name, self.owner[name]
+        if name in self.table:
+            return "", name
+        province = self.places.get(name, "")
+        return province, self.owner.get(province, "")
+
+    def _neighbours(self) -> frozenset[str]:
+        """和当前王国相邻的王国（从**省邻接**推：我的省邻着谁的省就是邻着谁）。"""
+        if not self.realm:
+            return frozenset()
+        adjacency = get_world_map(self.world_key)[1]
+        found: set[str] = set()
+        for province in self.table.get(self.realm, []):
+            for other in adjacency.get(province, []):
+                other_realm = self.owner.get(other, "")
+                if other_realm and other_realm != self.realm:
+                    found.add(other_realm)
+        return frozenset(found)
+
+    # ---- 查询 ----
+
+    def place_of(self, entity: Entity) -> tuple[str, str]:
+        """实体所在的 ``(省, 王国)``；三条线索都问不出来返回两个空串。"""
+        source_key = str(entity.source or "").partition(":")[2]
+        for name in (entity.region, source_key, entity.name):
+            province, realm = self._locate(name)
+            if province or realm:
+                return province, realm
+        return "", ""
+
+    def distance(self, entity: Entity) -> int:
+        province, realm = self.place_of(entity)
+        if self.province and province == self.province:
+            return _DIST_SAME_PROVINCE
+        if self.realm and realm == self.realm:
+            return _DIST_SAME_REALM
+        if not province and not realm:
+            return _DIST_UNKNOWN
+        if realm and realm in self.neighbours:
+            return _DIST_NEIGHBOUR
+        return _DIST_ELSEWHERE
+
+    def rank(self, entities: list[Entity]) -> list[Entity]:
+        """排序：**种类**仍然是第一关键字（人物最容易写错名字，得排前面），
+        同一个种类里按距离——眼前的在前，别的地区垫底。"""
+        order = {kind: index for index, kind in enumerate(KIND_ORDER)}
+        return sorted(
+            entities,
+            key=lambda entity: (
+                order.get(entity.kind, len(KIND_ORDER)),
+                self.distance(entity),
+            ),
+        )
+
+    def split(self, entities: list[Entity]) -> tuple[list[Entity], list[Entity]]:
+        """切成 ``(这一带的, 别处的)``。
+
+        **位置本身不明时不切**（还没进场景、或这个世界还没分过省）：分不出远近
+        就照单全收——保底宁可多给，不能把整本登记簿都当成「别处」丢掉。
+        """
+        if not (self.province or self.realm):
+            return list(entities), []
+        near: list[Entity] = []
+        far: list[Entity] = []
+        for entity in entities:
+            if self.distance(entity) <= _DIST_UNKNOWN and not self._stray_place(entity):
+                near.append(entity)
+            else:
+                far.append(entity)
+        return near, far
+
+    def _stray_place(self, entity: Entity) -> bool:
+        """**定位不到的地名不是地名。**
+
+        世界库里每一个真地名（王国 / 省 / 据点 / 地点 / 场景）都能经
+        ``province_index`` 或王国表查到归属；查不到的多半是播种时从世界文档里
+        把「」引住的短语当成了地标——「赎罪券」「一斗铁换一车石」「铁」都是
+        这么进来的。它们每轮都占一行，还会让 DM 以为那里真有个叫「铁」的地方。
+        """
+        if entity.kind != "place" or not self.places:
+            return False
+        province, realm = self.place_of(entity)
+        return not province and not realm
+
+    def omitted_line(self, entities: list[Entity]) -> str:
+        """没装下的那几条，汇总成一行：让 DM 知道登记簿比它看见的大，
+        而不是以为「没列 = 不存在」，回头再编一个同名的。"""
+        counts: dict[str, int] = {}
+        for entity in entities:
+            province, realm = self.place_of(entity)
+            label = realm or province or "未标地区"
+            counts[label] = counts.get(label, 0) + 1
+        top = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+        labels = "、".join(f"{name} {count}" for name, count in top)
+        return f"· 另有 {len(entities)} 条未列出（{labels}）"
+
+
+def bible_text(world_key: str, *, near: str = "", max_chars: int = 0) -> str:
     """世界圣经的紧凑提示词块；没有内容返回空串。
 
+    :param near: 玩家（或这次生成的对象）现在在哪儿——场景名、地点名、省名、
+        王国名都认。给了它就**按距离裁**：同一个省的、同一个王国的、分不出
+        地区的都留着，别处的整批不进提示词（只在末行留一句「另有 N 条」）。
+        没给就沿用原来的「人物 > 势力 > 地名 > 物品」顺序、一条不删。
     :param max_chars: 字数上限（0 = 不限制）。超限时从尾部丢实体——
         圣经是每轮 / 每次生成都要重发的，宁缺毋滥。
+
+    **为什么按距离裁**：额度固定，装谁进来就是让 DM 看得见谁；而 DM 看见什么
+    就会写什么。一局在剑湾跑，把泊银湾的账房、炉心的炉主摆在最前面，
+    等同于请它把这些名字带进卡兰提尔的叙述里（实际发生过：剑湾的海商船上
+    出现了泊银湾的铁票与收账人）。远处的登记不是不许存在，只是不该占眼前
+    这几百字——人走到那边，``near`` 一变它们自然回来。
     """
     bible = load_bible(world_key)
     if not bible.entities and not bible.facts:
@@ -446,13 +610,22 @@ def bible_text(world_key: str, *, max_chars: int = 0) -> str:
     lines.extend(f"- {item}" for item in bible.facts)
     if bible.entities:
         lines.append("- 实体登记（名字｜种类｜地区｜备注）：")
+        atlas = _Atlas(world_key, near)
+        kept, faraway = atlas.split(atlas.rank(bible.entities))
         used = sum(len(line) for line in lines) + len(lines)
-        for entity in bible.sorted_entities():
+        # 有省略时才留出末行的位置：默默截断会让人以为登记簿就这么大
+        reserve = _OMITTED_RESERVE if faraway else 0
+        shown = 0
+        for entity in kept:
             row = f"· {entity.line()}"
-            if max_chars and used + len(row) + 1 > max_chars:
+            if max_chars and used + len(row) + 1 > max_chars - reserve:
                 break
             lines.append(row)
             used += len(row) + 1
+            shown += 1
+        omitted = [*faraway, *kept[shown:]]
+        if omitted:
+            lines.append(atlas.omitted_line(omitted))
     text = "\n".join(lines)
     if max_chars and len(text) > max_chars:
         text = text[: max_chars - 1] + "…"

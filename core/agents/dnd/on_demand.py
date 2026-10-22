@@ -40,6 +40,7 @@ from ...dnd.world_store import (
     clean_name,
     get_provinces,
     get_world_map,
+    list_docs,
     load_doc,
     load_index,
     names_at_level,
@@ -60,6 +61,7 @@ __all__ = [
     "ensure_realm",
     "ensure_scene",
     "ensure_site",
+    "match_existing_scene",
     "normalize_kind",
     "slice_block",
 ]
@@ -139,16 +141,76 @@ def slice_block(text: str, label: str, name: str) -> str:
     return "\n".join(lines[start:]).strip()
 
 
-async def _run_agent(agent, label: str, world_key: str = "", **values) -> str | None:
+#: 名字里的修饰符：「罗盘玫瑰号的主甲板」按它拆成「罗盘玫瑰号 / 主甲板」
+_QUALIFIER_SPLIT_RE = re.compile(r"[的·・_\-—:：,，、/\\\s]+")
+
+
+def _name_parts(name: str) -> list[str]:
+    """把带修饰的地名拆成几段（空段丢掉）。"""
+    return [p for p in _QUALIFIER_SPLIT_RE.split(str(name or "").strip()) if p]
+
+
+def match_existing_scene(world_key: str, name: str):
+    """按名字**认出世界库里已有的那个场景**；认不出返回 ``None``。
+
+    为什么不能只做精确匹配：DM 说到某处时几乎总带修饰——「罗盘玫瑰号的主甲板」
+    「主甲板（船上）」——而索引键是「主甲板」。只认全等的话，它会当成一个
+    **新地点**交给生成器，于是世界上多出一份同名的仿制场景：预设那篇用不上、
+    事件节点的 ``at`` 也对不上，那一局就再也走不进事件
+    （2026-10-23 那局整场都跑在这么一份仿制品上）。
+
+    三级匹配，从严到宽：
+
+    1. 原名（``read_doc`` 自己会做文件名归一）；
+    2. **末段**：按「的 / · / _ / 空格」拆开后取最后一段再试
+       （「罗盘玫瑰号的主甲板」→「主甲板」）；
+    3. **唯一后缀**：某个场景键以末段结尾（或末段以它结尾）、且只有一条
+       （老存档里键已经被拼成「罗盘玫瑰号_主甲板」时靠这条救回来）。
+
+    第 3 条只在**唯一**时采用：宁可认不出（走生成），也不要认到别人家的房间。
+    """
+    doc = read_doc(world_key, "scene", name)
+    if doc is not None:
+        return doc
+    parts = _name_parts(name)
+    tail = parts[-1] if parts else ""
+    # 2. 末段：只有**带修饰**（≥2 段）时才试，免得把「甲板」这种半截词当成全名
+    if len(parts) >= 2 and len(tail) >= 2:
+        doc = read_doc(world_key, "scene", tail)
+        if doc is not None:
+            return doc
+    if len(tail) < 2:
+        return None
+    try:
+        keys = list(list_docs(world_key, "scene").get("scene") or [])
+    except Exception as e:  # 世界库读不出来就当认不出
+        log.debug(f"列场景失败：{e!r}")
+        return None
+    hits = [key for key in keys if key.endswith(tail) or tail.endswith(key)]
+    if len(hits) == 1:
+        return read_doc(world_key, "scene", hits[0])
+    return None
+
+
+async def _run_agent(
+    agent, label: str, world_key: str = "", near: str = "", **values
+) -> str | None:
     """调用一个生成 agent，失败只记日志并返回 ``None``。
 
-    ``world_key`` 非空时自动注入世界圣经——专有名词与事实以它为准。
+    ``world_key`` 非空时自动注入世界圣经——专有名词与事实以它为准；
+    ``near`` 是这次生成的对象所在的地方（王国 / 省 / 地点都行），圣经据此
+    只把**这一带**的登记摆到前面。生成剑湾的村子时，泊银湾的商会就不该
+    出现在提示词里（那不省字，是防串台）。
     """
     try:
         if world_key:
             values.setdefault(
                 "bible",
-                bible_text(world_key, max_chars=settings.world_bible_max_chars()),
+                bible_text(
+                    world_key,
+                    near=near,
+                    max_chars=settings.world_bible_max_chars(),
+                ),
             )
         result = await agent.run(**values)
     except Exception as e:
@@ -208,6 +270,7 @@ async def ensure_realm(world_key: str, realm: str, world_text: str = "") -> str 
         realm_agent,
         f"王国/地区「{realm}」",
         world_key,
+        near=realm,
         realm=info,
         neighbors="、".join(neighbor_names),
         world=_world_context(world, neighbor_names),
@@ -335,6 +398,7 @@ async def ensure_province(
         province_agent,
         f"区域「{province}」",
         world_key,
+        near=owner or province,
         province=base
         or f"### 区域：{province}\n（暂无设定，请结合所属王国与地形合理设定）",
         realm=realm_text,
@@ -419,6 +483,7 @@ async def ensure_site(
         agent,
         f"{DOC_KIND_LABELS[picked]}「{name}」",
         world_key,
+        near=province,
         context=context,
         **{arg_name: base},
     )
@@ -477,6 +542,7 @@ async def _make_scene(
         scene_agent,
         f"场景「{name}」",
         world_key,
+        near=region or location,
         location=detailed,
         kind=DOC_KIND_LABELS.get(kind, "地点"),
         context=context,
@@ -528,8 +594,8 @@ async def ensure_scene(
         return None
     want = normalize_kind(kind)
 
-    # 1. 已经是场景
-    scene_doc = read_doc(world_key, "scene", name)
+    # 1. 已经是场景（名字带修饰也认：「罗盘玫瑰号的主甲板」→「主甲板」）
+    scene_doc = match_existing_scene(world_key, name)
     if scene_doc is not None:
         return "scene", scene_doc.key, scene_doc.content
 

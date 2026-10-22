@@ -14,7 +14,7 @@ class TrpgConfig(PluginConfig):
 
     partial_narration = Field(
         bool,
-        True,
+        False,
         "逐人结算",
         "每名玩家提交后立刻只结算他这一行动（最后一人做整轮总结）；"
         "关闭则等全员提交后一次性主持——调用次数从 n 次降回 1 次，但前几名玩家要等",

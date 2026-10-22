@@ -219,6 +219,13 @@ class SceneAgent(TrpgAgent):
 scene_agent = SceneAgent()
 
 
+#: 占位式的「在场者」写法，不是名字：转模组时没数据的那几节写的就是
+#: ``### 在场者：见正文``。登记进去等于教 DM 有个叫「见正文」的 NPC。
+_PLACEHOLDER_NAMES = frozenset(
+    {"见正文", "见下", "见上", "同上", "略", "无", "暂无", "待定", "同前"}
+)
+
+
 def parse_scene_npcs(text: str) -> list[Entity]:
     """从场景文档提取实体登记：在场者（「六、在场者」节）。
 
@@ -226,6 +233,7 @@ def parse_scene_npcs(text: str) -> list[Entity]:
     程序提取零成本、不会认错；备注取小节内的「- 类型：」行。
     标识类在场者（「盐仓看守」这类没名字的）同样登记——DM 之后说到他们时
     也得用同一个叫法。事件 / 可交互元素是一次性内容，不登记。
+    占位写法（``见正文`` / ``暂无``）不是名字，跳过。
     """
     entities: list[Entity] = []
     in_section = False
@@ -258,7 +266,7 @@ def parse_scene_npcs(text: str) -> list[Entity]:
         if match is None:
             continue
         name = clean_name(match.group("name"))
-        if not name or len(name) > 20:
+        if not name or len(name) > 20 or name in _PLACEHOLDER_NAMES:
             continue
         current = Entity(name=name, kind="person", source="scene")
     flush()

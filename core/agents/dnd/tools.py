@@ -1098,6 +1098,8 @@ class AwaitPlayersTool(AgentTool):
     function_name = "await_players"
     description = "声明下一轮等哪些玩家提交（不调用沿用上轮，开局默认全员）"
     args = (ToolArg("players", "str", "用、分隔写角色名 / user_id；也可写 全员 / 无"),)
+    #: 记账：只记下「下一轮等谁」，叙述不必等它
+    bookkeeping = True
 
     @staticmethod
     async def call(context: AgentContext, players: Any = "", **kwargs: Any) -> str:
@@ -1133,8 +1135,8 @@ class NarrateTool(AgentTool):
 
     function_name = "narrate"
     description = (
-        "把叙述发给玩家并结束思考；必须最后调用、**单独一轮**"
-        "（依赖检定 / 攻击结果时要等返回后再单独调）"
+        "把叙述发给玩家并结束思考；必须最后调用（依赖检定 / 攻击结果时"
+        "要等返回后再单独调；只写账的功能可与它同批）"
     )
     args = (ToolArg("text", "str", "要发给玩家的叙述正文"),)
 
@@ -1231,6 +1233,12 @@ class MoveSceneTool(AgentTool):
         # 事件得先在池子里，否则这一脚判不到「进入」。
         #
         # 幂等：装过的、了结过的都跳过；池满（MAX_OPEN_SLOTS）就停。
+        #
+        # **先给 ``journey`` 一个初值**：装不上（池满 / 这一省没有预写事件 /
+        # 世界库读不出来）时下面那句 ``report.dm_hint() or journey`` 会读它——
+        # 不给初值就是 UnboundLocalError，而它又会被自己的 except 再踩一次，
+        # 整个 move_scene 直接抛出去（第一次之后的每次移动都会这样）。
+        journey = ""
         try:
             from .event_flow import install_preset_events_for_province
 
@@ -1250,15 +1258,6 @@ class MoveSceneTool(AgentTool):
         except Exception as e:  # 事件系统出问题不该让人走不动
             log.warning(f"推进世界时间失败：{str_traceback(e)}")
             journey = journey or ""
-        report = None
-        try:
-            from .event_flow import step_move
-
-            report = step_move(save, key, origin=origin)
-            journey = report.dm_hint()
-        except Exception as e:  # 事件系统出问题不该让人走不动
-            log.warning(f"推进世界时间失败：{str_traceback(e)}")
-            journey = ""
         # 放弃掉的事件要收尾（推刻度 / 推进化轨 / 判纪元）。发称号要调模型，
         # 所以这一步只能在 async 里做——塞进 step_move 会把它逼成 async 函数。
         if report is not None and report.abandoned_slots:
@@ -1304,6 +1303,8 @@ class UpdateSceneTool(AgentTool):
         ToolArg("note", "str", "变化内容，如「大门被玩家砸开」"),
         ToolArg("kind", "str", "类型（可选），默认 变化"),
     )
+    #: 记账：往副本文末追加一行，叙述不必等它
+    bookkeeping = True
 
     @staticmethod
     async def call(
@@ -2546,6 +2547,8 @@ class UpdateNpcTool(AgentTool):
         ),
         ToolArg("place", "str", "最后出现的地点（可选）"),
     )
+    #: 记账：把这人记进名单，叙述不必等它（这一轮怎么演，DM 心里已经有数了）
+    bookkeeping = True
 
     @staticmethod
     async def call(
@@ -2663,6 +2666,8 @@ class RememberTool(AgentTool):
             "fact=已发生 / foreshadow=待回收 / relation=关系 / resolved=标记已回收",
         ),
     )
+    #: 记账：写进剧情记忆，叙述不必等它
+    bookkeeping = True
 
     @staticmethod
     async def call(
