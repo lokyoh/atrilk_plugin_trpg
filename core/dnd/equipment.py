@@ -1,13 +1,19 @@
 """DND 5e 装备数据。
 
 对应建卡流程中的 ``equioment.md``。这里给出护甲 / 盾牌 / 常用武器 / 探索者背包等
-基础装备的数值，用于计算 AC 与攻击加值；完整装备表可后续扩充。
+基础装备的数值，用于计算 AC 与攻击加值。
+
+**数值在 ``res/dnd/equipment.yaml``**（护甲 / 盾牌 / 武器三段），
+这里只留类型、类别枚举与查询函数——加一件武器不用改代码。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
+
+from .datafiles import as_texts, load_mapping
 
 __all__ = [
     "ARMORS",
@@ -111,20 +117,39 @@ class ItemStack:
         return {"name": self.name, "count": self.count}
 
 
-ARMORS: tuple[Armor, ...] = (
-    Armor("padded", "棉甲", ArmorCategory.LIGHT, 11, None, 0, True, 8),
-    Armor("leather", "皮甲", ArmorCategory.LIGHT, 11, None, 0, False, 10),
-    Armor("studded_leather", "镶钉皮甲", ArmorCategory.LIGHT, 12, None, 0, False, 13),
-    Armor("hide", "兽皮甲", ArmorCategory.MEDIUM, 12, 2, 0, False, 12),
-    Armor("chain_shirt", "链甲衫", ArmorCategory.MEDIUM, 13, 2, 0, False, 20),
-    Armor("scale_mail", "鳞甲", ArmorCategory.MEDIUM, 14, 2, 0, True, 45),
-    Armor("breastplate", "胸甲", ArmorCategory.MEDIUM, 14, 2, 0, False, 20),
-    Armor("half_plate", "半身板甲", ArmorCategory.MEDIUM, 15, 2, 0, True, 40),
-    Armor("ring_mail", "环甲", ArmorCategory.HEAVY, 14, 0, 0, True, 40),
-    Armor("chain_mail", "链甲", ArmorCategory.HEAVY, 16, 0, 13, True, 55),
-    Armor("splint", "板条甲", ArmorCategory.HEAVY, 17, 0, 15, True, 60),
-    Armor("plate", "全身板甲", ArmorCategory.HEAVY, 18, 0, 15, True, 65),
-)
+def _armor(row: dict[str, Any]) -> Armor:
+    """一件护甲或盾牌（``res/dnd/equipment.yaml`` 的 armors / shields 段）。"""
+    max_dex = row.get("max_dex_bonus")
+    return Armor(
+        key=str(row["key"]),
+        cn=str(row["cn"]),
+        category=ArmorCategory(str(row["category"])),
+        base_ac=int(row["base_ac"]),
+        max_dex_bonus=None if max_dex is None else int(max_dex),
+        strength_required=int(row.get("strength_required", 0)),
+        stealth_disadvantage=bool(row.get("stealth_disadvantage", False)),
+        weight=float(row.get("weight", 0.0)),
+    )
+
+
+def _weapon(row: dict[str, Any]) -> Weapon:
+    """一件武器（``res/dnd/equipment.yaml`` 的 weapons 段）。"""
+    return Weapon(
+        key=str(row["key"]),
+        cn=str(row["cn"]),
+        category=WeaponCategory(str(row["category"])),
+        damage=str(row["damage"]),
+        damage_type=str(row["damage_type"]),
+        properties=as_texts(row.get("properties")),
+        ranged_normal=int(row.get("ranged_normal", 0)),
+        ranged_max=int(row.get("ranged_max", 0)),
+    )
+
+
+_TABLES = load_mapping("equipment")
+
+#: 护甲表：数值在 ``res/dnd/equipment.yaml`` 的 ``armors`` 段
+ARMORS: tuple[Armor, ...] = tuple(_armor(row) for row in _TABLES["armors"])
 
 #: 别名 -> 护甲（数据里出现的常见写法）
 _ARMOR_ALIASES: dict[str, str] = {
@@ -133,10 +158,8 @@ _ARMOR_ALIASES: dict[str, str] = {
     "链甲": "chain_mail",
 }
 
-SHIELDS: tuple[Armor, ...] = (
-    Armor("shield_wood", "木盾", ArmorCategory.SHIELD, 2, None, 0, False, 6),
-    Armor("shield_steel", "钢盾", ArmorCategory.SHIELD, 2, None, 0, False, 6),
-)
+#: 盾牌表：数值在 ``res/dnd/equipment.yaml`` 的 ``shields`` 段
+SHIELDS: tuple[Armor, ...] = tuple(_armor(row) for row in _TABLES["shields"])
 
 ARMOR_MAP: dict[str, Armor] = {
     **{a.key: a for a in ARMORS},
@@ -145,110 +168,8 @@ ARMOR_MAP: dict[str, Armor] = {
     **{a.cn: a for a in SHIELDS},
 }
 
-WEAPONS: tuple[Weapon, ...] = (
-    # 简易近战
-    Weapon("club", "棍棒", WeaponCategory.SIMPLE_MELEE, "1d4", "钝击", ("轻型",)),
-    Weapon(
-        "dagger",
-        "匕首",
-        WeaponCategory.SIMPLE_MELEE,
-        "1d4",
-        "穿刺",
-        ("灵巧", "轻型", "投掷"),
-    ),
-    Weapon("greatclub", "巨棒", WeaponCategory.SIMPLE_MELEE, "1d8", "钝击", ("双手",)),
-    Weapon(
-        "handaxe", "手斧", WeaponCategory.SIMPLE_MELEE, "1d6", "挥砍", ("轻型", "投掷")
-    ),
-    Weapon("javelin", "标枪", WeaponCategory.SIMPLE_MELEE, "1d6", "穿刺", ("投掷",)),
-    Weapon("mace", "硬头槌", WeaponCategory.SIMPLE_MELEE, "1d6", "钝击", ()),
-    Weapon(
-        "quarterstaff", "长棍", WeaponCategory.SIMPLE_MELEE, "1d6", "钝击", ("双手",)
-    ),
-    Weapon("spear", "矛", WeaponCategory.SIMPLE_MELEE, "1d6", "穿刺", ("投掷", "双手")),
-    # 简易远程
-    Weapon(
-        "light_crossbow",
-        "轻弩",
-        WeaponCategory.SIMPLE_RANGED,
-        "1d8",
-        "穿刺",
-        ("双手", "装填"),
-        80,
-        320,
-    ),
-    Weapon(
-        "shortbow",
-        "短弓",
-        WeaponCategory.SIMPLE_RANGED,
-        "1d6",
-        "穿刺",
-        ("双手",),
-        80,
-        320,
-    ),
-    Weapon("sling", "投石索", WeaponCategory.SIMPLE_RANGED, "1d4", "钝击", (), 30, 120),
-    # 军用近战
-    Weapon("battleaxe", "战斧", WeaponCategory.MARTIAL_MELEE, "1d8", "挥砍", ()),
-    Weapon("greataxe", "巨斧", WeaponCategory.MARTIAL_MELEE, "1d12", "挥砍", ("双手",)),
-    Weapon(
-        "greatsword", "巨剑", WeaponCategory.MARTIAL_MELEE, "2d6", "挥砍", ("双手",)
-    ),
-    Weapon("longsword", "长剑", WeaponCategory.MARTIAL_MELEE, "1d8", "挥砍", ()),
-    Weapon("rapier", "细剑", WeaponCategory.MARTIAL_MELEE, "1d8", "穿刺", ("灵巧",)),
-    Weapon(
-        "scimitar",
-        "弯刀",
-        WeaponCategory.MARTIAL_MELEE,
-        "1d6",
-        "挥砍",
-        ("灵巧", "轻型"),
-    ),
-    Weapon(
-        "shortsword",
-        "短剑",
-        WeaponCategory.MARTIAL_MELEE,
-        "1d6",
-        "穿刺",
-        ("灵巧", "轻型"),
-    ),
-    Weapon("warhammer", "战锤", WeaponCategory.MARTIAL_MELEE, "1d8", "钝击", ()),
-    Weapon("warpick", "战镐", WeaponCategory.MARTIAL_MELEE, "1d8", "穿刺", ()),
-    Weapon(
-        "halberd", "戟", WeaponCategory.MARTIAL_MELEE, "1d10", "挥砍", ("双手", "触及")
-    ),
-    # 军用远程
-    Weapon(
-        "longbow",
-        "长弓",
-        WeaponCategory.MARTIAL_RANGED,
-        "1d8",
-        "穿刺",
-        ("双手",),
-        150,
-        600,
-    ),
-    Weapon(
-        "hand_crossbow",
-        "手弩",
-        WeaponCategory.MARTIAL_RANGED,
-        "1d6",
-        "穿刺",
-        ("轻型", "装填"),
-        30,
-        120,
-    ),
-    Weapon(
-        "heavy_crossbow",
-        "重弩",
-        WeaponCategory.MARTIAL_RANGED,
-        "1d10",
-        "穿刺",
-        ("双手", "装填"),
-        100,
-        400,
-    ),
-)
+#: 武器表：数值在 ``res/dnd/equipment.yaml`` 的 ``weapons`` 段
+WEAPONS: tuple[Weapon, ...] = tuple(_weapon(row) for row in _TABLES["weapons"])
 
 WEAPON_MAP: dict[str, Weapon] = {
     **{w.key: w for w in WEAPONS},

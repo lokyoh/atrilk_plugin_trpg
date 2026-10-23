@@ -27,6 +27,7 @@ from ...dnd.battlemap import (
     range_check,
     set_terrain,
 )
+from ...dnd.bestiary import bestiary_text, find_bestiary
 from ...dnd.card import DndCharacter
 from ...dnd.clock import FATIGUE_DC
 from ...dnd.combat import (
@@ -87,6 +88,8 @@ from ...dnd.memory import (
     remember_from_tool,
     set_resolved,
 )
+from ...dnd.monster_index import index_text
+from ...dnd.monster_rules import rules_of, save_advantage
 from ...dnd.monsters import MONSTERS, get_monster, monster_names
 from ...dnd.npcs import (
     NPC_KEY_PREFIX,
@@ -483,27 +486,81 @@ def _query_armor(name: str) -> str:
     return "\n".join(lines)
 
 
+def _looks_like_category(text: str) -> bool:
+    """这句话里有图鉴的分类词吗（类型 / 栖息地 / 群组）？有就走分类查询。"""
+    from ...dnd.monster_index import GROUP_INDEX, HABITAT_INDEX, KIND_INDEX
+
+    return any(
+        token in KIND_INDEX or token in HABITAT_INDEX or token in GROUP_INDEX
+        for token in text.split()
+    )
+
+
 def _query_monster(name: str) -> str:
-    if not name:
-        lines = [f"怪物（共 {len(MONSTERS)} 只，按 CR 升序）："]
-        for monster in sorted(MONSTERS, key=lambda item: item.cr):
-            first = monster.attacks[0] if monster.attacks else None
-            attack = (
-                f"{first.name} {monster.attack_bonus(first):+d}/{first.damage}"
-                if first
-                else "—"
+    """查怪物。
+
+    - 留空：按《怪物图鉴》的四套分类给总览（类型 / 栖息地 / 群组 / 挑战等级）；
+    - **分类**（``森林`` ``亡灵`` ``类地精``，可组合）：按 CR 分档列名单；
+    - ``随机 …``：系统掷一只，直接出数据卡；
+    - ``cr 5``：列该挑战等级（带 AC / HP）；
+    - 写名字：出数据卡。
+
+    怪物表有五百多只（图鉴全量），全列出来会超出返回上限也读不过来——
+    所以挑怪走分类，查某只走名字。
+    """
+    text = str(name or "").strip()
+    if not text:
+        return index_text()
+
+    # 随机 / 分类查询（图鉴的四套分类）交给 monster_index：那里认得
+    # 类型、栖息地、群组与 cr；认不出会抛 KeyError，正好是「查不到」的提示。
+    if text.startswith("随机") or _looks_like_category(text):
+        return index_text(text)
+
+    lowered = text.lower()
+    if lowered.startswith("cr") or text.replace("/", "").isdigit():
+        raw = lowered.replace("cr", "").strip()
+        try:
+            cr = (
+                float(raw.split("/")[0]) / float(raw.split("/")[1])
+                if "/" in raw
+                else float(raw)
             )
-            # 出处只标「模组自带」的（风骸岛之龙等）——系统自带的不用标
-            origin = f"  [{monster.source}]" if monster.source else ""
-            lines.append(
-                f"· {monster.cn}（CR {monster.cr_text}）AC {monster.ac}  "
-                f"HP {monster.hp}  攻击 {attack}{origin}"
-            )
+        except (ValueError, ZeroDivisionError):
+            raise KeyError(f"看不懂这个挑战等级：{text}") from None
+        hits = sorted((m for m in MONSTERS if abs(m.cr - cr) < 1e-6), key=lambda m: m.cn)
+        if not hits:
+            return f"CR {raw} 没有登记。"
+        lines = [f"CR {raw} 共 {len(hits)} 只："]
+        for monster in hits[:40]:
+            lines.append(f"· {monster.cn}：AC {monster.ac}　HP {monster.hp}")
+        if len(hits) > 40:
+            lines.append(f"…还有 {len(hits) - 40} 只（写名字查详情）。")
         return "\n".join(lines)
-    monster = get_monster(name)
+
+    monster = get_monster(text)
     if monster is None:
-        raise KeyError(f"未知怪物：{name}")
+        raise KeyError(f"未知怪物：{text}")
     return monster.stat_block()
+
+
+def _query_bestiary(name: str) -> str:
+    """查《怪物图鉴（2025）》的**名录**：名字 / 类型 / CR / 栖息地。
+
+    只有名录没有数值——那份参考书的导出把每张数据卡都变成了「正在加载……」。
+    顺手告诉 DM「这只本局打不打得了」，省得它拿着名录去开战。
+    """
+    text = bestiary_text(name)
+    asked_cr = name.strip().lower().startswith("cr")
+    hit = None if asked_cr else find_bestiary(name)
+    if hit is not None:
+        playable = get_monster(hit.name) is not None
+        text += (
+            "\n本局有它的数据卡，可以直接开战（query_data: table=monster）。"
+            if playable
+            else "\n本局**没有**它的数据卡——想用就得先补数值（res/dnd/monsters*.yaml）。"
+        )
+    return text
 
 
 def _query_spell(name: str) -> str:
@@ -691,6 +748,7 @@ _DATA_TABLES = {
     "weapon": _query_weapon,
     "armor": _query_armor,
     "monster": _query_monster,
+    "bestiary": _query_bestiary,
     "item": _query_item,
     "spell": _query_spell,
     "npc_tier": _query_npc_tier,
@@ -714,6 +772,10 @@ _DATA_ALIASES = {
     "monster": "monster",
     "怪物": "monster",
     "怪物图鉴": "monster",
+    "bestiary": "bestiary",
+    "图鉴": "bestiary",
+    "名录": "bestiary",
+    "图鉴名录": "bestiary",
     "敌人": "monster",
     "item": "item",
     "items": "item",
@@ -818,9 +880,12 @@ class QueryDataTool(AgentTool):
     function_name = "query_data"
     max_result_chars = 2500
     description = (
-        "查 DND 数据表（race/profession/skill/weapon/armor/monster/item/spell/condition/"
-        "difficulty/npc_tier/npc）或世界库文档（world/realm/province/city/place/"
-        "dungeon/scene/event），table 可写中文"
+        "查 DND 数据表（race/profession/skill/weapon/armor/monster/bestiary/item/"
+        "spell/condition/difficulty/npc_tier/npc）或世界库文档（world/realm/"
+        "province/city/place/dungeon/scene/event），table 可写中文；"
+        "bestiary=怪物图鉴名录（只有名字/类型/CR/栖息地，可写 name=cr 5 按 CR 挑）；"
+        "monster 按图鉴四套分类查：name 写类型/栖息地/群组（如「森林」「类地精」，可组合），"
+        "或写「随机 幽暗地域 亡灵」让系统抽一只"
     )
     args = (
         ToolArg("table", "str", "表名 / 文档类型"),
@@ -851,7 +916,7 @@ class QueryDataTool(AgentTool):
         if handler is None:
             return (
                 "未知数据表，可用：race / profession / skill / weapon / armor / monster / "
-                "item / spell / condition / difficulty / npc_tier / npc，或世界库文档："
+                "bestiary / item / spell / condition / difficulty / npc_tier / npc，或世界库文档："
                 "world / realm / province / city / place / dungeon / scene / event"
             )
         try:
@@ -1382,13 +1447,21 @@ class StartCombatTool(AgentTool):
         ToolArg(
             "enemies",
             "str",
-            "敌人清单：地精x3 / 3只地精；具名 NPC 写「名字:档位」，如 卡尔:老兵、打手x2:士兵",
+            "敌人清单：地精x3 / 3只地精；具名 NPC 写「名字:档位」，如 卡尔:老兵、打手x2:士兵；"
+            "想让系统替你挑就写「随机 幽暗地域 亡灵x3」（按图鉴的类型 / 栖息地 / 群组 / 挑战等级抽）",
         ),
         ToolArg("note", "str", "起因（可选），如「在酒馆后巷伏击」"),
         ToolArg(
             "terrain",
             "str",
             "战场环境（可选），如「雨夜的窄巷」；留空用当前场景自动生成",
+        ),
+        ToolArg(
+            "daylight",
+            "str",
+            "这里有没有日光（可选）：写「是」或「否」。地牢、室内、夜间写「否」，"
+            "野外白天写「是」。只影响日照敏感的怪（狗头人 / 卓尔……）——"
+            "有日光时它们的攻击带劣势；留空则由你每次自行裁定",
         ),
     )
 
@@ -1398,6 +1471,7 @@ class StartCombatTool(AgentTool):
         enemies: Any = "",
         note: Any = "",
         terrain: Any = "",
+        daylight: Any = "",
         **kwargs: Any,
     ) -> str:
         save = load_save(context.save_id) if context.save_id else None
@@ -1437,7 +1511,11 @@ class StartCombatTool(AgentTool):
             if part
         )
         state = start_combat(
-            save, specs, current=str(context.user_id or ""), note=brief
+            save,
+            specs,
+            current=str(context.user_id or ""),
+            note=brief,
+            daylight=str(daylight or ""),
         )
         context.data["combat_started"] = True
 
@@ -1489,6 +1567,13 @@ class StartCombatTool(AgentTool):
             "按上面的顺序叙述：标记「现在」的那位就是本轮该行动的玩家。"
             "玩家攻击用 attack、要位置用 move、施法用 cast_spell，敌人反击用 enemy_attack"
             "（都由系统掷命中与伤害）；不要替还没轮到的玩家决定行动。"
+        )
+        lines.append(
+            "怪物特性里**能算的那些由系统自动结算**，不用你记也不用你写："
+            "集群战术 / 血腥狂怒（优势）、魔法抗性（法术豁免优势）、传奇抗性（失败改成功，"
+            "每日有次数）、再生（轮到它时回血）、不死坚韧（0 血豁免）、自爆（死亡时波及半径内）、"
+            "状态免疫（免疫的状态挂不上）、日照敏感（有日光则劣势，开战可用 daylight=是/否 定）。"
+            "结算文案里会写明触发了哪一条，照着叙述即可。"
         )
         return "\n".join(lines)
 
@@ -1936,11 +2021,24 @@ def _target_save_bonus(save, target: Any, ability: str) -> int:
     return monster.save_bonus(ability) if monster is not None else 0
 
 
-def _target_save(save, target: Any, ability: str, dc: int) -> Any:
-    """目标的豁免检定：自动套用目标身上的状态。
+def _target_save(
+    save,
+    target: Any,
+    ability: str,
+    dc: int,
+    *,
+    state: Any = None,
+    magical: bool = False,
+) -> Any:
+    """目标的豁免检定：自动套用目标身上的状态**与怪物特性**。
 
     - 束缚给敏捷豁免劣势、力竭 3 级起全部豁免劣势（中毒不影响豁免）；
-    - 麻痹 / 震慑 / 昏迷 / 石化的力量与敏捷豁免**自动失败**。
+    - 麻痹 / 震慑 / 昏迷 / 石化的力量与敏捷豁免**自动失败**；
+    - **魔法抗性**：对抗法术与其他魔法效应的豁免有优势（只对 ``magical=True``
+      的检定生效——火球术算，龙息不算）；
+    - **传奇抗性**：豁免失败时改为成功，每日有次数（龙、恶魔、首领都有）。
+
+    :param magical: 这次豁免是不是法术 / 魔法效应带来的。
     """
     if isinstance(target, DndCharacter):
         return target.check_save(ability, dc)
@@ -1950,16 +2048,28 @@ def _target_save(save, target: Any, ability: str, dc: int) -> Any:
             return card.check_save(ability, dc)
     conds = combatant_conditions(save, target)
     effect = merge_effects(conds)
+    monster = resolve_monster(target.monster)
+    rules = rules_of(monster)
     result = roll_check(
         _target_save_bonus(save, target, ability),
         dc,
         kind=f"{get_ability(ability).cn}豁免",
-        advantage=effect.own_save,
+        advantage=combine_advantage(
+            effect.own_save, save_advantage(rules, magical=magical)
+        ),
     )
     if save_auto_fail(conds, ability):
         # 状态导致的自动失败：照掷骰（给玩家看点数），但结果强制为失败
         result.auto_critical = False
         result.forced_failure = True
+    # 传奇抗性：失败了就花一次改成成功（次数用完了就老实认）
+    if not result.success and rules.legendary_resistance > 0:
+        used = int(getattr(target, "legendary_resistance_used", 0) or 0)
+        if used < rules.legendary_resistance:
+            target.legendary_resistance_used = used + 1
+            result.forced_success = True
+            if state is not None:
+                save_combat(save, state)  # 次数要跟着战斗存档走
     return result
 
 
@@ -2309,7 +2419,8 @@ class CastSpellTool(AgentTool):
                 lines.append(f"· {_target_name(item)} 已经倒下了，跳过。")
                 continue
             # 豁免检定：自动套目标状态（束缚劣势 / 麻痹等自动失败）
-            result = _target_save(save, item, spell_obj.save, dc)
+            # 法术的豁免：**魔法效应**，所以魔法抗性在这里生效（龙息则不算）
+            result = _target_save(save, item, spell_obj.save, dc, state=state, magical=True)
             if not spell_obj.damage:
                 lines.append(
                     f"· {_target_name(item)}：{result.describe()} → "

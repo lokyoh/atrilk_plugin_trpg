@@ -1133,16 +1133,20 @@ class DndCharacter(TrpgCharacter):
 
     # —— 伤害抗性 ——
 
-    def apply_resistance(self, amount: int, damage_type: str = "") -> tuple[int, str]:
+    def apply_resistance(
+        self, amount: int, damage_type: str = "", *, magical: bool = False
+    ) -> tuple[int, str]:
         """按抗性表结算伤害（抗性减半 / 免疫归零 / 易伤翻倍）。
 
         抗性 = 角色卡上的固定抗性（种族等）+ 当前状态带来的抗性（狂暴的物理抗性）。
+
+        :param magical: 这一击是不是魔法的（见 :func:`~.conditions.resolve_damage`）。
         """
         entries = list(self.damage_resistances)
         for item in merge_effects(self.conditions).resistances:
             if item not in entries:
                 entries.append(item)
-        return resolve_damage(amount, damage_type, entries)
+        return resolve_damage(amount, damage_type, entries, magical=magical)
 
     def resistances_text(self) -> str:
         """抗性表文本；没有抗性返回空串。"""

@@ -344,7 +344,13 @@ core/
                 主持：dm（DM Agent）、tools（DM 可调用功能，含战斗 start_combat/attack/enemy_attack/
                       update_enemy/end_combat、施法 cast_spell/rest、NPC 留档 update_npc、
                       结档 wrap_up）、rules（内置规则查询）
-res/     插件内置资源（rule.md 规则源）
+res/     插件内置资源
+         rule.md   规则正文（get_rule 从这里查）
+         data/     数值表（yaml）：races / classes / backgrounds / items / equipment /
+                   spells / monsters（+ 风骸岛、失落矿坑两批模组生物）。
+                   改数值、加法术、补怪物都改这里，不用动 .py；由 core/dnd/datafiles.py 读取
+                   bestiary_index.yaml 是《怪物图鉴（2025）》的名录（502 张卡的名字 / 类型 /
+                   CR / 栖息地）。那份参考书的导出没有数据卡数值，所以它只能选怪、不能开战
 handlers.py  指令处理逻辑
 matchers.py  指令注册
 __init__.py  服务入口

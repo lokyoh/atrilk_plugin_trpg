@@ -68,6 +68,12 @@ from .conditions import (
 )
 from .equipment import get_weapon
 from .monsters import Monster
+from .monster_rules import (
+    DeathBurst,
+    attack_advantage_of,
+    blocked_conditions,
+    rules_of,
+)
 from .npcs import (
     build_npc,
     is_npc_key,
@@ -133,6 +139,7 @@ __all__ = [
     "threat_focus_name",
     "threat_text",
     "tick_dot",
+    "tick_regeneration",
     "update_enemy",
     "use_resource",
 ]
@@ -188,6 +195,11 @@ class Combatant:
     conditions: list[str] = field(default_factory=list)
     #: 力竭等级（0~6）；玩家同样以角色卡为准
     exhaustion: int = 0
+    #: **再生被打断**：本轮挨了火焰 / 强酸（见数据卡 ``rules.regeneration`` 的
+    #: ``blocked_by``），到它下次行动前不再生。新一轮自动清除。
+    regen_suppressed: bool = False
+    #: 已经用掉的**传奇抗性**次数（豁免失败改成功，每日有上限）
+    legendary_resistance_used: int = 0
 
     @property
     def is_enemy(self) -> bool:
@@ -229,6 +241,8 @@ class Combatant:
             "move_used": self.move_used,
             "conditions": list(self.conditions),
             "exhaustion": self.exhaustion,
+            "regen_suppressed": self.regen_suppressed,
+            "legendary_resistance_used": self.legendary_resistance_used,
         }
 
     @classmethod
@@ -259,6 +273,10 @@ class Combatant:
                 if str(item).strip()
             ],
             exhaustion=max(0, min(6, _int_or(data.get("exhaustion"), 0))),
+            regen_suppressed=bool(data.get("regen_suppressed", False)),
+            legendary_resistance_used=max(
+                0, _int_or(data.get("legendary_resistance_used"), 0)
+            ),
         )
 
 
@@ -311,6 +329,9 @@ class CombatState:
     #: 场地规则对掩体的修正（负数 = 掩体变差）。存在状态上，
     #: 这样 :func:`~.battlemap.cover_bonus` 不用反向依赖 :mod:`.threat`
     arena_cover_delta: int = 0
+    #: 这里有没有**日光**：``True`` 有 / ``False`` 没有 / ``None`` 不知道。
+    #: 只影响「日照敏感」的怪；不知道时 :func:`enemy_attack` 会提示 DM 自己判。
+    daylight: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -339,6 +360,8 @@ class CombatState:
             "reinforcement_waves": self.reinforcement_waves,
             "arena_rule": self.arena_rule,
             "arena_cover_delta": self.arena_cover_delta,
+            # 三态（有 / 没有 / 不知道）：不知道就不写这个键
+            **({} if self.daylight is None else {"daylight": bool(self.daylight)}),
         }
 
     @classmethod
@@ -392,6 +415,9 @@ class CombatState:
             reinforcement_waves=_int_or(data.get("reinforcement_waves"), 0),
             arena_rule=str(data.get("arena_rule", "") or ""),
             arena_cover_delta=_int_or(data.get("arena_cover_delta"), 0),
+            daylight=(
+                None if data.get("daylight") is None else bool(data.get("daylight"))
+            ),
         )
 
 
@@ -703,6 +729,33 @@ def tick_dot(
     return f"🔥 {combatant.name} 受到持续伤害（{damage_type}）：{note}"
 
 
+def tick_regeneration(
+    save: Save, state: CombatState, combatant: Combatant, *, rng: Any = None
+) -> str:
+    """**再生**：轮到它行动时按数据卡回一点血（巨魔 15、断肢 5……）。
+
+    条件照书上来：还有气（0 血不回）、没满血、本轮没挨过打断再生的那类伤害
+    （火焰 / 强酸——巨魔的再生就怕这两个）。
+
+    与 :func:`tick_dot` 一样挂在回合推进里：靠 DM 每轮手动调一次 ``update_enemy``
+    必然会漏，漏一轮就是白掉十几点血。
+    """
+    monster = resolve_monster(combatant.monster)
+    rules = rules_of(monster)
+    if not rules.regeneration:
+        return ""
+    if combatant.hp <= 0 or combatant.hp >= combatant.max_hp:
+        return ""
+    if combatant.regen_suppressed:
+        blocked = "、".join(rules.regeneration_blocked_by) or "火焰 / 强酸"
+        return f"🩸 {combatant.name} 本轮挨过{blocked}，再生不生效"
+    amount = min(rules.regeneration, combatant.max_hp - combatant.hp)
+    combatant.hp += amount
+    save_combat(save, state)
+    sync_combatant(save, combatant)
+    return f"🩸 {combatant.name} 再生 {amount}（{combatant.hp}/{combatant.max_hp}）"
+
+
 def current_actor(state: CombatState) -> Combatant | None:
     """当前回合的参战者（正常总是指向玩家）。"""
     if not state.order:
@@ -791,6 +844,10 @@ def _walk(
                         f"⏳ {combatant.name} 处于{names or '失能'}，本轮无法行动"
                     )
                 continue
+            if commit:
+                regen = tick_regeneration(save, state, combatant)
+                if regen:
+                    state.pending.append(regen)
             enemies.append(combatant)
             continue
         # —— 玩家：回合开始先结算持续伤害（中毒等），再走倒地濒死 / 跳过 ——
@@ -814,6 +871,7 @@ def _walk(
                 for other in order:
                     if other.is_enemy:
                         other.move_used = 0
+                        other.regen_suppressed = False
             state.round = round_no
             combatant.reset_turn()
         return enemies, combatant
@@ -888,7 +946,30 @@ def _split_template(token: str) -> tuple[str, str]:
     return text, ""
 
 
-def parse_enemy_list(text: str, *, level: int = 1) -> tuple[list[EnemySpec], list[str]]:
+def _random_pick(token: str, *, rng: Any = None) -> tuple[Monster, int] | None:
+    """``随机 幽暗地域 亡灵x3`` → ``(抽到的怪, 数量)``；挑不出返回 ``None``。
+
+    只管挑得出，**不管强度**——按队伍等级缩放到目标 CR 是 :mod:`.encounter`
+    在开战时统一做的（``calibrate_specs``）。
+    """
+    from .monster_index import parse_query, random_monster
+
+    cond = parse_query(token[len("随机") :].strip())
+    monster = random_monster(
+        kind=str(cond.get("kind", "")),
+        habitat=str(cond.get("habitat", "")),
+        group=str(cond.get("group", "")),
+        cr=cond.get("cr"),  # type: ignore[arg-type]
+        rng=rng,
+    )
+    if monster is None:
+        return None
+    return monster, max(1, int(cond.get("count", 1) or 1))
+
+
+def parse_enemy_list(
+    text: str, *, level: int = 1, rng: Any = None
+) -> tuple[list[EnemySpec], list[str]]:
     """把 DM 写的敌人清单解析成 :class:`EnemySpec` 列表。
 
     支持：
@@ -896,10 +977,13 @@ def parse_enemy_list(text: str, *, level: int = 1) -> tuple[list[EnemySpec], lis
     - 怪物名 / 档位名：``地精x3`` / ``地精×3`` / ``3只地精`` / ``地精 3`` / ``地精``
     - **具名 NPC**：``黑心商人卡尔:老兵``（档位按队伍等级给数值）、
       ``卡尔:匪帮首领``（直接用怪物表里的数据块）；名字后可带数量 ``打手x2:士兵``
+    - **随机**：``随机 幽暗地域 亡灵x3`` ——DM 不点名，按《怪物图鉴》的四套分类
+      （类型 / 栖息地 / 群组 / 挑战等级）掷一只；抽不到就报「没认出来」
 
     多个敌人用 ``、`` 等分隔。
 
     :param level: 队伍等级，决定档位 NPC 的数值。
+    :param rng: 随机源（随机抽怪用）；留空用系统随机。
     :return: ``(识别到的敌人, 没认出来的写法)``
     """
     specs: list[EnemySpec] = []
@@ -913,6 +997,23 @@ def parse_enemy_list(text: str, *, level: int = 1) -> tuple[list[EnemySpec], lis
         token = raw.strip()
         if not token:
             continue
+
+        # —— 随机：按图鉴分类抽一只（同种若干只）——
+        if token.startswith("随机"):
+            picked = _random_pick(token, rng=rng)
+            if picked is None:
+                if token not in unknown:
+                    unknown.append(token)
+                continue
+            monster, count = picked
+            room = _room()
+            if room <= 0:
+                break
+            count = max(1, min(count, room))
+            specs.append(EnemySpec(monster, count))
+            total += count
+            continue
+
         head, template = _split_template(token)
 
         # —— 具名 NPC：名字:模板 ——
@@ -969,6 +1070,16 @@ def parse_enemy_list(text: str, *, level: int = 1) -> tuple[list[EnemySpec], lis
     return specs, unknown
 
 
+def _parse_daylight(text: str) -> bool | None:
+    """``是`` / ``否`` → 有没有日光；留空或看不懂 = 不知道（``None``）。"""
+    value = str(text or "").strip()
+    if value in {"是", "有", "有日光", "白天", "户外", "yes", "true", "1"}:
+        return True
+    if value in {"否", "无", "没有", "夜", "夜晚", "室内", "地下", "no", "false", "0"}:
+        return False
+    return None
+
+
 def _normalize_specs(specs: list) -> list[EnemySpec]:
     """兼容 ``(monster, count)`` 元组写法。"""
     out: list[EnemySpec] = []
@@ -999,12 +1110,16 @@ def start_combat(
     *,
     current: str = "",
     note: str = "",
+    daylight: str = "",
     rng: Any = None,
 ) -> CombatState:
     """按敌人清单与存档里的玩家开战：掷先攻、排顺序并落盘。
 
     :param specs: :func:`parse_enemy_list` 的结果（也接受旧的 ``(怪物, 数量)`` 元组）。
     :param current: 当前回合从哪名玩家开始（通常是发起这场冲突的玩家）。
+    :param daylight: 这里有没有**日光**（``是`` / ``否``）；留空表示不知道。
+        只影响「日照敏感」那批怪（狗头人、卓尔……）：有日光时它们的攻击带劣势。
+        ⚠️ 不按时钟猜——地牢深处也是白天，猜错了就是凭空给它们扣劣势。
     """
     level = party_level(save)
     normalized = _normalize_specs(specs)
@@ -1086,7 +1201,12 @@ def start_combat(
                 break
 
     state = CombatState(
-        scene=save.current_scene, note=str(note or ""), round=1, turn=turn, order=order
+        scene=save.current_scene,
+        note=str(note or ""),
+        round=1,
+        turn=turn,
+        order=order,
+        daylight=_parse_daylight(daylight),
     )
     # 战场棋盘：按场景类型与人数生成，玩家在下、敌人在上（零额外模型调用）。
     # 生成失败（例如缺少场景文档）就退化成「没有棋盘」，射程校验自动跳过。
@@ -1409,16 +1529,24 @@ def apply_damage(
     *,
     damage_type: str = "",
     crit: bool = False,
+    magical: bool = False,
+    burst: bool = False,
     rng: Any = None,
 ) -> str:
     """对参战者造成伤害并落盘。
 
     - **抗性结算**：按目标（玩家 = 角色卡抗性 + 状态抗性；敌人 = 怪物表抗性 +
       生物类型默认抗性）过一遍伤害类型，抗性减半 / 免疫归零 / 易伤翻倍；
-    - 敌人：改 ``Combatant.hp``（随 ``combat.json`` 一起保存）；
+      ``magical`` 决定「非魔法武器」那类抗性生不生效（+1 武器打得动石像鬼）；
+    - 敌人：改 ``Combatant.hp``（随 ``combat.json`` 一起保存）；归零时先看
+      **不死坚韧**（骷髅 / 丧尸：体质豁免过了就留 1 血），再看**自爆**
+      （见 :func:`_death_burst`）；
     - 玩家：先扣临时生命，再扣角色卡的生命值并写回存档；生命归零转**倒地濒危**，
       倒地后继续挨打会累计死亡豁免失败次数（暴击 2 次；单次伤害达到生命上限即死）；
     - **专注**：玩家受伤后若正在维持法术，自动掷体质豁免（DC = max(10, 伤害//2)）。
+
+    :param burst: 本次伤害是不是某次自爆的连带伤害——防止两只自爆怪互相引爆
+        时无限递归（自爆不再触发自爆）。
     """
     amount = max(0, int(amount))
     if target.kind == "player":
@@ -1431,7 +1559,9 @@ def apply_damage(
         card.temp_hp -= absorbed
         incoming = amount - absorbed
         # 抗性 / 免疫 / 易伤（角色卡固定抗性 + 狂暴等状态抗性）
-        incoming, res_note = card.apply_resistance(incoming, damage_type)
+        incoming, res_note = card.apply_resistance(
+            incoming, damage_type, magical=magical
+        )
         before = card.hp
         card.current_hp = max(0, card.hp - incoming)
         notes = [f"{target.name} 剩余 {card.hp}/{card.max_hp}"]
@@ -1465,19 +1595,146 @@ def apply_damage(
 
     # —— 敌人：按怪物表抗性结算，再扣 Combatant.hp ——
     monster = resolve_monster(target.monster)
+    rules = rules_of(monster)
     resistances = monster.all_resistances if monster is not None else ()
-    amount, res_note = resolve_damage(amount, damage_type, resistances)
+    amount, res_note = resolve_damage(amount, damage_type, resistances, magical=magical)
     target.hp = max(0, target.hp - amount)
     note = f"{target.name} 剩余 {target.hp}/{target.max_hp}"
     if res_note:
         note += f"（{res_note}）"
+    # 再生被打断（巨魔挨了火焰 / 强酸，下个回合不再生）
+    if damage_type and damage_type in rules.regeneration_blocked_by:
+        target.regen_suppressed = True
     if target.hp <= 0:
+        # 不死坚韧：非光耀、非暴击的伤害先给一次体质豁免，过了就留 1 血
+        if rules.undead_fortitude and damage_type != "光耀" and not crit:
+            dc = 5 + amount
+            if monster is not None:
+                result = roll_check(
+                    monster.save_bonus("con"),
+                    dc,
+                    kind="不死坚韧（体质豁免）",
+                    rng=rng,
+                )
+            else:
+                result = None
+            if result is not None and result.success:
+                target.hp = 1
+                note += f"，但{result.describe()} → 不死坚韧，留在 1 血"
+                save_combat(save, state)
+                sync_combatant(save, target)
+                return note + "。"
         target.out = True
         record_defeat(state, target)
         note += "，已倒下"
+        if rules.death_burst is not None and not burst:
+            note += "\n" + _death_burst(save, state, target, rules.death_burst, rng=rng)
     save_combat(save, state)
     sync_combatant(save, target)
-    return note + "。"
+    # 自爆那段自己带句号（最后一行是别人的结算回执），别再叠一个
+    return note if note.endswith("。") else note + "。"
+
+
+def _allies_within(state: CombatState, enemy: Combatant, target: Combatant) -> bool:
+    """**集群战术**的判据：目标 5 尺内有没有它**未失能的同类**盟友。
+
+    有棋盘按格子算（5 尺 = 相邻一格）；没有棋盘时退一步——场上还有别的同种
+    敌人活着且能行动，就算围上来了（三只狗头人通常是一起扑上来的）。
+    """
+    same_kind = (
+        other
+        for other in state.order
+        if other.cid != enemy.cid
+        and other.is_enemy
+        and not other.out
+        and other.monster == enemy.monster
+        and not is_incapacitated(other.conditions)
+    )
+    if has_map(state) and has_position(enemy) and has_position(target):
+        return any(
+            has_position(other)
+            and chebyshev(int(other.x), int(other.y), int(target.x), int(target.y)) <= 1
+            for other in same_kind
+        )
+    return any(True for _ in same_kind)
+
+
+def _death_burst(
+    save: Save,
+    state: CombatState,
+    enemy: Combatant,
+    burst: DeathBurst,
+    *,
+    rng: Any = None,
+) -> str:
+    """自爆（``死亡时爆炸``）：给半径内的每人掷一次豁免，失败吃伤害、成功半伤。
+
+    图鉴里这类特性结构统一（「敏捷豁免 DC 11，源自它的 5 尺内的每名生物，失败：
+    7（2d6）火焰伤害，成功：半伤」），所以能自动算；伤害为空的那种（泥魔蝠：失败
+    只是陷入束缚）只把规则原文交给 DM。
+
+    没有棋盘时**不猜**——半径是几何概念，站在谁旁边得看地图。
+    """
+    save_cn = burst.save_cn
+    lines = [
+        f"💥 {enemy.name} 死亡时爆炸：{burst.radius} 尺内每名生物 "
+        f"{save_cn}豁免 DC {burst.dc}"
+    ]
+    if not burst.has_damage:
+        lines.append("　（失败的效果不是掉血，按特性正文叙述）")
+        return "\n".join(lines)
+    if not has_map(state) or not has_position(enemy):
+        lines.append(
+            f"　（这场战斗没有棋盘，谁在 {burst.radius} 尺内由你判定；"
+            f"失败 {burst.damage} {burst.damage_type}伤害，成功半伤）"
+        )
+        return "\n".join(lines)
+
+    cells = max(1, burst.radius // CELL_FEET)
+    for other in list(state.order):
+        if other.cid == enemy.cid or is_out(save, other) or not has_position(other):
+            continue
+        if chebyshev(int(enemy.x), int(enemy.y), int(other.x), int(other.y)) > cells:
+            continue
+        if other.kind == "player":
+            card = get_character(save, other.cid)
+            result = card.check_save(burst.save, burst.dc, rng=rng) if card else None
+        else:
+            monster = resolve_monster(other.monster)
+            result = (
+                roll_check(
+                    monster.save_bonus(burst.save),
+                    burst.dc,
+                    kind=f"{other.name}的{save_cn}豁免",
+                    rng=rng,
+                )
+                if monster is not None
+                else None
+            )
+        if result is None:
+            lines.append(f"　· {other.name}：没有数据可查豁免，由你判定")
+            continue
+        if result.success:
+            lines.append(f"　· {other.name}：{result.describe()} → 成功，半伤")
+            damage, _detail = roll_damage(burst.damage, rng=rng)
+            damage = damage // 2
+        else:
+            lines.append(f"　· {other.name}：{result.describe()} → 失败")
+            damage, _detail = roll_damage(burst.damage, rng=rng)
+        if damage > 0:
+            lines.append(
+                "　　"
+                + apply_damage(
+                    save,
+                    state,
+                    other,
+                    damage,
+                    damage_type=burst.damage_type,
+                    burst=True,
+                    rng=rng,
+                )
+            )
+    return "\n".join(lines)
 
 
 def heal_combatant(
@@ -1777,6 +2034,18 @@ def enemy_attack(
     )
     advantage = combine_advantage(advantage, state_adv)
 
+    # 怪物**特性**带来的优势（集群战术 / 血腥狂怒 / 日照敏感）：
+    # 书上有明文，却最容易忘——三只狗头人围上来还按普通攻击掷，压力凭空少一截。
+    rules = rules_of(monster)
+    daylight = getattr(state, "daylight", None)
+    trait_adv, trait_reason = attack_advantage_of(
+        rules,
+        allies_near=_allies_within(state, enemy, target),
+        target_wounded=effective_hp(save, target)[0] < effective_hp(save, target)[1],
+        sunlight=bool(daylight),
+    )
+    advantage = combine_advantage(advantage, trait_adv)
+
     target_ac = effective_ac(save, target, state)
     bonus = monster.attack_bonus(attack_obj)
     result = roll_check(
@@ -1793,6 +2062,14 @@ def enemy_attack(
     ]
     if state_reason:
         lines.append(f"（{state_reason}）")
+    if trait_reason:
+        lines.append(f"（{trait_reason}）")
+    elif rules.sunlight_sensitivity and daylight is None:
+        # 有没有日光系统判不了（地牢里的白天也不是白天），交给 DM，但**提醒他判**
+        lines.append(
+            "（它有日照敏感：这里有没有日光由你裁定，"
+            "有的话这一击带劣势——下次开战可以用 daylight=是/否 定下来）"
+        )
     if focus_hint:
         lines.append(focus_hint)
 
@@ -1833,6 +2110,7 @@ def enemy_attack(
             damage,
             damage_type=attack_obj.damage_type,
             crit=crit,
+            magical=rules.magic_weapons,
             rng=rng,
         )
     )
@@ -1868,10 +2146,17 @@ def update_enemy(
             enemy.conditions = []
             notes.append(f"{enemy.name} 的状态已清空。")
         else:
-            enemy.conditions = normalize_conditions(cond_text)
+            wanted = normalize_conditions(cond_text)
+            # 状态免疫（骷髅免疫中毒、幽魂免疫倒地……）：挡掉，别让它白挨一个状态
+            immune = blocked_conditions(rules_of(resolve_monster(enemy.monster)), wanted)
+            enemy.conditions = [name for name in wanted if name not in immune]
+            if immune:
+                notes.append(
+                    f"{enemy.name} 免疫{'、'.join(immune)}，这几个没生效。"
+                )
             if enemy.conditions:
                 notes.append(f"{enemy.name} 当前状态：{'、'.join(enemy.conditions)}。")
-            else:
+            elif not immune:
                 notes.append(f"{enemy.name} 的状态没有变化。")
         save_combat(save, state)
 
@@ -2008,6 +2293,9 @@ def move_combatant(
         for c in state.order
         if has_position(c) and c.cid != mover.cid and not c.out
     }
+    # 虚体 / 无定形 / 集群：能穿过别的生物（幽魂穿墙、鼠群从脚边漫过去）
+    if rules_of(resolve_monster(mover.monster)).passes_through:
+        blocked = set()
     cell, cost, remain = plan_move(state, mover, dest, budget, blocked_cells=blocked)
     if cost <= 0 and cell == start:
         return (

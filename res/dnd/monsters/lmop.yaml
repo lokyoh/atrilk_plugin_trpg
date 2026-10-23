@@ -1,0 +1,400 @@
+# 《凡戴尔的失落矿坑》自带的数据卡（LMoP）
+#
+# 与图鉴同名时**本表优先**。aliases 里是模组正文里的人物名（刚铎 / 修达 / 伊阿诺…）。
+
+- key: lmop_gundren_rockseeker
+  cn: 刚铎·寻岩者
+  en: Gundren Rockseeker
+  cr: 0.0
+  size: 小型
+  kind: 类人
+  ac: 10
+  hp: 4
+  hit_dice: 1d8
+  speed: 30
+  abilities:
+    str: 10
+    dex: 10
+    con: 10
+    int: 10
+    wis: 10
+    cha: 10
+  attacks:
+  - name: 短棒
+    ability: str
+    damage: 1d4
+    damage_type: 钝击
+    reach: 5
+  saves: []
+  skills: []
+  traits:
+  - 训练：平民具有某项技能熟练（由DM选择），且在进行使用该技能的属性检定时具有优势优势。
+  senses: 被动察觉 10
+  languages: 通用语
+  environment: 任何
+  treasure: 个体
+  alignment: 中立
+  source: LMoP
+  resistances: []
+  aliases:
+  - 刚铎
+- key: lmop_nundro_rockseeker
+  cn: 南卓·寻岩者
+  en: Nundro Rockseeker
+  cr: 0.0
+  size: 小型
+  kind: 类人
+  ac: 10
+  hp: 4
+  hit_dice: 1d8
+  speed: 30
+  abilities:
+    str: 10
+    dex: 10
+    con: 10
+    int: 10
+    wis: 10
+    cha: 10
+  attacks:
+  - name: 短棒
+    ability: str
+    damage: 1d4
+    damage_type: 钝击
+    reach: 5
+  saves: []
+  skills: []
+  traits:
+  - 训练：平民具有某项技能熟练（由DM选择），且在进行使用该技能的属性检定时具有优势优势。
+  senses: 被动察觉 10
+  languages: 通用语
+  environment: 任何
+  treasure: 个体
+  alignment: 中立
+  source: LMoP
+  resistances: []
+  aliases:
+  - 南卓
+- key: lmop_ash_zombie
+  cn: 灰烬丧尸
+  en: Ash Zombie
+  cr: 0.25
+  size: 中型
+  kind: 亡灵
+  ac: 8
+  hp: 22
+  hit_dice: 3d8+9
+  speed: 20
+  abilities:
+    str: 13
+    dex: 6
+    con: 16
+    int: 3
+    wis: 6
+    cha: 5
+  attacks:
+  - name: 猛击
+    ability: str
+    damage: 1d6+1
+    damage_type: 钝击
+    reach: 5
+  saves:
+  - wis
+  skills: []
+  traits:
+  - 状态免疫：中毒
+  - 不死坚韧：当丧尸由于受到非光耀非重击伤害而使其生命值降低至0时，它必须进行一次DC为5+所受伤害值的体质豁免，豁免成功则生命值改为降低至1。
+  - 灰烬喷发：丧尸第一次受到伤害时，其5尺范围内的任何活体生物必须成功通过DC 10的体质豁免检定，否则在攻击检定、豁免检定和属性检定上获得劣势，持续1分钟。生物可以在其每回合结束时重复进行豁免检定，若成功则提前终止效应。
+  senses: 黑暗视觉 60 尺、被动察觉 8
+  languages: 能理解它生前所说的所有语言，但不能说话
+  desc: 黑暗中的某处传来断断续续的咕噜呻吟声。一个拖着残腿，举着肿胀胳臂和破损手掌的身影，蹒跚地出现在视野。僵尸不停的前进，摧毁任何未能逃脱的生物。 这些丧尸是由三十年前霍特诺山喷发时的魔法灾难所创造。它们使用丧尸资料卡，并具有以下额外特性。
+    丧尸第一次受到伤害时，其5尺范围内的任何活体生物必须成功通过DC 10的体质豁免检定，否则在攻击检定、豁免检定和属性检定上获得劣势，持续1分钟。生物可以在其每回合结束时重复进行豁免检定，若成功则提前终止效应。
+  alignment: 中立邪恶
+  source: LMoP
+  resistances:
+  - 毒素:免疫
+  rules:
+    condition_immunities:
+    - 中毒
+    undead_fortitude: true
+  aliases:
+  - 灰烬僵尸
+- key: lmop_redbrand_ruffian
+  cn: 红标帮恶霸
+  en: Redbrand Ruffian
+  cr: 0.5
+  size: 中型
+  kind: 类人
+  ac: 14
+  hp: 16
+  hit_dice: 3d8+3
+  speed: 30
+  abilities:
+    str: 11
+    dex: 14
+    con: 12
+    int: 9
+    wis: 9
+    cha: 11
+  attacks:
+  - name: 短剑
+    ability: dex
+    damage: 1d6+2
+    damage_type: 穿刺
+    reach: 5
+  saves: []
+  skills:
+  - intimidation
+  traits:
+  - 动作·多重攻击：这个流氓进行了两次近战攻击。
+  senses: 被动察觉 9
+  languages: 通用语
+  desc: 红标暴徒是些小流氓和无情的执行者，擅长恐吓和暴力。他们为了金钱工作，没有任何顾忌。
+  alignment: 中立邪恶
+  source: LMoP
+  resistances: []
+  aliases:
+  - 红标帮打手
+- key: lmop_sildar_hallwinter
+  cn: 修达·霍温特
+  en: Sildar Hallwinter
+  cr: 1.0
+  size: 中型
+  kind: 类人
+  ac: 16
+  hp: 27
+  hit_dice: 5d8+5
+  speed: 30
+  abilities:
+    str: 13
+    dex: 10
+    con: 12
+    int: 10
+    wis: 11
+    cha: 10
+  attacks:
+  - name: 长剑
+    ability: str
+    damage: 1d8+1
+    damage_type: 挥砍
+    reach: 5
+  - name: 重弩
+    ability: dex
+    damage: 1d10
+    damage_type: 钝击
+    ranged_normal: 100
+    ranged_max: 400
+  saves:
+  - str
+  - con
+  skills:
+  - perception
+  traits:
+  - 反应·格挡：当攻击者用近战攻击命中Sildar，并且Sildar可以看到攻击者时，他可以掷一个，并将掷出的数字加到他的AC上，以对抗触发攻击，前提是他手持近战武器。
+  - 动作·多重攻击：Sildar 进行两次近战攻击。
+  senses: 被动察觉 12
+  languages: 通用语
+  desc: 希达尔·哈尔温特是一位退役士兵和雇佣剑客，他来自无冬城特城。他是联盟领主的忠诚成员，这是一个统一北方各自由城市和城镇的政治组织。
+  alignment: 中立善良
+  source: LMoP
+  resistances: []
+  aliases:
+  - 修达
+- key: lmop_evil_mage
+  cn: 邪恶法师
+  en: Evil Mage
+  cr: 1.0
+  size: 中型
+  kind: 类人
+  ac: 12
+  hp: 22
+  hit_dice: 5d8
+  speed: 30
+  abilities:
+    str: 9
+    dex: 14
+    con: 11
+    int: 17
+    wis: 12
+    cha: 11
+  attacks:
+  - name: 长棍
+    ability: str
+    damage: 1d8-1
+    damage_type: 钝击
+    reach: 5
+  saves:
+  - int
+  - wis
+  skills:
+  - arcana
+  - history
+  traits:
+  - 施法·施法：该法师是一个4级施法者，使用智力作为其施法能力（法术豁免DC 13；法术攻击命中需要+5）。法师知道以下来自法师法术列表的法术：
+  senses: 被动察觉 11
+  languages: 通用语、龙语、矮人语、精灵语
+  desc: 邪恶的法师（例如Iarno Albrek和Hamun Kost）渴望获得奥术力量，并居住在偏远的地方，在那里他们可以不受干扰地进行可怕的魔法实验。
+  alignment: 守序邪恶
+  source: LMoP
+  resistances: []
+  aliases:
+  - 伊阿诺
+- key: lmop_nezznar_the_black_spider
+  cn: 黑蜘蛛那兹纳尔
+  en: Nezznar the Black Spider
+  cr: 2.0
+  size: 中型
+  kind: 类人
+  ac: 11
+  hp: 27
+  hit_dice: 6d8
+  speed: 30
+  abilities:
+    str: 9
+    dex: 13
+    con: 10
+    int: 16
+    wis: 14
+    cha: 13
+  attacks:
+  - name: 蜘蛛法杖
+    ability: str
+    damage: 1d6-1
+    damage_type: 钝击
+    reach: 5
+  saves:
+  - int
+  - wis
+  skills:
+  - arcana
+  - perception
+  - stealth
+  traits:
+  - 特殊装备：Nezznar拥有一根蜘蛛法杖。
+  - 妖精血统：Nezznar 在对抗被魅惑的豁免检定上有优势，魔法也无法使他入睡。
+  - 日照敏感：当Nezznar或其目标处于阳光下时，他在攻击检定时具有劣势。
+  - 施法·天生施法：Nezznar天生能够施展以下法术，无需任何材料成分： 随意：舞光术 每日1次：黑暗术、妖火 (豁免DC 12)
+  - 施法·施法：内兹纳是一名4级施法者，使用智力作为他的施法能力（法术豁免DC 13；+5命中法术攻击）。内兹纳从法师的法术列表中准备了以下法术：
+  senses: 黑暗视觉 120 尺、被动察觉 14
+  languages: 精灵语、地底通用语
+  desc: 卓尔（黑暗精灵）是一个狡猾、阴谋多端的地下种族，他们崇拜蜘蛛恶魔女王洛斯。 卓尔社会是严格的母系社会。男性卓尔被降为仆人的角色，虽然大多数接受战士训练，但少数人，比如内扎尔，成为了熟练的法师。
+  alignment: 中立邪恶
+  source: LMoP
+  resistances: []
+  rules:
+    sunlight_sensitivity: true
+  aliases:
+  - 内兹纳
+  - 那兹纳尔
+  - 黑蜘蛛
+- key: lmop_mormesk_the_wraith
+  cn: 缚灵·墨梅斯克
+  en: Mormesk the Wraith
+  cr: 3.0
+  size: 中型
+  kind: 亡灵
+  ac: 13
+  hp: 45
+  hit_dice: 6d8+18
+  speed: 0
+  abilities:
+    str: 6
+    dex: 16
+    con: 16
+    int: 12
+    wis: 14
+    cha: 15
+  attacks:
+  - name: 吸取生命
+    ability: dex
+    damage: 3d8+3
+    damage_type: 暗蚀
+    reach: 5
+  saves: []
+  skills: []
+  traits:
+  - 飞行 60 尺
+  - 状态免疫：魅惑、受擒、麻痹、石化、中毒、倒地、束缚
+  - 虚体移动：幽魂可以穿过物体或其他生物，但不能停留在那里。
+  - 日照敏感：在阳光下，邪灵在攻击骰上处于劣势，并且在依赖视力的感知（察觉）检定上也处于劣势。
+  senses: 黑暗视觉 60 尺、被动察觉 12
+  languages: 通用语、炼狱语
+  desc: 一个邪灵是特别怀有恶意的生物的无形残余。大多数邪灵可以将其杀死的生物变成邪灵不死生物仆从。莫梅斯克选择不这样做，更倾向于让死者安息。
+  alignment: 中立邪恶
+  source: LMoP
+  resistances:
+  - 强酸:抗性
+  - 寒冷:抗性
+  - 火焰:抗性
+  - 闪电:抗性
+  - 雷鸣:抗性
+  - 钝击:抗性
+  - 穿刺:抗性
+  - 挥砍:抗性
+  - 暗蚀:免疫
+  - 毒素:免疫
+  rules:
+    condition_immunities:
+    - 魅惑
+    - 受擒
+    - 麻痹
+    - 石化
+    - 中毒
+    - 倒地
+    - 束缚
+    incorporeal: true
+    sunlight_sensitivity: true
+  aliases:
+  - 墨梅斯克
+  - 缚灵
+- key: lmop_venomfang
+  cn: 毒牙
+  en: Venomfang
+  cr: 8.0
+  size: 大型
+  kind: 龙类
+  ac: 18
+  hp: 136
+  hit_dice: 16d10+48
+  speed: 40
+  abilities:
+    str: 19
+    dex: 12
+    con: 17
+    int: 16
+    wis: 13
+    cha: 15
+  attacks:
+  - name: 撕裂
+    ability: str
+    damage: 2d6+4
+    damage_type: 挥砍
+    reach: 10
+  saves:
+  - dex
+  - wis
+  skills:
+  - deception
+  - perception
+  - stealth
+  traits:
+  - 飞行 80 尺
+  - 游泳 40 尺
+  - 状态免疫：中毒
+  - 水陆两栖：该毒牙可以在空气和水中呼吸。
+  - 动作·多重攻击：该毒牙发动三次撕裂攻击。
+  - 动作·毒性吐息：体质豁免 DC 14，30 尺锥状区域内的每名生物。失败： 42（）毒素伤害。成功： 半伤。
+  senses: 盲视 30 尺、黑暗视觉 120 尺、被动察觉 17
+  languages: 通用语、毒牙语
+  environment: 森林
+  treasure: 奥秘
+  alignment: 守序邪恶
+  source: LMoP
+  resistances:
+  - 毒素:免疫
+  groups:
+  - 色彩龙
+  rules:
+    condition_immunities:
+    - 中毒
+  aliases:
+  - 毒牙龙

@@ -1,0 +1,433 @@
+# 《风骸岛之龙》自带的数据卡（DoSI）
+#
+# 与图鉴同名时**本表优先**（monsters.py 按文件名顺序加载，先到先得）。
+# aliases 里是模组正文里的人物名（斯帕克兰德 / 艾德隆 / 茹娜拉…）：DM 说这些名字也能查到。
+
+- key: dosi_violet_fungus
+  cn: 紫腐菌
+  en: Violet Fungus
+  cr: 0.0
+  size: 中型
+  kind: ''
+  ac: 10
+  hp: 1
+  hit_dice: ''
+  speed: 30
+  abilities:
+    str: 10
+    dex: 10
+    con: 10
+    int: 10
+    wis: 10
+    cha: 10
+  attacks: []
+  saves: []
+  skills: []
+  traits: []
+  senses: 被动察觉 10
+  languages: ''
+  desc: 这 种 紫 色 的 蘑 菇 使 用 其 基 部 生 长 出 的 根 状 触 须 在 洞 穴 地 面 上 爬 行 。 从 紫 腐 菌 的 中 央 团 块 伸 出 的 四 根 茎 用 于 鞭 打 猎 物 ， 即 使 是 最 轻 微
+    的 触 碰 也 能 使 腐 肉 迅 速 腐 烂 。 任 何 被 紫 腐 菌 杀 死 的 生 物 都 会 迅 速 分 解 。 从 腐 烂 的 尸 体 上 会 萌 发 出 新 的 紫 腐 菌 ， 在 { @ d i c e 2 d 6 }
+    天 内 长 到 完 全 大 小 。 在地底世界幽暗地域，有着参差不齐的岩石天空和永恒的黑夜，这里是各种真菌的家园。在地下王国中，真菌取代了植物的位置，对许多地下生物的生存至关重要，它们在无情的黑暗中提供营养和庇护。 真菌在有机物质中产生，然后分解这些物质以供自身消耗，它们以污垢和尸体为食。随着真菌的成熟，它们会喷射孢子，这些孢子会随着最轻微的微风飘散，以产生新的真菌。
+    不需要阳光或温暖来生长，真菌在幽暗地域的每一个角落和缝隙中茁壮成长。在那个地下王国弥漫的魔法的转变下，幽暗地域的真菌经常发展出强大的防御机制或模仿和攻击的能力。最大的样本可以扩散开来，创造出巨大的地下森林，无数的生物在其中生活和觅食。
+  source: DoSI
+  resistances: []
+  aliases:
+  - 紫腐蘑菇
+- key: dosi_fume_drake
+  cn: 烟雾龙兽
+  en: Fume Drake
+  cr: 0.25
+  size: 小型
+  kind: 元素
+  ac: 12
+  hp: 22
+  hit_dice: 5d6+5
+  speed: 30
+  abilities:
+    str: 6
+    dex: 14
+    con: 12
+    int: 6
+    wis: 10
+    cha: 11
+  attacks:
+  - name: 啃咬
+    ability: dex
+    damage: 1d4+2
+    damage_type: 火焰
+    reach: 5
+  saves: []
+  skills: []
+  traits:
+  - 飞行 30 尺
+  - 状态免疫：中毒
+  - 自爆：当烟雾龙兽死去时，它以一团有毒迷雾的形式炸裂。每个在烟雾龙兽 5 尺内的生物都需要通过一个DC 11的体质豁免否则承受 4（）点毒素伤害。
+  - 非凡本质：烟雾龙兽不需要食物，喝水或睡觉。
+  - 动作·灼热吐息：烟雾龙兽呼出灼热气息并覆盖 15 尺的锥状区域。该区域内的每个生物都必须进行一次DC 11的敏捷豁免检定。豁免失败则受到 4（）点火焰伤害，豁免成功受到半数伤害。
+  senses: 黑暗视觉 60 尺、被动察觉 10
+  languages: 龙语、火族语
+  desc: 烟雾龙兽是从死去巨龙的绵长魔法能量中诞生的调皮生物，他们外形像由绿色烟雾构成的无腿小龙。以使其他生物感到痛苦和困惑为乐。
+  alignment: 中立
+  source: DoSI
+  resistances:
+  - 火焰:免疫
+  - 毒素:免疫
+  rules:
+    condition_immunities:
+    - 中毒
+    death_burst:
+      save: dex
+      dc: 11
+      radius: 5
+      damage: 1d8
+      damage_type: 毒素
+  aliases:
+  - 烟龙
+  - 烟雾龙
+- key: dosi_kobold_tinkerer
+  cn: 狗头人修补匠
+  en: Kobold Tinkerer
+  cr: 0.25
+  size: 小型
+  kind: 类人
+  ac: 12
+  hp: 10
+  hit_dice: 3d6
+  speed: 30
+  abilities:
+    str: 7
+    dex: 14
+    con: 10
+    int: 15
+    wis: 7
+    cha: 9
+  attacks:
+  - name: 匕首
+    ability: dex
+    damage: 1d4+2
+    damage_type: 穿刺
+    ranged_normal: 20
+    ranged_max: 60
+  saves: []
+  skills:
+  - arcana
+  - perception
+  traits:
+  - 飞行 10 尺
+  - 探究精神（1/日）：狗头人可以释放侦测魔法且不需要法术材料。 当你使用此特性施展这些法术时，智力是你的施法关键属性。
+  - 集群战术：狗头人至少有一个未处于失能的盟友在目标生物 5 尺内时，它对该生物发动的攻击检定有优势。
+  - 日照敏感：受阳光照射时，狗头人进行的攻击检定和依赖视觉进行的感知（察觉）检定具有劣势。
+  - 动作·炼金火焰：狗头人释放火焰并覆盖一处 15 尺锥形区域。该区域内的每个生物都必须进行一次DC 12的敏捷豁免，豁免失败者将受到 10（）点火焰伤害，豁免成功则伤害减半。
+  senses: 黑暗视觉 60 尺、被动察觉 10
+  languages: 通用语、龙语
+  desc: 狗头人是一种卵生类人生物，通常为巨龙服务。身体孱弱的它们不得不团结一致以保持力量。 少数狗头人天生有皮翼且可以飞行，被视为是龙神的赠礼。
+  alignment: 任意
+  source: DoSI
+  resistances: []
+  rules:
+    pack_tactics: true
+    sunlight_sensitivity: true
+  aliases:
+  - 地精工匠
+  - 修补匠
+- key: dosi_myla
+  cn: 米拉
+  en: Myla
+  cr: 0.25
+  size: 小型
+  kind: 类人
+  ac: 12
+  hp: 10
+  hit_dice: 3d6
+  speed: 30
+  abilities:
+    str: 7
+    dex: 14
+    con: 10
+    int: 15
+    wis: 7
+    cha: 9
+  attacks:
+  - name: 匕首
+    ability: dex
+    damage: 1d4+2
+    damage_type: 穿刺
+    ranged_normal: 20
+    ranged_max: 60
+  saves: []
+  skills:
+  - arcana
+  - perception
+  traits:
+  - 飞行 10 尺
+  - 探究精神（1/日）：米拉可以释放侦测魔法且不需要法术材料。 当你使用此特性施展这些法术时，智力是你的施法关键属性。
+  - 集群战术：米拉至少有一个未处于失能的盟友在目标生物 5 尺内时，它对该生物发动的攻击检定有优势。
+  - 日照敏感：受阳光照射时，米拉进行的攻击检定和依赖视觉进行的感知（察觉）检定具有劣势。
+  - 动作·炼金火焰：米拉释放火焰并覆盖一处 15 尺锥形区域。该区域内的每个生物都必须进行一次DC 12的敏捷豁免，豁免失败者将受到 10（）点火焰伤害，豁免成功则伤害减半。
+  senses: 黑暗视觉 60 尺、被动察觉 10
+  languages: 通用语、龙语
+  alignment: 守序善良
+  source: DoSI
+  resistances: []
+  rules:
+    pack_tactics: true
+    sunlight_sensitivity: true
+- key: dosi_tarak
+  cn: 塔拉克
+  en: Tarak
+  cr: 1.0
+  size: 中型
+  kind: 类人
+  ac: 13
+  hp: 27
+  hit_dice: 6d8
+  speed: 30
+  abilities:
+    str: 10
+    dex: 16
+    con: 10
+    int: 12
+    wis: 14
+    cha: 16
+  attacks:
+  - name: 匕首
+    ability: dex
+    damage: 1d4+3
+    damage_type: 穿刺
+    ranged_normal: 20
+    ranged_max: 60
+  saves: []
+  skills:
+  - deception
+  - insight
+  - medicine
+  - nature
+  traits:
+  - 附赠动作·灵巧动作：塔拉克执行疾走、撤离或躲藏动作。
+  - 动作·多重攻击：塔拉克使用三次匕首攻击。
+  senses: 被动察觉 12
+  languages: 通用语、龙语、盗贼黑话
+  desc: 在来到巨龙休息处前，塔拉克曾是一名罪犯。现在他全身心投入了研习草药和医疗之中。他通常不带武器，但他的房间里有几把隐藏的匕首（在巨龙之憩的区域 A1）
+  alignment: 守序中立
+  source: DoSI
+  resistances: []
+  aliases:
+  - 花匠
+- key: dosi_spore_servant_octopus
+  cn: 孢子仆从八爪鱼
+  en: Spore Servant Octopus
+  cr: 1.0
+  size: 大型
+  kind: 植物
+  ac: 11
+  hp: 52
+  hit_dice: 8d10+8
+  speed: 5
+  abilities:
+    str: 17
+    dex: 13
+    con: 13
+    int: 2
+    wis: 6
+    cha: 1
+  attacks:
+  - name: 触须
+    ability: str
+    damage: 1d8+3
+    damage_type: 钝击
+    reach: 15
+  saves: []
+  skills: []
+  traits:
+  - 游泳 50 尺
+  - 状态免疫：目盲、魅惑、恐慌、麻痹
+  - 屏息：当离开水时，章鱼可以屏住呼吸长达1小时。
+  - 水下呼吸：章鱼只能在水下呼吸。
+  senses: 30 尺盲视感官，该感官范围之外则视为目盲状态。、被动察觉 8
+  languages: ''
+  desc: 孢子仆从是由蕈人首领的魔法孢子复活的死亡生物。在陷入目前的昏迷状态之前，海藻洞窟的蕈人王最后做的事便是用一只死去的巨型章鱼创造了一个孢子奴仆，在蕈人王昏迷期间保护洞窟。与活的章鱼不同，这个守卫只能对其触手进行基本控制：不会用触手缠绕入侵者将其束缚，只会简单地抽打他们。
+  alignment: 无阵营
+  source: DoSI
+  resistances: []
+  rules:
+    condition_immunities:
+    - 目盲
+    - 魅惑
+    - 恐慌
+    - 麻痹
+  aliases:
+  - 八爪鱼
+  - 菌丝八爪鱼
+- key: dosi_merrow_extortionist
+  cn: 迈罗人鱼敲诈者
+  en: Merrow Extortionist
+  cr: 1.0
+  size: 大型
+  kind: 怪兽
+  ac: 13
+  hp: 30
+  hit_dice: 4d10+8
+  speed: 10
+  abilities:
+    str: 16
+    dex: 10
+    con: 15
+    int: 8
+    wis: 10
+    cha: 9
+  attacks:
+  - name: 撕裂
+    ability: str
+    damage: 2d4+3
+    damage_type: 穿刺
+    reach: 10
+  saves: []
+  skills: []
+  traits:
+  - 游泳 40 尺
+  - 水陆两栖：迈罗人鱼可在水里和空气中呼吸。
+  - 动作·多重攻击：迈罗人鱼进行两次撕裂攻击。
+  senses: 黑暗视觉 60 尺、被动察觉 10
+  languages: 深渊语、水族语、通用语
+  alignment: 混乱邪恶
+  source: DoSI
+  resistances: []
+- key: dosi_sinensa
+  cn: 塞娜萨
+  en: Sinensa
+  cr: 2.0
+  size: 大型
+  kind: 植物
+  ac: 13
+  hp: 45
+  hit_dice: 6d10+12
+  speed: 30
+  abilities:
+    str: 12
+    dex: 10
+    con: 14
+    int: 13
+    wis: 15
+    cha: 10
+  attacks:
+  - name: 猛击
+    ability: str
+    damage: 2d4+1
+    damage_type: 钝击
+    reach: 5
+  saves: []
+  skills: []
+  traits:
+  - 厌日症：若塞娜萨身处阳光下，其D20 检定具有劣势。塞娜萨待在阳光下超过 1 小时就会死亡。
+  - 动作·多重攻击：塞娜萨发动一次猛击攻击并使用安抚孢子。
+  - 动作·活化孢子 (3/日)：塞娜萨向 5 尺内一具非构装非亡灵的中型或小型尸体释放孢子。尸体会在 24 小时后活化为塞娜萨孢子奴仆。尸体会保持活化状态1d4 + 1周或直至被摧毁。曾以此法活化过的尸体无法再次以此法活化。
+  - 动作·安抚孢子：体质豁免 DC 12，单一 10 尺内塞娜萨可见的生物。失败： 目标陷入震慑状态，并在其回合结束时重复豁免，成功则终止其身上的该效应。1 分钟后，其豁免自动成功。
+  - 动作·通念孢子：孢子被释放在源自塞娜萨的 30 尺光环区域内。区域内任何智力值不低于 2 且非构装非元素非亡灵的生物获得 30 尺心灵感应，持续 1 小时。
+  senses: 黑暗视觉 120 尺、被动察觉 12
+  languages: 心灵感应240尺
+  desc: 蕈人是幽暗地域中拥有智能，又能够行走的真菌生物。蕈人们一生追寻生命启迪而反对暴力，它们愿意与人和平共处。成年的蕈人群居生活工作，并进行一种被称为"念和"的集体冥想。在这种冥想中，它们寻求通过共同的幻觉超脱世俗。 像赛娜萨这样的蕈人王会使用至幻孢子来帮蕈人们念和。
+  environment: 幽暗地域
+  treasure: 任何
+  alignment: 守序中立
+  source: DoSI
+  resistances: []
+  aliases:
+  - 蕈人之王
+  - 塞娜萨王
+- key: dosi_varnoth
+  cn: 瓦努斯
+  en: Varnoth
+  cr: 2.0
+  size: 中型
+  kind: 类人
+  ac: 11
+  hp: 39
+  hit_dice: 6d8+12
+  speed: 30
+  abilities:
+    str: 16
+    dex: 13
+    con: 14
+    int: 10
+    wis: 11
+    cha: 10
+  attacks:
+  - name: 短剑
+    ability: str
+    damage: 1d6+3
+    damage_type: 穿刺
+    reach: 5
+  saves: []
+  skills:
+  - athletics
+  - history
+  - perception
+  - religion
+  traits:
+  - 动作·多重攻击：瓦努斯发动三次短剑攻击。
+  senses: 被动察觉 12
+  languages: 通用语
+  desc: 一名强壮的佣兵团团长，瓦努斯温德是一名老练的专业武者。她通常不带武器，但是她把旧的佩剑放在的房间（巨龙之憩区域 A1）的枕头底下。
+  alignment: 中立善良
+  source: DoSI
+  resistances: []
+  aliases:
+  - 瓦努斯·温德
+  - 团长
+- key: dosi_runara
+  cn: 茹娜拉
+  en: Runara
+  cr: 13.0
+  size: 巨型
+  kind: 龙类
+  ac: 18
+  hp: 212
+  hit_dice: 17d12+102
+  speed: 40
+  abilities:
+    str: 25
+    dex: 10
+    con: 23
+    int: 16
+    wis: 15
+    cha: 20
+  attacks:
+  - name: 撕裂
+    ability: str
+    damage: 2d8+7
+    damage_type: 挥砍
+    reach: 10
+  saves:
+  - dex
+  - wis
+  skills:
+  - insight
+  - perception
+  - stealth
+  traits:
+  - 飞行 80 尺
+  - 游泳 40 尺
+  - 水陆两栖：该茹娜拉可以在空气和水中呼吸。
+  - 传奇抗性（3/日，或巢穴内4/日）：茹娜拉豁免失败时，可以将其改为豁免成功。
+  - 动作·多重攻击：该茹娜拉发动三次撕裂攻击。其可以将其中一次攻击替换为使用（A）斥力吐息或（B）施法施展光导箭（二环版本）。
+  - 动作·闪电吐息：敏捷豁免 DC 19，90尺长、5尺宽的线状区域内的每个生物。失败： 55（）闪电伤害。成功： 半伤。
+  - 动作·斥力吐息：力量豁免 DC 19，30尺锥状区域内的每名生物。失败： 目标被青铜茹娜拉直线推离至多60尺并陷入倒地状态。
+  - 施法·施法：青铜茹娜拉施展以下一道法术，无需任何材料成分并使用魅力作为施法属性（法术豁免DC 17，法术攻击命中+10）： 随意：侦测魔法、光导箭（二环版本）、形体变化（仅野兽与类人形态，不会因此法术获得临时生命值，但无需为维持此法术而保有临时生命值或维持专注）、动物交谈、奇术
+    每日1次：侦测思想、水下呼吸
+  senses: 盲视 60 尺、黑暗视觉 120 尺、被动察觉 22
+  languages: 通用语、茹娜拉语
+  desc: 尽管她伪装为人类且致力于和平，但这位巨龙之憩的领袖实际实是一条成年青铜龙——是可怕的敌人或可靠的盟友。她的能力远超这里所展现的。 许多青铜龙都是友好的沿海居民，喜欢观看忙碌的船只与水手们。
+  environment: 海岸
+  treasure: 器具
+  alignment: 守序善良
+  source: DoSI
+  resistances:
+  - 闪电:免疫
+  groups:
+  - 金属龙
+  rules:
+    legendary_resistance: 3
+  aliases:
+  - 青铜龙
+  - 老龙

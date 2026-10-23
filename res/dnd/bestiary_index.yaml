@@ -1,0 +1,3065 @@
+# 《怪物图鉴（2025）》名录：每张数据卡的名字 / 生物类型 / 挑战等级 / 栖息地
+#
+# 来源：``参考/怪物图鉴（2025）.md`` 的三份附录（按生物类型 / 按挑战等级 / 按栖息地），
+# 由 ``scripts/build_bestiary_index.py`` 生成。
+#
+# ⚠️ 那份导出里每张数据卡都是「正在加载……」占位符——AC、生命值、属性、动作
+#    一个数字都没有（和《风骸岛之龙》附录 B 是同一种问题）。所以这里只有名字、
+#    类型、CR、栖息地与标签：**够 DM 按 CR 挑怪、够统一译名、够回答「图鉴里有没有这只」，
+#    不够开战**。真正能打的数据卡在 ``monsters*.yaml``。
+#
+# cr 用数值（1/8 = 0.125）；habitats / tags 可能为空——书里说明，
+# 不居住在自然栖息地的生物（天族、许多邪魔）不进栖息地表。
+
+- name: 人工生命体
+  type: 构装
+  cr: 0.0
+  habitats:
+  - 任意栖息地
+- name: 劣魔
+  type: 邪魔
+  cr: 0.0
+  tags:
+  - 魔鬼
+- name: 启蒙灌木
+  type: 植物
+  cr: 0.0
+  habitats:
+  - 丛林
+- name: 尖叫菌
+  type: 植物
+  cr: 0.0
+  habitats:
+  - 幽暗地域
+- name: 山羊
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 草原
+  - 丘陵
+  - 山地
+  - 城中
+- name: 巨火甲虫
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 幽暗地域
+- name: 平民
+  type: 类人
+  cr: 0.0
+  habitats:
+  - 任意栖息地
+- name: 幼虫魔
+  type: 邪魔
+  cr: 0.0
+- name: 海马
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 水下
+- name: 渡鸦
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 丘陵
+  - 沼泽
+  - 城中
+- name: 狒狒
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 丛林
+  - 丘陵
+- name: 猫
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 城中
+- name: 猫头鹰
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 极地
+  - 丛林
+  - 丘陵
+- name: 獾
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 丛林
+- name: 秃鹫
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 荒漠
+  - 草原
+  - 丘陵
+- name: 章鱼
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 水下
+- name: 老鼠
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 丛林
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 胡狼
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 荒漠
+  - 草原
+- name: 蕈人幼体
+  type: 植物
+  cr: 0.0
+  habitats:
+  - 幽暗地域
+- name: 蜘蛛
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 蜥蜴
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 海岸
+  - 荒漠
+  - 丛林
+  - 沼泽
+  - 幽暗地域
+- name: 蝎子
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 荒漠
+- name: 蝙蝠
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 丛林
+  - 山地
+  - 幽暗地域
+  - 城中
+- name: 蟹
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 海岸
+  - 水下
+- name: 蠕行之爪
+  type: 亡灵
+  cr: 0.0
+  habitats:
+  - 任意栖息地
+- name: 隼
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 极地
+  - 海岸
+  - 丛林
+  - 草原
+  - 丘陵
+  - 山地
+- name: 青蛙
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 丛林
+  - 沼泽
+- name: 食人鱼
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 水下
+- name: 鬣狗
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 鹰
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 海岸
+  - 草原
+  - 丘陵
+  - 山地
+- name: 鹿
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 丛林
+  - 草原
+- name: 鼬
+  type: 野兽
+  cr: 0.0
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 匪徒
+  type: 类人
+  cr: 0.125
+  habitats:
+  - 任意栖息地
+- name: 原魔
+  type: 邪魔
+  cr: 0.125
+  tags:
+  - 恶魔
+- name: 史拉蟾蝌蚪
+  type: 异怪
+  cr: 0.125
+- name: 呋噜
+  type: 异怪
+  cr: 0.125
+  habitats:
+  - 幽暗地域
+- name: 地精喽啰
+  type: 妖精
+  cr: 0.125
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+  - 幽暗地域
+  tags:
+  - 类地精
+- name: 巡海人鱼
+  type: 元素
+  cr: 0.125
+  habitats:
+  - 海岸
+  - 水下
+- name: 巨蟹
+  type: 野兽
+  cr: 0.125
+  habitats:
+  - 海岸
+  - 水下
+- name: 巨鼠
+  type: 野兽
+  cr: 0.125
+  habitats:
+  - 丛林
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 巨鼬
+  type: 野兽
+  cr: 0.125
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 新晋武者
+  type: 类人
+  cr: 0.125
+  habitats:
+  - 任意栖息地
+- name: 枯枝怪
+  type: 植物
+  cr: 0.125
+  habitats:
+  - 丛林
+- name: 毒蛇
+  type: 野兽
+  cr: 0.125
+  habitats:
+  - 海岸
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 沼泽
+- name: 狗头人武者
+  type: 龙类
+  cr: 0.125
+  habitats:
+  - 极地
+  - 海岸
+  - 荒漠
+  - 丛林
+  - 丘陵
+  - 山地
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 獒犬
+  type: 野兽
+  cr: 0.125
+  habitats:
+  - 丛林
+  - 丘陵
+  - 城中
+- name: 矮种马
+  type: 野兽
+  cr: 0.125
+  habitats:
+  - 草原
+  - 城中
+- name: 蚊蝠
+  type: 怪兽
+  cr: 0.125
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 山地
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 血鹰
+  type: 野兽
+  cr: 0.125
+  habitats:
+  - 极地
+  - 海岸
+  - 丛林
+  - 草原
+  - 丘陵
+  - 山地
+- name: 警卫
+  type: 类人
+  cr: 0.125
+  habitats:
+  - 任意栖息地
+- name: 贵族
+  type: 类人
+  cr: 0.125
+  habitats:
+  - 任意栖息地
+- name: 邪教徒
+  type: 类人
+  cr: 0.125
+  habitats:
+  - 任意栖息地
+- name: 飞蛇
+  type: 怪兽
+  cr: 0.125
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+- name: 骆驼
+  type: 野兽
+  cr: 0.125
+  habitats:
+  - 荒漠
+- name: 骡子
+  type: 野兽
+  cr: 0.125
+  habitats:
+  - 荒漠
+  - 丘陵
+  - 城中
+- name: 魔冢·单元冢
+  type: 构装
+  cr: 0.125
+- name: 丧尸
+  type: 亡灵
+  cr: 0.25
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 乘用马
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 草原
+  - 城中
+- name: 伪龙
+  type: 龙类
+  cr: 0.25
+  habitats:
+  - 海岸
+  - 荒漠
+  - 丛林
+  - 丘陵
+  - 山地
+  - 城中
+- name: 侍祭僧侣
+  type: 类人
+  cr: 0.25
+  habitats:
+  - 任意栖息地
+- name: 啵灵蛙武者
+  type: 妖精
+  cr: 0.25
+  habitats:
+  - 沼泽
+- name: 地精武者
+  type: 妖精
+  cr: 0.25
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+  - 幽暗地域
+  tags:
+  - 类地精
+- name: 天狗
+  type: 怪兽
+  cr: 0.25
+  habitats:
+  - 丛林
+  - 城中
+- name: 寇涛
+  type: 异怪
+  cr: 0.25
+  habitats:
+  - 海岸
+  - 幽暗地域
+- name: 小仙灵
+  type: 妖精
+  cr: 0.25
+  habitats:
+  - 丛林
+- name: 巨毒蛇
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 海岸
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 沼泽
+- name: 巨狼蛛
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 海岸
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 巨猫头鹰
+  type: 天族
+  cr: 0.25
+  habitats:
+  - 极地
+  - 丛林
+  - 丘陵
+- name: 巨獾
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 丛林
+- name: 巨蛙
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 丛林
+  - 沼泽
+- name: 巨蜈蚣
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 巨蜥
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 海岸
+  - 荒漠
+  - 丛林
+  - 沼泽
+  - 幽暗地域
+- name: 巨蝙蝠
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 丛林
+  - 山地
+  - 幽暗地域
+- name: 带翼狗头人
+  type: 龙类
+  cr: 0.25
+  habitats:
+  - 极地
+  - 海岸
+  - 荒漠
+  - 丛林
+  - 丘陵
+  - 山地
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 幽邃盲族
+  type: 异怪
+  cr: 0.25
+  habitats:
+  - 幽暗地域
+- name: 怯魔
+  type: 邪魔
+  cr: 0.25
+  tags:
+  - 恶魔
+- name: 斧嘴鸟
+  type: 怪兽
+  cr: 0.25
+  habitats:
+  - 极地
+  - 草原
+  - 丘陵
+- name: 枯针怪
+  type: 植物
+  cr: 0.25
+  habitats:
+  - 丛林
+- name: 泥魔蝠
+  type: 元素
+  cr: 0.25
+  habitats:
+  - 沼泽
+- name: 活化凌空剑
+  type: 构装
+  cr: 0.25
+  habitats:
+  - 城中
+- name: 活化扫帚
+  type: 构装
+  cr: 0.25
+  habitats:
+  - 城中
+- name: 渡鸦群
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 丘陵
+  - 沼泽
+  - 城中
+- name: 烟魔蝠
+  type: 元素
+  cr: 0.25
+- name: 狼
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 皮克精
+  type: 妖精
+  cr: 0.25
+  habitats:
+  - 丛林
+- name: 穴蜥人
+  type: 怪兽
+  cr: 0.25
+  habitats:
+  - 幽暗地域
+- name: 紫腐菌
+  type: 植物
+  cr: 0.25
+  habitats:
+  - 幽暗地域
+- name: 翼龙
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 海岸
+  - 草原
+  - 山地
+  tags:
+  - 恐龙
+- name: 蒸汽魔蝠
+  type: 元素
+  cr: 0.25
+- name: 蝙蝠群
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 丛林
+  - 山地
+  - 幽暗地域
+  - 城中
+- name: 蟒蛇
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 荒漠
+  - 丛林
+  - 沼泽
+  - 水下
+- name: 豹
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 赤鹿
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 野猪
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 闪现犬
+  type: 妖精
+  cr: 0.25
+  habitats:
+  - 丛林
+- name: 驮用马
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 城中
+- name: 骷髅
+  type: 亡灵
+  cr: 0.25
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 魔冢·二元冢
+  type: 构装
+  cr: 0.25
+- name: 鸟羽人翔空士
+  type: 元素
+  cr: 0.25
+  habitats:
+  - 山地
+- name: 鼠群
+  type: 野兽
+  cr: 0.25
+  habitats:
+  - 丛林
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 冰魔蝠
+  type: 元素
+  cr: 0.5
+  habitats:
+  - 极地
+- name: 化形胡狼
+  type: 邪魔
+  cr: 0.5
+  habitats:
+  - 荒漠
+  - 草原
+- name: 半羊人
+  type: 妖精
+  cr: 0.5
+  habitats:
+  - 丛林
+- name: 大地精武者
+  type: 妖精
+  cr: 0.5
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 山地
+  - 幽暗地域
+  tags:
+  - 类地精
+- name: 尘魔蝠
+  type: 元素
+  cr: 0.5
+  habitats:
+  - 荒漠
+- name: 巨山羊
+  type: 野兽
+  cr: 0.5
+  habitats:
+  - 草原
+  - 丘陵
+  - 山地
+- name: 巨海马
+  type: 野兽
+  cr: 0.5
+  habitats:
+  - 水下
+- name: 巨魔断肢
+  type: 巨人
+  cr: 0.5
+- name: 巨黄蜂
+  type: 野兽
+  cr: 0.5
+  habitats:
+  - 丛林
+  - 草原
+  - 城中
+- name: 幽影
+  type: 亡灵
+  cr: 0.5
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 座狼
+  type: 妖精
+  cr: 0.5
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 战马
+  type: 野兽
+  cr: 0.5
+  habitats:
+  - 城中
+- name: 打手
+  type: 类人
+  cr: 0.5
+  habitats:
+  - 任意栖息地
+- name: 斥候
+  type: 类人
+  cr: 0.5
+  habitats:
+  - 任意栖息地
+- name: 昆虫集群
+  type: 野兽
+  cr: 0.5
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 暗幕魔兽
+  type: 异怪
+  cr: 0.5
+  habitats:
+  - 幽暗地域
+- name: 枯藤怪
+  type: 植物
+  cr: 0.5
+  habitats:
+  - 丛林
+- name: 气孢菌
+  type: 植物
+  cr: 0.5
+  habitats:
+  - 幽暗地域
+- name: 演艺者
+  type: 类人
+  cr: 0.5
+  habitats:
+  - 任意栖息地
+- name: 火童
+  type: 元素
+  cr: 0.5
+- name: 灰泥怪
+  type: 泥怪
+  cr: 0.5
+  habitats:
+  - 幽暗地域
+- name: 熔岩魔蝠
+  type: 元素
+  cr: 0.5
+- name: 猿
+  type: 野兽
+  cr: 0.5
+  habitats:
+  - 丛林
+- name: 石锥怪
+  type: 异怪
+  cr: 0.5
+  habitats:
+  - 幽暗地域
+- name: 礁鲨
+  type: 野兽
+  cr: 0.5
+  habitats:
+  - 水下
+- name: 蕈人成体
+  type: 植物
+  cr: 0.5
+  habitats:
+  - 幽暗地域
+- name: 蛇鸡
+  type: 怪兽
+  cr: 0.5
+  habitats:
+  - 草原
+- name: 锈蚀怪
+  type: 怪兽
+  cr: 0.5
+  habitats:
+  - 幽暗地域
+- name: 骷髅战马
+  type: 亡灵
+  cr: 0.5
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 鬣狗人武者
+  type: 邪魔
+  cr: 0.5
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 魔冢·三元冢
+  type: 构装
+  cr: 0.5
+- name: 鲨华武者
+  type: 邪魔
+  cr: 0.5
+  habitats:
+  - 海岸
+  - 水下
+- name: 鳄鱼
+  type: 野兽
+  cr: 0.5
+  habitats:
+  - 海岸
+  - 沼泽
+  - 城中
+- name: 黑熊
+  type: 野兽
+  cr: 0.5
+  habitats:
+  - 丛林
+- name: 亡命恶犬
+  type: 怪兽
+  cr: 1.0
+  habitats:
+  - 荒漠
+- name: 半食人魔
+  type: 巨人
+  cr: 1.0
+  habitats:
+  - 极地
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 山地
+  - 沼泽
+  - 幽暗地域
+- name: 原魔汽化体
+  type: 邪魔
+  cr: 1.0
+  tags:
+  - 恶魔
+- name: 地精头目
+  type: 妖精
+  cr: 1.0
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+  - 幽暗地域
+  tags:
+  - 类地精
+- name: 妖精龙青年体
+  type: 龙类
+  cr: 1.0
+  habitats:
+  - 丛林
+- name: 寇涛驱策者
+  type: 异怪
+  cr: 1.0
+  habitats:
+  - 海岸
+  - 幽暗地域
+- name: 小恶魔
+  type: 邪魔
+  cr: 1.0
+  tags:
+  - 恶魔
+- name: 小魔鬼
+  type: 邪魔
+  cr: 1.0
+  habitats:
+  - 任意栖息地
+  tags:
+  - 魔鬼
+- name: 巨秃鹫
+  type: 怪兽
+  cr: 1.0
+  habitats:
+  - 荒漠
+  - 草原
+  - 丘陵
+- name: 巨章鱼
+  type: 野兽
+  cr: 1.0
+  habitats:
+  - 水下
+- name: 巨蜘蛛
+  type: 野兽
+  cr: 1.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 巨蟾
+  type: 野兽
+  cr: 1.0
+  habitats:
+  - 海岸
+  - 丛林
+  - 沼泽
+  - 幽暗地域
+- name: 巨鬣狗
+  type: 野兽
+  cr: 1.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 巨鹰
+  type: 天族
+  cr: 1.0
+  habitats:
+  - 海岸
+  - 草原
+  - 丘陵
+  - 山地
+- name: 幼虫魔集群
+  type: 邪魔
+  cr: 1.0
+- name: 恐狼
+  type: 野兽
+  cr: 1.0
+  habitats:
+  - 丛林
+  - 丘陵
+- name: 恶灵
+  type: 亡灵
+  cr: 1.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 树精
+  type: 妖精
+  cr: 1.0
+  habitats:
+  - 丛林
+- name: 棕熊
+  type: 野兽
+  cr: 1.0
+  habitats:
+  - 极地
+  - 丛林
+  - 丘陵
+- name: 求索斯芬克斯
+  type: 天族
+  cr: 1.0
+  habitats:
+  - 荒漠
+- name: 活化盔甲
+  type: 构装
+  cr: 1.0
+  habitats:
+  - 城中
+- name: 海盗
+  type: 类人
+  cr: 1.0
+  habitats:
+  - 任意栖息地
+- name: 渗蚀蛇人
+  type: 怪兽
+  cr: 1.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 沼泽
+  - 城中
+- name: 火蜥蜴火蛇
+  type: 元素
+  cr: 1.0
+  habitats:
+  - 幽暗地域
+- name: 熊地精武者
+  type: 妖精
+  cr: 1.0
+  habitats:
+  - 丛林
+  - 草原
+  - 幽暗地域
+  tags:
+  - 类地精
+- name: 狮子
+  type: 野兽
+  cr: 1.0
+  habitats:
+  - 荒漠
+  - 草原
+  - 丘陵
+  - 山地
+- name: 稻草人
+  type: 构装
+  cr: 1.0
+  habitats:
+  - 草原
+- name: 老虎
+  type: 野兽
+  cr: 1.0
+  habitats:
+  - 丛林
+  - 草原
+- name: 至高天微尘
+  type: 巨人
+  cr: 1.0
+  habitats:
+  - 任意栖息地
+  tags:
+  - 泰坦
+- name: 蕈人孢子奴仆
+  type: 植物
+  cr: 1.0
+  habitats:
+  - 幽暗地域
+- name: 螳螂人劫掠者
+  type: 怪兽
+  cr: 1.0
+  habitats:
+  - 荒漠
+  - 草原
+- name: 赤铜龙雏龙
+  type: 龙类
+  cr: 1.0
+  habitats:
+  - 丘陵
+  tags:
+  - 金属龙
+- name: 间谍
+  type: 类人
+  cr: 1.0
+  habitats:
+  - 任意栖息地
+- name: 食人鱼集群
+  type: 野兽
+  cr: 1.0
+  habitats:
+  - 水下
+- name: 食尸水鬼
+  type: 亡灵
+  cr: 1.0
+  habitats:
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 食尸鬼
+  type: 亡灵
+  cr: 1.0
+  habitats:
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 骏鹰
+  type: 怪兽
+  cr: 1.0
+  habitats:
+  - 草原
+  - 丘陵
+  - 山地
+- name: 魔冢·四元冢
+  type: 构装
+  cr: 1.0
+- name: 鸟妖
+  type: 怪兽
+  cr: 1.0
+  habitats:
+  - 海岸
+  - 丛林
+  - 丘陵
+  - 山地
+- name: 黄铜龙雏龙
+  type: 龙类
+  cr: 1.0
+  habitats:
+  - 荒漠
+  tags:
+  - 金属龙
+- name: 人马骠骑
+  type: 妖精
+  cr: 2.0
+  habitats:
+  - 丛林
+  - 草原
+- name: 伊特怪
+  type: 怪兽
+  cr: 2.0
+  habitats:
+  - 丛林
+- name: 凝胶方块
+  type: 泥怪
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+- name: 剑齿虎
+  type: 野兽
+  cr: 2.0
+  habitats:
+  - 极地
+  - 丘陵
+  - 山地
+- name: 北极熊
+  type: 野兽
+  cr: 2.0
+  habitats:
+  - 极地
+- name: 匪帮队长
+  type: 类人
+  cr: 2.0
+  habitats:
+  - 任意栖息地
+- name: 吉斯泽莱武僧
+  type: 异怪
+  cr: 2.0
+- name: 启蒙树木
+  type: 植物
+  cr: 2.0
+  habitats:
+  - 丛林
+- name: 呓语之口
+  type: 异怪
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+- name: 噬脑怪
+  type: 异怪
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+- name: 天马
+  type: 天族
+  cr: 2.0
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 妖精龙成体
+  type: 龙类
+  cr: 2.0
+  habitats:
+  - 丛林
+- name: 妖鬼
+  type: 亡灵
+  cr: 2.0
+  habitats:
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 寻猎鲨
+  type: 野兽
+  cr: 2.0
+  habitats:
+  - 水下
+- name: 巨蟒蛇
+  type: 野兽
+  cr: 2.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 沼泽
+  - 水下
+- name: 巨赤鹿
+  type: 天族
+  cr: 2.0
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 巨野猪
+  type: 野兽
+  cr: 2.0
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 幽邃熊怪
+  type: 怪兽
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+- name: 异特龙
+  type: 野兽
+  cr: 2.0
+  habitats:
+  - 草原
+  tags:
+  - 恐龙
+- name: 德鲁伊
+  type: 类人
+  cr: 2.0
+  habitats:
+  - 任意栖息地
+- name: 拟身怪
+  type: 怪兽
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 掘地虫
+  type: 怪兽
+  cr: 2.0
+  habitats:
+  - 丛林
+  - 草原
+- name: 梅洛
+  type: 怪兽
+  cr: 2.0
+  habitats:
+  - 海岸
+  - 水下
+- name: 棘魔
+  type: 邪魔
+  cr: 2.0
+  tags:
+  - 魔鬼
+- name: 毒蛇集群
+  type: 野兽
+  cr: 2.0
+  habitats:
+  - 海岸
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 沼泽
+- name: 活化闷人毯
+  type: 构装
+  cr: 2.0
+  habitats:
+  - 城中
+- name: 海鬼婆
+  type: 妖精
+  cr: 2.0
+  habitats:
+  - 海岸
+  - 水下
+- name: 火矮人哨兵
+  type: 元素
+  cr: 2.0
+  habitats:
+  - 山地
+- name: 犀牛
+  type: 野兽
+  cr: 2.0
+  habitats:
+  - 草原
+- name: 狂战士
+  type: 类人
+  cr: 2.0
+  habitats:
+  - 任意栖息地
+- name: 狮鹫
+  type: 怪兽
+  cr: 2.0
+  habitats:
+  - 极地
+  - 海岸
+  - 草原
+  - 丘陵
+  - 山地
+- name: 白龙雏龙
+  type: 龙类
+  cr: 2.0
+  habitats:
+  - 极地
+  tags:
+  - 色彩龙
+- name: 石像鬼
+  type: 元素
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 祭司
+  type: 类人
+  cr: 2.0
+  habitats:
+  - 任意栖息地
+- name: 穴居攫怪
+  type: 异怪
+  cr: 2.0
+  habitats:
+  - 丛林
+  - 幽暗地域
+- name: 绿龙雏龙
+  type: 龙类
+  cr: 2.0
+  habitats:
+  - 丛林
+  tags:
+  - 色彩龙
+- name: 蕈人王
+  type: 植物
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+- name: 蚊蝠集群
+  type: 怪兽
+  cr: 2.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 山地
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 蛇颈龙
+  type: 野兽
+  cr: 2.0
+  habitats:
+  - 海岸
+  - 水下
+  tags:
+  - 恐龙
+- name: 蜥蜴人地脉术师
+  type: 元素
+  cr: 2.0
+  habitats:
+  - 丛林
+  - 沼泽
+- name: 诺斯怪
+  type: 异怪
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+- name: 赭果冻
+  type: 泥怪
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+- name: 邪教狂信者
+  type: 类人
+  cr: 2.0
+  habitats:
+  - 任意栖息地
+- name: 银龙雏龙
+  type: 龙类
+  cr: 2.0
+  habitats:
+  - 山地
+  - 城中
+  tags:
+  - 金属龙
+- name: 青铜龙雏龙
+  type: 龙类
+  cr: 2.0
+  habitats:
+  - 海岸
+  tags:
+  - 金属龙
+- name: 食人魔
+  type: 巨人
+  cr: 2.0
+  habitats:
+  - 极地
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 山地
+  - 沼泽
+  - 幽暗地域
+- name: 食人魔僵尸
+  type: 亡灵
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 食腐虫
+  type: 怪兽
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 骚灵
+  type: 亡灵
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 骷髅牛头人
+  type: 亡灵
+  cr: 2.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 鬣狗人头领
+  type: 邪魔
+  cr: 2.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 鬼火
+  type: 亡灵
+  cr: 2.0
+  habitats:
+  - 丛林
+  - 沼泽
+  - 城中
+- name: 魔冢·五元冢
+  type: 构装
+  cr: 2.0
+- name: 魔法学徒
+  type: 类人
+  cr: 2.0
+  habitats:
+  - 任意栖息地
+- name: 鲨华祭司
+  type: 邪魔
+  cr: 2.0
+  habitats:
+  - 海岸
+  - 水下
+- name: 鲨蜥仔
+  type: 怪兽
+  cr: 2.0
+  habitats:
+  - 草原
+  - 丘陵
+  - 山地
+- name: 鹿鹰
+  type: 怪兽
+  cr: 2.0
+  habitats:
+  - 丘陵
+  - 山地
+- name: 黑龙雏龙
+  type: 龙类
+  cr: 2.0
+  habitats:
+  - 沼泽
+  tags:
+  - 色彩龙
+- name: 鼠人
+  type: 怪兽
+  cr: 2.0
+  habitats:
+  - 丛林
+  - 城中
+  tags:
+  - 兽化人
+- name: 冬狼
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 极地
+- name: 刺尾狮
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 极地
+  - 海岸
+  - 草原
+  - 丘陵
+  - 山地
+- name: 劣魔集群
+  type: 邪魔
+  cr: 3.0
+  tags:
+  - 魔鬼
+- name: 历战武者
+  type: 类人
+  cr: 3.0
+  habitats:
+  - 任意栖息地
+- name: 变形怪
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 吉斯洋基武者
+  type: 异怪
+  cr: 3.0
+- name: 地狱猎犬
+  type: 邪魔
+  cr: 3.0
+  habitats:
+  - 山地
+  - 幽暗地域
+- name: 地精咒术师
+  type: 妖精
+  cr: 3.0
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+  - 幽暗地域
+  tags:
+  - 类地精
+- name: 大地精长官
+  type: 妖精
+  cr: 3.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 山地
+  - 幽暗地域
+  tags:
+  - 类地精
+- name: 寇涛监察者
+  type: 异怪
+  cr: 3.0
+  habitats:
+  - 海岸
+  - 幽暗地域
+- name: 尸妖
+  type: 亡灵
+  cr: 3.0
+  habitats:
+  - 荒漠
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 巨蝎
+  type: 野兽
+  cr: 3.0
+  habitats:
+  - 荒漠
+- name: 巴弗灭的牛头人
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 幽暗地域
+- name: 幽邃熊怪·索诺祭司
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 幽暗地域
+- name: 恐爪怪
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 幽暗地域
+- name: 恶咒蛇人（1 型）
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 沼泽
+  - 城中
+- name: 恶咒蛇人（2 型）
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 沼泽
+  - 城中
+- name: 恶咒蛇人（3 型）
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 沼泽
+  - 城中
+- name: 斥候队长
+  type: 类人
+  cr: 3.0
+  habitats:
+  - 任意栖息地
+- name: 木乃伊
+  type: 亡灵
+  cr: 3.0
+  habitats:
+  - 荒漠
+  - 沼泽
+- name: 枭熊
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 丛林
+- name: 梦魇
+  type: 邪魔
+  cr: 3.0
+- name: 水诡
+  type: 元素
+  cr: 3.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 熊地精追猎者
+  type: 妖精
+  cr: 3.0
+  habitats:
+  - 丛林
+  - 草原
+  - 幽暗地域
+  tags:
+  - 类地精
+- name: 燃火骷髅
+  type: 亡灵
+  cr: 3.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 狼人
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 丛林
+  - 丘陵
+  tags:
+  - 兽化人
+- name: 甲龙
+  type: 野兽
+  cr: 3.0
+  habitats:
+  - 草原
+  tags:
+  - 恐龙
+- name: 相位蜘蛛
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 幽暗地域
+  - 城中
+- name: 石化蜥蜴
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 山地
+  - 幽暗地域
+- name: 移位兽
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 丛林
+- name: 绿鬼婆
+  type: 妖精
+  cr: 3.0
+  habitats:
+  - 丛林
+  - 丘陵
+  - 沼泽
+- name: 蓝龙雏龙
+  type: 龙类
+  cr: 3.0
+  habitats:
+  - 海岸
+  - 荒漠
+  tags:
+  - 色彩龙
+- name: 虎鲸
+  type: 野兽
+  cr: 3.0
+  habitats:
+  - 水下
+- name: 蠕行之爪集群
+  type: 亡灵
+  cr: 3.0
+  habitats:
+  - 任意栖息地
+- name: 血仆
+  type: 类人
+  cr: 3.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 观察者眼魔
+  type: 异怪
+  cr: 3.0
+  habitats:
+  - 幽暗地域
+  tags:
+  - 眼魔
+- name: 触须怪
+  type: 异怪
+  cr: 3.0
+  habitats:
+  - 幽暗地域
+- name: 金龙雏龙
+  type: 龙类
+  cr: 3.0
+  habitats:
+  - 丛林
+  - 草原
+  tags:
+  - 金属龙
+- name: 雪怪
+  type: 怪兽
+  cr: 3.0
+  habitats:
+  - 极地
+- name: 须魔
+  type: 邪魔
+  cr: 3.0
+  tags:
+  - 魔鬼
+- name: 骑士
+  type: 类人
+  cr: 3.0
+  habitats:
+  - 任意栖息地
+- name: 双头巨人
+  type: 巨人
+  cr: 4.0
+  habitats:
+  - 丘陵
+  - 山地
+  - 幽暗地域
+- name: 啵灵蛙沼地大贤
+  type: 妖精
+  cr: 4.0
+  habitats:
+  - 沼泽
+- name: 大象
+  type: 野兽
+  cr: 4.0
+  habitats:
+  - 草原
+- name: 少年幽影龙
+  type: 龙类
+  cr: 4.0
+  habitats:
+  - 幽暗地域
+- name: 帝龟
+  type: 野兽
+  cr: 4.0
+  habitats:
+  - 水下
+  tags:
+  - 恐龙
+- name: 幽影恶魔
+  type: 邪魔
+  cr: 4.0
+  tags:
+  - 恶魔
+- name: 幽魂
+  type: 亡灵
+  cr: 4.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 怯魔集群
+  type: 邪魔
+  cr: 4.0
+  tags:
+  - 恶魔
+- name: 恐怖铠甲
+  type: 构装
+  cr: 4.0
+  habitats:
+  - 任意栖息地
+- name: 打手老大
+  type: 类人
+  cr: 4.0
+  habitats:
+  - 任意栖息地
+- name: 报丧妖
+  type: 亡灵
+  cr: 4.0
+  habitats:
+  - 任意栖息地
+- name: 拉迷亚
+  type: 邪魔
+  cr: 4.0
+  habitats:
+  - 荒漠
+- name: 梦魔
+  type: 邪魔
+  cr: 4.0
+  habitats:
+  - 城中
+- name: 河马
+  type: 野兽
+  cr: 4.0
+  habitats:
+  - 丛林
+  - 草原
+  - 沼泽
+- name: 燃焰之颅
+  type: 亡灵
+  cr: 4.0
+  habitats:
+  - 幽暗地域
+- name: 甲伏怪
+  type: 异怪
+  cr: 4.0
+  habitats:
+  - 海岸
+  - 沼泽
+  - 幽暗地域
+- name: 红龙雏龙
+  type: 龙类
+  cr: 4.0
+  habitats:
+  - 丘陵
+  - 山地
+  tags:
+  - 色彩龙
+- name: 羽蛇
+  type: 天族
+  cr: 4.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 城中
+- name: 虎人
+  type: 怪兽
+  cr: 4.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  tags:
+  - 兽化人
+- name: 蜥蜴人大王
+  type: 元素
+  cr: 4.0
+  habitats:
+  - 丛林
+  - 沼泽
+- name: 警卫队长
+  type: 类人
+  cr: 4.0
+  habitats:
+  - 任意栖息地
+- name: 野猪人
+  type: 怪兽
+  cr: 4.0
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+  tags:
+  - 兽化人
+- name: 骸骨纳迦
+  type: 亡灵
+  cr: 4.0
+  habitats:
+  - 幽暗地域
+- name: 鬣狗人·耶诺古毒牙
+  type: 邪魔
+  cr: 4.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 魅魔
+  type: 邪魔
+  cr: 4.0
+  habitats:
+  - 城中
+- name: 鸟羽人风舞术师
+  type: 元素
+  cr: 4.0
+  habitats:
+  - 山地
+- name: 黑布丁
+  type: 泥怪
+  cr: 4.0
+  habitats:
+  - 幽暗地域
+- name: 三角龙
+  type: 野兽
+  cr: 5.0
+  habitats:
+  - 草原
+  tags:
+  - 恐龙
+- name: 初生吸血鬼
+  type: 亡灵
+  cr: 5.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 半龙
+  type: 龙类
+  cr: 5.0
+  habitats:
+  - 任意栖息地
+- name: 史拉红蟾
+  type: 异怪
+  cr: 5.0
+- name: 土元素
+  type: 元素
+  cr: 5.0
+  habitats:
+  - 山地
+  - 幽暗地域
+- name: 坎比翁
+  type: 邪魔
+  cr: 5.0
+  habitats:
+  - 任意栖息地
+- name: 夜鬼婆
+  type: 邪魔
+  cr: 5.0
+- name: 山丘巨人
+  type: 巨人
+  cr: 5.0
+  habitats:
+  - 丘陵
+- name: 巨斧嘴鸟
+  type: 怪兽
+  cr: 5.0
+  habitats:
+  - 极地
+  - 草原
+  - 丘陵
+- name: 巨魔
+  type: 巨人
+  cr: 5.0
+  habitats:
+  - 极地
+  - 丛林
+  - 丘陵
+  - 山地
+  - 沼泽
+  - 幽暗地域
+- name: 巨鲨
+  type: 野兽
+  cr: 5.0
+  habitats:
+  - 水下
+- name: 巨鳄
+  type: 野兽
+  cr: 5.0
+  habitats:
+  - 海岸
+  - 沼泽
+- name: 恶猿魔
+  type: 邪魔
+  cr: 5.0
+  tags:
+  - 恶魔
+- name: 掘土巨怪
+  type: 怪兽
+  cr: 5.0
+  habitats:
+  - 幽暗地域
+- name: 毒虫罗斯魔
+  type: 邪魔
+  cr: 5.0
+  tags:
+  - 尤格罗斯魔
+- name: 气元素
+  type: 元素
+  cr: 5.0
+  habitats:
+  - 荒漠
+  - 山地
+- name: 水元素
+  type: 元素
+  cr: 5.0
+  habitats:
+  - 海岸
+  - 沼泽
+  - 水下
+- name: 火元素
+  type: 元素
+  cr: 5.0
+  habitats:
+  - 荒漠
+- name: 火蜥蜴
+  type: 元素
+  cr: 5.0
+  habitats:
+  - 幽暗地域
+- name: 熊人
+  type: 怪兽
+  cr: 5.0
+  habitats:
+  - 极地
+  - 丛林
+  - 丘陵
+  tags:
+  - 兽化人
+- name: 独角兽
+  type: 天族
+  cr: 5.0
+  habitats:
+  - 丛林
+- name: 猬魔
+  type: 邪魔
+  cr: 5.0
+  tags:
+  - 魔鬼
+- name: 皮克妙妙精
+  type: 妖精
+  cr: 5.0
+  habitats:
+  - 丛林
+- name: 眼魔丧尸
+  type: 亡灵
+  cr: 5.0
+  habitats:
+  - 幽暗地域
+  - 城中
+  tags:
+  - 眼魔
+- name: 石化铁牛
+  type: 构装
+  cr: 5.0
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 石绳怪
+  type: 异怪
+  cr: 5.0
+  habitats:
+  - 幽暗地域
+- name: 石鼎兽
+  type: 元素
+  cr: 5.0
+  habitats:
+  - 幽暗地域
+- name: 蔓生怪
+  type: 植物
+  cr: 5.0
+  habitats:
+  - 丛林
+  - 沼泽
+- name: 血肉魔像
+  type: 构装
+  cr: 5.0
+  habitats:
+  - 任意栖息地
+- name: 角斗士
+  type: 类人
+  cr: 5.0
+  habitats:
+  - 任意栖息地
+- name: 还魂鬼
+  type: 亡灵
+  cr: 5.0
+  habitats:
+  - 丛林
+  - 沼泽
+  - 城中
+- name: 邪灵
+  type: 亡灵
+  cr: 5.0
+  habitats:
+  - 幽暗地域
+- name: 青年百足魔兽
+  type: 怪兽
+  cr: 5.0
+  habitats:
+  - 极地
+- name: 食腐兽
+  type: 异怪
+  cr: 5.0
+  habitats:
+  - 幽暗地域
+- name: 鲨华男爵
+  type: 邪魔
+  cr: 5.0
+  habitats:
+  - 海岸
+  - 水下
+- name: 鲨蜥
+  type: 怪兽
+  cr: 5.0
+  habitats:
+  - 草原
+  - 丘陵
+  - 山地
+- name: 半羊人欢庆之主
+  type: 妖精
+  cr: 6.0
+  habitats:
+  - 丛林
+- name: 吉斯泽莱泽锡修士
+  type: 异怪
+  cr: 6.0
+- name: 喀嘶魔
+  type: 邪魔
+  cr: 6.0
+  tags:
+  - 恶魔
+- name: 大地精军阀
+  type: 妖精
+  cr: 6.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+  - 山地
+  - 幽暗地域
+  tags:
+  - 类地精
+- name: 奇美拉
+  type: 怪兽
+  cr: 6.0
+  habitats:
+  - 草原
+  - 丘陵
+  - 山地
+- name: 妖鬼坟语者
+  type: 亡灵
+  cr: 6.0
+  habitats:
+  - 沼泽
+  - 幽暗地域
+  - 城中
+- name: 寇涛大祭司
+  type: 异怪
+  cr: 6.0
+  habitats:
+  - 海岸
+  - 幽暗地域
+- name: 巨乌贼
+  type: 野兽
+  cr: 6.0
+  habitats:
+  - 水下
+- name: 御浪人鱼
+  type: 元素
+  cr: 6.0
+  habitats:
+  - 海岸
+  - 水下
+- name: 海盗船长
+  type: 类人
+  cr: 6.0
+  habitats:
+  - 任意栖息地
+- name: 演艺尊师
+  type: 类人
+  cr: 6.0
+  habitats:
+  - 任意栖息地
+- name: 火矮人烈炎术师
+  type: 元素
+  cr: 6.0
+  habitats:
+  - 山地
+- name: 独眼巨人哨卫
+  type: 巨人
+  cr: 6.0
+  habitats:
+  - 海岸
+  - 荒漠
+  - 草原
+  - 丘陵
+  - 山地
+  - 幽暗地域
+- name: 猛犸
+  type: 野兽
+  cr: 6.0
+  habitats:
+  - 极地
+- name: 石人
+  type: 元素
+  cr: 6.0
+  habitats:
+  - 丘陵
+  - 山地
+- name: 美杜莎
+  type: 怪兽
+  cr: 6.0
+  habitats:
+  - 荒漠
+- name: 蛛化卓尔
+  type: 怪兽
+  cr: 6.0
+  habitats:
+  - 丛林
+  - 幽暗地域
+- name: 隐形追猎者
+  type: 元素
+  cr: 6.0
+  habitats:
+  - 城中
+- name: 青年白龙
+  type: 龙类
+  cr: 6.0
+  habitats:
+  - 极地
+  tags:
+  - 色彩龙
+- name: 青年黄铜龙
+  type: 龙类
+  cr: 6.0
+  habitats:
+  - 荒漠
+  tags:
+  - 金属龙
+- name: 飞龙
+  type: 龙类
+  cr: 6.0
+  habitats:
+  - 丘陵
+  - 山地
+- name: 魔法师
+  type: 类人
+  cr: 6.0
+  habitats:
+  - 任意栖息地
+- name: 鹫魔
+  type: 邪魔
+  cr: 6.0
+  tags:
+  - 恶魔
+- name: 人马守望者
+  type: 妖精
+  cr: 7.0
+  habitats:
+  - 丛林
+  - 草原
+- name: 匪帮欺诈师
+  type: 类人
+  cr: 7.0
+  habitats:
+  - 任意栖息地
+- name: 原初枭熊
+  type: 怪兽
+  cr: 7.0
+  habitats:
+  - 丛林
+- name: 史拉蓝蟾
+  type: 异怪
+  cr: 7.0
+- name: 夺心魔
+  type: 异怪
+  cr: 7.0
+  habitats:
+  - 幽暗地域
+- name: 巨猿
+  type: 野兽
+  cr: 7.0
+  habitats:
+  - 丛林
+- name: 恶鬼
+  type: 邪魔
+  cr: 7.0
+  habitats:
+  - 丛林
+  - 城中
+- name: 憎恶蛇人
+  type: 怪兽
+  cr: 7.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 沼泽
+  - 城中
+- name: 构装盾卫
+  type: 构装
+  cr: 7.0
+  habitats:
+  - 城中
+- name: 枯树怪
+  type: 植物
+  cr: 7.0
+  habitats:
+  - 丛林
+- name: 石巨人
+  type: 巨人
+  cr: 7.0
+  habitats:
+  - 丘陵
+  - 山地
+  - 幽暗地域
+- name: 紫腐菌尸聚怪
+  type: 植物
+  cr: 7.0
+  habitats:
+  - 幽暗地域
+- name: 还魂鬼山
+  type: 亡灵
+  cr: 7.0
+  habitats:
+  - 丛林
+  - 沼泽
+  - 城中
+- name: 远古穴居攫怪
+  type: 异怪
+  cr: 7.0
+  habitats:
+  - 丛林
+  - 幽暗地域
+- name: 青年赤铜龙
+  type: 龙类
+  cr: 7.0
+  habitats:
+  - 丘陵
+  tags:
+  - 金属龙
+- name: 青年黑龙
+  type: 龙类
+  cr: 7.0
+  habitats:
+  - 沼泽
+  tags:
+  - 色彩龙
+- name: 元素邪教徒
+  type: 类人
+  cr: 8.0
+  habitats:
+  - 任意栖息地
+- name: 刺客
+  type: 类人
+  cr: 8.0
+  habitats:
+  - 任意栖息地
+- name: 史拉绿蟾
+  type: 异怪
+  cr: 8.0
+- name: 吉斯洋基骑士
+  type: 异怪
+  cr: 8.0
+- name: 吸血夜魇
+  type: 亡灵
+  cr: 8.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 多头蛇
+  type: 怪兽
+  cr: 8.0
+  habitats:
+  - 海岸
+  - 沼泽
+- name: 废陋巨人
+  type: 巨人
+  cr: 8.0
+  habitats:
+  - 幽暗地域
+- name: 异怪邪教徒
+  type: 类人
+  cr: 8.0
+  habitats:
+  - 任意栖息地
+- name: 斗篷怪
+  type: 异怪
+  cr: 8.0
+  habitats:
+  - 幽暗地域
+- name: 死亡邪教徒
+  type: 类人
+  cr: 8.0
+  habitats:
+  - 任意栖息地
+- name: 狂战将
+  type: 类人
+  cr: 8.0
+  habitats:
+  - 任意栖息地
+- name: 狂蟾魔
+  type: 邪魔
+  cr: 8.0
+  tags:
+  - 恶魔
+- name: 蛇鸡王
+  type: 怪兽
+  cr: 8.0
+  habitats:
+  - 草原
+- name: 螳螂人灵能使
+  type: 怪兽
+  cr: 8.0
+  habitats:
+  - 荒漠
+  - 草原
+- name: 邪魔邪教徒
+  type: 类人
+  cr: 8.0
+  habitats:
+  - 任意栖息地
+- name: 链魔
+  type: 邪魔
+  cr: 8.0
+  tags:
+  - 魔鬼
+- name: 阴魂纳迦
+  type: 邪魔
+  cr: 8.0
+  habitats:
+  - 幽暗地域
+- name: 隐秘斯芬克斯
+  type: 天族
+  cr: 8.0
+  habitats:
+  - 荒漠
+- name: 霜巨人
+  type: 巨人
+  cr: 8.0
+  habitats:
+  - 极地
+  - 山地
+- name: 霸王龙
+  type: 野兽
+  cr: 8.0
+  habitats:
+  - 草原
+  tags:
+  - 恐龙
+- name: 青年绿龙
+  type: 龙类
+  cr: 8.0
+  habitats:
+  - 丛林
+  tags:
+  - 色彩龙
+- name: 青年青铜龙
+  type: 龙类
+  cr: 8.0
+  habitats:
+  - 海岸
+  tags:
+  - 金属龙
+- name: 鬣狗人魔头
+  type: 邪魔
+  cr: 8.0
+  habitats:
+  - 荒漠
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 云巨人
+  type: 巨人
+  cr: 9.0
+  habitats:
+  - 山地
+- name: 史拉灰蟾
+  type: 异怪
+  cr: 9.0
+- name: 巨恶雪怪
+  type: 怪兽
+  cr: 9.0
+  habitats:
+  - 极地
+- name: 征伐罗斯魔
+  type: 邪魔
+  cr: 9.0
+  tags:
+  - 尤格罗斯魔
+- name: 树人
+  type: 植物
+  cr: 9.0
+  habitats:
+  - 丛林
+- name: 火巨人
+  type: 巨人
+  cr: 9.0
+  habitats:
+  - 山地
+  - 幽暗地域
+- name: 焚化铜牛
+  type: 构装
+  cr: 9.0
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 粘土魔像
+  type: 构装
+  cr: 9.0
+  habitats:
+  - 城中
+- name: 迷诱魔
+  type: 邪魔
+  cr: 9.0
+  tags:
+  - 恶魔
+- name: 青年蓝龙
+  type: 龙类
+  cr: 9.0
+  habitats:
+  - 海岸
+  - 荒漠
+  tags:
+  - 色彩龙
+- name: 青年银龙
+  type: 龙类
+  cr: 9.0
+  habitats:
+  - 山地
+  - 城中
+  tags:
+  - 金属龙
+- name: 骨魔
+  type: 邪魔
+  cr: 9.0
+  tags:
+  - 魔鬼
+- name: 史拉亡蟾
+  type: 异怪
+  cr: 10.0
+- name: 天神使徒
+  type: 天族
+  cr: 10.0
+  tags:
+  - 天使
+- name: 守秘纳迦
+  type: 天族
+  cr: 10.0
+  habitats:
+  - 荒漠
+  - 丛林
+- name: 底栖魔鱼
+  type: 异怪
+  cr: 10.0
+  habitats:
+  - 幽暗地域
+  - 水下
+- name: 恐座狼
+  type: 妖精
+  cr: 10.0
+  habitats:
+  - 丛林
+  - 草原
+  - 丘陵
+- name: 武将
+  type: 类人
+  cr: 10.0
+  habitats:
+  - 任意栖息地
+- name: 演艺传奇
+  type: 类人
+  cr: 10.0
+  habitats:
+  - 任意栖息地
+- name: 独眼巨人先知
+  type: 巨人
+  cr: 10.0
+  habitats:
+  - 海岸
+  - 荒漠
+  - 草原
+  - 丘陵
+  - 山地
+  - 幽暗地域
+- name: 石魔像
+  type: 构装
+  cr: 10.0
+  habitats:
+  - 任意栖息地
+- name: 蜡融妖
+  type: 邪魔
+  cr: 10.0
+  tags:
+  - 恶魔
+- name: 贵血天骄
+  type: 类人
+  cr: 10.0
+  habitats:
+  - 任意栖息地
+- name: 还魂巨构
+  type: 亡灵
+  cr: 10.0
+  habitats:
+  - 丛林
+  - 沼泽
+  - 城中
+- name: 邪教教宗
+  type: 类人
+  cr: 10.0
+  habitats:
+  - 任意栖息地
+- name: 间谍大师
+  type: 类人
+  cr: 10.0
+  habitats:
+  - 任意栖息地
+- name: 青年红龙
+  type: 龙类
+  cr: 10.0
+  habitats:
+  - 丘陵
+  - 山地
+  tags:
+  - 色彩龙
+- name: 青年金龙
+  type: 龙类
+  cr: 10.0
+  habitats:
+  - 丛林
+  - 草原
+  tags:
+  - 金属龙
+- name: 匪帮祸首
+  type: 类人
+  cr: 11.0
+  habitats:
+  - 任意栖息地
+- name: 土巨灵
+  type: 元素
+  cr: 11.0
+  habitats:
+  - 幽暗地域
+  tags:
+  - 巨灵
+- name: 夺心魔奥术师
+  type: 异怪
+  cr: 11.0
+  habitats:
+  - 幽暗地域
+- name: 晓谕斯芬克斯
+  type: 天族
+  cr: 11.0
+  habitats:
+  - 荒漠
+- name: 死亡骑士志从
+  type: 亡灵
+  cr: 11.0
+  habitats:
+  - 任意栖息地
+- name: 气巨灵
+  type: 元素
+  cr: 11.0
+  habitats:
+  - 海岸
+  tags:
+  - 巨灵
+- name: 水巨灵
+  type: 元素
+  cr: 11.0
+  habitats:
+  - 海岸
+  - 水下
+  tags:
+  - 巨灵
+- name: 火巨灵
+  type: 元素
+  cr: 11.0
+  habitats:
+  - 荒漠
+  tags:
+  - 巨灵
+- name: 百足魔兽
+  type: 怪兽
+  cr: 11.0
+  habitats:
+  - 极地
+- name: 角魔
+  type: 邪魔
+  cr: 11.0
+  tags:
+  - 魔鬼
+- name: 青足龙蛇
+  type: 怪兽
+  cr: 11.0
+  habitats:
+  - 幽暗地域
+- name: 鹏鸟
+  type: 怪兽
+  cr: 11.0
+  habitats:
+  - 极地
+  - 海岸
+  - 荒漠
+  - 丘陵
+  - 山地
+- name: 吉斯泽莱灵能使
+  type: 异怪
+  cr: 12.0
+- name: 大法师
+  type: 类人
+  cr: 12.0
+  habitats:
+  - 任意栖息地
+- name: 大祭司
+  type: 类人
+  cr: 12.0
+  habitats:
+  - 任意栖息地
+- name: 天命骑士
+  type: 类人
+  cr: 12.0
+  habitats:
+  - 任意栖息地
+- name: 奥法罗斯魔
+  type: 邪魔
+  cr: 12.0
+  tags:
+  - 尤格罗斯魔
+- name: 海盗将军
+  type: 类人
+  cr: 12.0
+  habitats:
+  - 任意栖息地
+- name: 罪魔
+  type: 邪魔
+  cr: 12.0
+  tags:
+  - 魔鬼
+- name: 判魂魔
+  type: 邪魔
+  cr: 13.0
+  tags:
+  - 恶魔
+- name: 吸血鬼
+  type: 亡灵
+  cr: 13.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 幽影龙
+  type: 龙类
+  cr: 13.0
+  habitats:
+  - 幽暗地域
+- name: 成年白龙
+  type: 龙类
+  cr: 13.0
+  habitats:
+  - 极地
+  tags:
+  - 色彩龙
+- name: 成年黄铜龙
+  type: 龙类
+  cr: 13.0
+  habitats:
+  - 荒漠
+  tags:
+  - 金属龙
+- name: 眼魔
+  type: 异怪
+  cr: 13.0
+  habitats:
+  - 幽暗地域
+  tags:
+  - 眼魔
+- name: 罗刹
+  type: 邪魔
+  cr: 13.0
+  habitats:
+  - 城中
+- name: 超等罗斯魔
+  type: 邪魔
+  cr: 13.0
+  tags:
+  - 尤格罗斯魔
+- name: 风暴巨人
+  type: 巨人
+  cr: 13.0
+  habitats:
+  - 海岸
+  - 水下
+- name: 亡眼暴君
+  type: 亡灵
+  cr: 14.0
+  habitats:
+  - 幽暗地域
+  tags:
+  - 眼魔
+- name: 冰魔
+  type: 邪魔
+  cr: 14.0
+  tags:
+  - 魔鬼
+- name: 成年赤铜龙
+  type: 龙类
+  cr: 14.0
+  habitats:
+  - 丘陵
+  tags:
+  - 金属龙
+- name: 成年黑龙
+  type: 龙类
+  cr: 14.0
+  habitats:
+  - 沼泽
+  tags:
+  - 色彩龙
+- name: 吸血鬼暗影尊主
+  type: 亡灵
+  cr: 15.0
+  habitats:
+  - 幽暗地域
+  - 城中
+- name: 成年绿龙
+  type: 龙类
+  cr: 15.0
+  habitats:
+  - 丛林
+  tags:
+  - 色彩龙
+- name: 成年青铜龙
+  type: 龙类
+  cr: 15.0
+  habitats:
+  - 海岸
+  tags:
+  - 金属龙
+- name: 木乃伊领主
+  type: 亡灵
+  cr: 15.0
+  habitats:
+  - 荒漠
+  - 沼泽
+- name: 火蜥蜴炎狱之主
+  type: 元素
+  cr: 15.0
+  habitats:
+  - 幽暗地域
+- name: 紫虫
+  type: 怪兽
+  cr: 15.0
+  habitats:
+  - 荒漠
+  - 幽暗地域
+- name: 六臂蛇魔
+  type: 邪魔
+  cr: 16.0
+  tags:
+  - 恶魔
+- name: 吉斯洋基龙巫
+  type: 异怪
+  cr: 16.0
+- name: 异界神侍
+  type: 天族
+  cr: 16.0
+  tags:
+  - 天使
+- name: 成年蓝龙
+  type: 龙类
+  cr: 16.0
+  habitats:
+  - 海岸
+  - 荒漠
+  tags:
+  - 色彩龙
+- name: 成年银龙
+  type: 龙类
+  cr: 16.0
+  habitats:
+  - 山地
+  - 城中
+  tags:
+  - 金属龙
+- name: 甘提亚斯枯殖巨树
+  type: 植物
+  cr: 16.0
+  habitats:
+  - 丛林
+- name: 铁魔像
+  type: 构装
+  cr: 16.0
+  habitats:
+  - 任意栖息地
+- name: 勇气斯芬克斯
+  type: 天族
+  cr: 17.0
+  habitats:
+  - 荒漠
+- name: 巨牛魔
+  type: 邪魔
+  cr: 17.0
+  tags:
+  - 恶魔
+- name: 成年红龙
+  type: 龙类
+  cr: 17.0
+  habitats:
+  - 丘陵
+  - 山地
+  tags:
+  - 色彩龙
+- name: 成年金龙
+  type: 龙类
+  cr: 17.0
+  habitats:
+  - 丛林
+  - 草原
+  tags:
+  - 金属龙
+- name: 死亡骑士
+  type: 亡灵
+  cr: 17.0
+  habitats:
+  - 任意栖息地
+- name: 龙巫妖
+  type: 亡灵
+  cr: 17.0
+  habitats:
+  - 任意栖息地
+- name: 龙龟
+  type: 龙类
+  cr: 17.0
+  habitats:
+  - 海岸
+  - 水下
+- name: 半巫妖
+  type: 亡灵
+  cr: 18.0
+  habitats:
+  - 任意栖息地
+- name: 巴洛炎魔
+  type: 邪魔
+  cr: 19.0
+  tags:
+  - 恶魔
+- name: 兽主
+  type: 天族
+  cr: 20.0
+- name: 深狱炼魔
+  type: 邪魔
+  cr: 20.0
+  tags:
+  - 魔鬼
+- name: 远古白龙
+  type: 龙类
+  cr: 20.0
+  habitats:
+  - 极地
+  tags:
+  - 色彩龙
+- name: 远古黄铜龙
+  type: 龙类
+  cr: 20.0
+  habitats:
+  - 荒漠
+  tags:
+  - 金属龙
+- name: 大鬼婆
+  type: 妖精
+  cr: 21.0
+  habitats:
+  - 任意栖息地
+- name: 巫妖
+  type: 亡灵
+  cr: 21.0
+  habitats:
+  - 任意栖息地
+- name: 炽天神侍
+  type: 天族
+  cr: 21.0
+  tags:
+  - 天使
+- name: 远古赤铜龙
+  type: 龙类
+  cr: 21.0
+  habitats:
+  - 丘陵
+  tags:
+  - 金属龙
+- name: 远古黑龙
+  type: 龙类
+  cr: 21.0
+  habitats:
+  - 沼泽
+  tags:
+  - 色彩龙
+- name: 元初天劫
+  type: 元素
+  cr: 22.0
+  tags:
+  - 泰坦
+- name: 远古绿龙
+  type: 龙类
+  cr: 22.0
+  habitats:
+  - 丛林
+  tags:
+  - 色彩龙
+- name: 远古青铜龙
+  type: 龙类
+  cr: 22.0
+  habitats:
+  - 海岸
+  tags:
+  - 金属龙
+- name: 克拉肯
+  type: 怪兽
+  cr: 23.0
+  habitats:
+  - 水下
+  tags:
+  - 泰坦
+- name: 吞世黏浆
+  type: 泥怪
+  cr: 23.0
+  habitats:
+  - 任意栖息地
+  tags:
+  - 泰坦
+- name: 至高天
+  type: 巨人
+  cr: 23.0
+  habitats:
+  - 任意栖息地
+  tags:
+  - 泰坦
+- name: 远古蓝龙
+  type: 龙类
+  cr: 23.0
+  habitats:
+  - 海岸
+  - 荒漠
+  tags:
+  - 色彩龙
+- name: 远古银龙
+  type: 龙类
+  cr: 23.0
+  habitats:
+  - 山地
+  - 城中
+  tags:
+  - 金属龙
+- name: 远古红龙
+  type: 龙类
+  cr: 24.0
+  habitats:
+  - 丘陵
+  - 山地
+  tags:
+  - 色彩龙
+- name: 远古金龙
+  type: 龙类
+  cr: 24.0
+  habitats:
+  - 丛林
+  - 草原
+  tags:
+  - 金属龙
+- name: 巨神兵
+  type: 构装
+  cr: 25.0
+  habitats:
+  - 任意栖息地
+  tags:
+  - 泰坦
+- name: 泰拉斯奎
+  type: 怪兽
+  cr: 30.0
+  habitats:
+  - 城中
+  tags:
+  - 泰坦

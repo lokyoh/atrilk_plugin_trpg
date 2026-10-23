@@ -644,6 +644,8 @@ def resolve_damage(
     amount: int,
     damage_type: str,
     resistances: Iterable[str] | None,
+    *,
+    magical: bool = False,
 ) -> tuple[int, str]:
     """按抗性表结算伤害。
 
@@ -651,6 +653,10 @@ def resolve_damage(
     :param damage_type: 伤害类型（火焰 / 挥砍……；空字符串不过抗性）。
     :param resistances: 抗性条目，形如 ``"火焰"``（抗性）、``"毒素:免疫"``、
         ``"钝击:易伤"``、``"挥砍:抗性(非魔法)"``（只挡非魔法攻击，会注明）。
+    :param magical: 这一击是不是**魔法**的（+1 武器、魔法武器特性、法术）。
+        图鉴里那些「非魔法武器」的抗性 / 免疫只对**非魔法**攻击生效——
+        一把 +1 长剑打得动石像鬼，一把普通长剑打不动。
+        ⚠️ 默认为 ``False``：拿不准时按普通武器算，宁可让抗性生效。
     :return: ``(最终伤害, 说明文本)``；没有命中抗性表时说明为空串。
     """
     amount = max(0, int(amount))
@@ -669,6 +675,9 @@ def resolve_damage(
         if target not in {dtype, "全部"} and not (
             target == "非魔法" and dtype in PHYSICAL_TYPES
         ):
+            continue
+        # 「非魔法武器」的抗性 / 免疫：魔法攻击直接穿过这一条
+        if "非魔法" in level and magical:
             continue
         if level.startswith("免疫"):
             factor = 0.0

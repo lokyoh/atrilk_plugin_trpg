@@ -12,8 +12,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from .attributes import ability_modifier, format_ability_block, get_ability
+from .datafiles import as_rows, as_texts
 from .skills import get_skill
 
 __all__ = [
@@ -22,6 +24,8 @@ __all__ = [
     "Monster",
     "MonsterAttack",
     "_cr_text",
+    "attack_from_row",
+    "monster_from_row",
     "proficiency_for_cr",
 ]
 
@@ -123,6 +127,20 @@ class Monster:
     #: ``"挥砍:抗性(非魔法)"``；结算见 :func:`~.conditions.resolve_damage`。
     #: 生物类型级默认抗性（亡灵抗毒等）见 :data:`KIND_RESISTANCES`，与此处叠加。
     resistances: tuple[str, ...] = ()
+    #: 栖息地（图鉴给的环境，如「沼泽、幽暗地域」）；空串 = 该条目没写
+    environment: str = ""
+    #: 宝藏（图鉴给的 treasure，如「圣物」）；空串 = 没有
+    treasure: str = ""
+    #: 阵营（图鉴给的 alignment，如「混乱邪恶」）；空串 = 没有
+    alignment: str = ""
+    #: 图鉴附录「按群组」的族群标签（色彩龙 / 金属龙 / 类地精 / 恶魔 / 恐龙…）。
+    #: 一只怪可以属于好几个群组；挑怪用 :mod:`.monster_index`（四套分类之一）。
+    groups: tuple[str, ...] = ()
+    #: **能自动结算**的那部分规则（``res/dnd/monsters/*.yaml`` 的 ``rules`` 块）：
+    #: 状态免疫、魔法抗性、传奇抗性、集群战术、再生、自爆……由生成脚本从图鉴的
+    #: 特性英文名挑出来，运行时不做文本匹配。读法见 :mod:`.monster_rules`——
+    #: 那里每一项都有对应的结算分支，没有的不要往里塞。
+    rules: Mapping[str, Any] = field(default_factory=dict)
 
     # —— 派生数值 ——
 
@@ -266,8 +284,27 @@ class Monster:
         resist = self.resistances_text()
         if resist:
             lines.append(f"伤害抗性 / 免疫：{resist}")
+        # 「哪些特性是系统自己管的」——DM 看见就不用自己记（再生几点、有没有状态免疫）
+        if self.rules:
+            from .monster_rules import rules_of, rules_text
+
+            automatic = rules_text(rules_of(self))
+            if automatic:
+                lines.append(f"自动结算：{automatic}")
         if self.traits:
             lines.append("特性：" + "；".join(self.traits))
+        extras = [
+            f"{label}：{text}"
+            for label, text in (
+                ("群组", "、".join(self.groups)),
+                ("栖息地", self.environment),
+                ("宝藏", self.treasure),
+                ("阵营", self.alignment),
+            )
+            if text
+        ]
+        if extras:
+            lines.append("　".join(extras))
         if self.senses:
             lines.append(f"感官：{self.senses}")
         if self.languages:
@@ -275,3 +312,82 @@ class Monster:
         if self.desc:
             lines.append(self.desc)
         return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# 从数据表读（``res/dnd/monsters*.yaml`` 的一条 → 数据卡）
+# --------------------------------------------------------------------------- #
+#
+# 三张怪物表（系统自带 / 风骸岛 / 失落矿坑）用同一套字段，读法只写一遍。
+# 放在这个模块是因为它**没有依赖**：三张表都从这儿取，不会形成环。
+
+
+def _int(value: object, default: int = 0) -> int:
+    """YAML 里同一个数字可能是 int / float / 字符串，这里统一成 int。"""
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _num(value: object, default: float = 0.0) -> float:
+    """挑战等级这类**可以有小数**的数值（0.125 / 0.5），不能走 int。"""
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def attack_from_row(row: Mapping[str, object]) -> MonsterAttack:
+    """一条攻击（``attacks`` 里的一项）。"""
+    return MonsterAttack(
+        name=str(row["name"]),
+        ability=str(row["ability"]),
+        damage=str(row["damage"]),
+        damage_type=str(row["damage_type"]),
+        reach=_int(row.get("reach"), 5),
+        ranged_normal=_int(row.get("ranged_normal")),
+        ranged_max=_int(row.get("ranged_max")),
+        notes=str(row.get("notes", "")),
+    )
+
+
+def monster_from_row(row: Mapping[str, object]) -> Monster:
+    """一只怪物（``res/dnd/monsters*.yaml`` 的一项）。"""
+    raw_abilities = row.get("abilities")
+    abilities = raw_abilities if isinstance(raw_abilities, Mapping) else {}
+    bonus = row.get("proficiency_bonus")
+    attacks = as_rows(row.get("attacks"))
+    return Monster(
+        key=str(row["key"]),
+        cn=str(row["cn"]),
+        en=str(row.get("en", "")),
+        cr=_num(row["cr"]),
+        size=str(row.get("size", "中型")),
+        kind=str(row.get("kind", "类人")),
+        ac=_int(row["ac"]),
+        hp=_int(row["hp"]),
+        hit_dice=str(row.get("hit_dice", "")),
+        speed=_int(row.get("speed"), 30),
+        abilities={str(k): _int(v) for k, v in abilities.items()},
+        attacks=tuple(attack_from_row(a) for a in attacks),
+        saves=as_texts(row.get("saves")),
+        skills=as_texts(row.get("skills")),
+        traits=as_texts(row.get("traits")),
+        senses=str(row.get("senses", "被动察觉 10")),
+        languages=str(row.get("languages", "")),
+        desc=str(row.get("desc", "")),
+        aliases=as_texts(row.get("aliases")),
+        source=str(row.get("source", "")),
+        proficiency_bonus=None if bonus is None else _int(bonus),
+        resistances=as_texts(row.get("resistances")),
+        environment=str(row.get("environment", "")),
+        treasure=str(row.get("treasure", "")),
+        alignment=str(row.get("alignment", "")),
+        groups=as_texts(row.get("groups")),
+        rules=dict(row.get("rules") or {}),
+    )

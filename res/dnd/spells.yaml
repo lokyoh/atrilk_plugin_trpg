@@ -1,0 +1,1719 @@
+# 法术表
+# 一条一个法术。level 0 = 戏法；classes 是可用职业的内部键；
+# damage / heal 里可以写「施法属性调整值」，结算时替换成实际加值。
+
+- key: fire_bolt
+  cn: 火焰箭
+  en: Fire Bolt
+  level: 0
+  school: 塑能
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 120 尺
+  attack: true
+  damage: 1d10
+  damage_type: 火焰
+  scaling: 5 级 2d10、11 级 3d10、17 级 4d10
+  desc: 掷出一团火焰射向目标，可点燃可燃物。
+- key: ray_of_frost
+  cn: 冷冻射线
+  en: Ray of Frost
+  level: 0
+  school: 塑能
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 60 尺
+  attack: true
+  damage: 1d8
+  damage_type: 寒冷
+  scaling: 5 级 2d8、11 级 3d8、17 级 4d8
+  desc: 命中后目标速度降低 10 尺，直到你的下回合开始。
+- key: shocking_grasp
+  cn: 电爪
+  en: Shocking Grasp
+  level: 0
+  school: 塑能
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 触及
+  attack: true
+  damage: 1d8
+  damage_type: 闪电
+  scaling: 5 级 2d8、11 级 3d8、17 级 4d8
+  desc: 对金属甲目标有优势；命中后目标无法进行机会攻击。
+- key: acid_splash
+  cn: 酸液飞溅
+  en: Acid Splash
+  level: 0
+  school: 咒法
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 60 尺
+  attack: true
+  damage: 1d6
+  damage_type: 强酸
+  scaling: 5 级 2d6、11 级 3d6、17 级 4d6
+  desc: 溅出一团酸液。
+- key: poison_spray
+  cn: 毒气喷溅
+  en: Poison Spray
+  level: 0
+  school: 咒法
+  classes:
+  - druid
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 10 尺
+  attack: true
+  damage: 1d12
+  damage_type: 毒素
+  scaling: 5 级 2d12、11 级 3d12、17 级 4d12
+  desc: 朝目标喷出一股毒气。
+- key: sacred_flame
+  cn: 圣火
+  en: Sacred Flame
+  level: 0
+  school: 塑能
+  classes:
+  - cleric
+  range_text: 60 尺
+  save: dex
+  damage: 1d8
+  damage_type: 光耀
+  half_on_save: false
+  scaling: 5 级 2d8、11 级 3d8、17 级 4d8
+  desc: 火焰般的圣光落下，目标得不到掩护的好处。
+- key: eldritch_blast
+  cn: 魔能爆
+  en: Eldritch Blast
+  level: 0
+  school: 塑能
+  classes:
+  - warlock
+  range_text: 120 尺
+  attack: true
+  damage: 1d10
+  damage_type: 力场
+  scaling: 5 级 2 束、11 级 3 束、17 级 4 束（每束单独掷命中）
+  desc: 宗主赐予的纯粹力场能量。
+- key: toll_the_dead
+  cn: 丧钟
+  en: Toll the Dead
+  level: 0
+  school: 死灵
+  classes:
+  - cleric
+  - warlock
+  - wizard
+  range_text: 60 尺
+  save: wis
+  damage: 1d8
+  damage_type: 暗蚀
+  half_on_save: false
+  scaling: 5 级 2d8、11 级 3d8、17 级 4d8（目标已受伤时改用 d12）
+  desc: 丧钟为谁而鸣。
+- key: mind_sliver
+  cn: 心灵碎片
+  en: Mind Sliver
+  level: 0
+  school: 附魔
+  classes:
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 120 尺
+  save: int
+  damage: 1d6
+  damage_type: 心灵
+  half_on_save: false
+  scaling: 5 级 2d6、11 级 3d6、17 级 4d6
+  desc: 目标下一次豁免减 1d4。
+- key: frostbite
+  cn: 霜噬
+  en: Frostbite
+  level: 0
+  school: 塑能
+  classes:
+  - druid
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 60 尺
+  save: con
+  damage: 1d6
+  damage_type: 寒冷
+  half_on_save: false
+  scaling: 5 级 2d6、11 级 3d6、17 级 4d6
+  desc: 目标下一次武器攻击有劣势。
+- key: thunderclap
+  cn: 雷鸣袭
+  en: Thunderclap
+  level: 0
+  school: 塑能
+  classes:
+  - bard
+  - druid
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 5 尺
+  save: con
+  damage: 1d6
+  damage_type: 雷鸣
+  half_on_save: false
+  scaling: 5 级 2d6、11 级 3d6、17 级 4d6
+  desc: 一声爆响，周围 5 尺内都能听见。
+- key: word_of_radiance
+  cn: 光耀真言
+  en: Word of Radiance
+  level: 0
+  school: 塑能
+  classes:
+  - cleric
+  range_text: 5 尺
+  save: con
+  damage: 1d6
+  damage_type: 光耀
+  half_on_save: false
+  scaling: 5 级 2d6、11 级 3d6、17 级 4d6
+  desc: 圣言迸发，只烧敌人不伤同伴。
+- key: vicious_mockery
+  cn: 恶言相加
+  en: Vicious Mockery
+  level: 0
+  school: 附魔
+  classes:
+  - bard
+  range_text: 60 尺
+  save: wis
+  damage: 1d4
+  damage_type: 心灵
+  half_on_save: false
+  scaling: 5 级 2d4、11 级 3d4、17 级 4d4
+  desc: 一句刻薄话让目标下一次攻击有劣势。
+- key: guidance
+  cn: 神导术
+  en: Guidance
+  level: 0
+  school: 预言
+  classes:
+  - cleric
+  - druid
+  range_text: 触及
+  duration: 专注，至多 1 分钟
+  concentration: true
+  desc: 目标一次属性检定加 1d4。
+- key: resistance
+  cn: 抵抗术
+  en: Resistance
+  level: 0
+  school: 防护
+  classes:
+  - cleric
+  - druid
+  range_text: 触及
+  duration: 专注，至多 1 分钟
+  concentration: true
+  desc: 目标一次豁免加 1d4。
+- key: shillelagh
+  cn: 橡棍术
+  en: Shillelagh
+  level: 0
+  school: 变化
+  classes:
+  - druid
+  casting_time: 1 附赠动作
+  range_text: 触及
+  components: 语言、姿势、材料
+  duration: 1 分钟
+  desc: 木棍化作魔法武器：用施法属性攻击，伤害 d8。
+- key: blade_ward
+  cn: 剑刃防护
+  en: Blade Ward
+  level: 0
+  school: 防护
+  classes:
+  - bard
+  - sorcerer
+  - warlock
+  - wizard
+  casting_time: 1 反应
+  duration: 1 轮
+  desc: 对抗武器伤害时 AC +5。
+- key: true_strike
+  cn: 真实打击
+  en: True Strike
+  level: 0
+  school: 预言
+  classes:
+  - bard
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 30 尺
+  duration: 专注，至多 1 轮
+  concentration: true
+  desc: 下一次对目标的攻击有优势。
+- key: light
+  cn: 光亮术
+  en: Light
+  level: 0
+  school: 塑能
+  classes:
+  - bard
+  - cleric
+  - sorcerer
+  - wizard
+  components: 语言、材料
+  duration: 1 小时
+  desc: 让一件物品发光（20 尺明亮 + 20 尺微光）。
+- key: dancing_lights
+  cn: 舞光术
+  en: Dancing Lights
+  level: 0
+  school: 幻术
+  classes:
+  - bard
+  - sorcerer
+  - wizard
+  duration: 专注，至多 1 分钟
+  concentration: true
+  desc: 造出四个漂浮光源。
+- key: mage_hand
+  cn: 法师之手
+  en: Mage Hand
+  level: 0
+  school: 咒法
+  classes:
+  - bard
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 30 尺
+  duration: 1 分钟
+  desc: 一只幽灵手，可操作 10 磅以内的物件。
+- key: prestidigitation
+  cn: 魔法伎俩
+  en: Prestidigitation
+  level: 0
+  school: 变化
+  classes:
+  - bard
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 10 尺
+  duration: 至多 1 小时
+  desc: 小把戏：点烛、调味、清扫、造个小玩意。
+- key: minor_illusion
+  cn: 次级幻影
+  en: Minor Illusion
+  level: 0
+  school: 幻术
+  classes:
+  - bard
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 30 尺
+  components: 姿势、材料
+  duration: 1 分钟
+  desc: 造出一个声音或巴掌大的幻影。
+- key: druidcraft
+  cn: 德鲁伊伎俩
+  en: Druidcraft
+  level: 0
+  school: 变化
+  classes:
+  - druid
+  range_text: 30 尺
+  desc: 预知天气、催花、点火、造自然小物。
+- key: thaumaturgy
+  cn: 奇术
+  en: Thaumaturgy
+  level: 0
+  school: 变化
+  classes:
+  - cleric
+  range_text: 30 尺
+  duration: 至多 1 分钟
+  desc: 神迹般的小现象：声音放大、火焰变色、地面震动。
+- key: magic_missile
+  cn: 魔法飞弹
+  en: Magic Missile
+  level: 1
+  school: 塑能
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 120 尺
+  damage: 3d4+3
+  damage_type: 力场
+  auto_damage: true
+  upcast: 每升一环多出一枚飞弹（+1d4+1）
+  desc: 三枚飞弹必然命中，可分别指定目标。
+- key: burning_hands
+  cn: 燃烧之手
+  en: Burning Hands
+  level: 1
+  school: 塑能
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 自身（15 尺锥形）
+  save: dex
+  damage: 3d6
+  damage_type: 火焰
+  upcast: 每升一环 +1d6
+  desc: 双手喷出扇形烈焰，可燃物会被点燃。
+- key: thunderwave
+  cn: 雷鸣波
+  en: Thunderwave
+  level: 1
+  school: 塑能
+  classes:
+  - bard
+  - druid
+  - sorcerer
+  - wizard
+  range_text: 自身（15 尺立方）
+  save: con
+  damage: 2d8
+  damage_type: 雷鸣
+  upcast: 每升一环 +1d8
+  desc: 震波把未通过豁免的生物推开 10 尺。
+- key: ice_knife
+  cn: 冰刃
+  en: Ice Knife
+  level: 1
+  school: 塑能
+  classes:
+  - druid
+  - sorcerer
+  - wizard
+  range_text: 60 尺
+  components: 姿势、材料
+  attack: true
+  damage: 1d10
+  damage_type: 穿刺
+  upcast: 每升一环 +1d6（爆炸伤害）
+  desc: 命中或未命中都会爆开：周围 5 尺敏捷豁免受 2d6 寒冷。
+- key: chromatic_orb
+  cn: 彩球术
+  en: Chromatic Orb
+  level: 1
+  school: 塑能
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 90 尺
+  components: 语言、姿势、材料
+  attack: true
+  damage: 3d8
+  damage_type: （酸 / 寒冷 / 火焰 / 闪电 / 毒素 / 雷鸣任选）
+  upcast: 每升一环 +1d8
+  desc: 掷出一枚能量球，伤害类型由你选择。
+- key: witch_bolt
+  cn: 巫术箭
+  en: Witch Bolt
+  level: 1
+  school: 塑能
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 30 尺
+  duration: 专注，至多 1 分钟
+  concentration: true
+  attack: true
+  damage: 1d12
+  damage_type: 闪电
+  upcast: 每升一环 +1d12
+  desc: 命中后每回合可用动作续伤，直到专注中断或目标离开射程。
+- key: guiding_bolt
+  cn: 指引之矢
+  en: Guiding Bolt
+  level: 1
+  school: 塑能
+  classes:
+  - cleric
+  range_text: 120 尺
+  attack: true
+  damage: 4d6
+  damage_type: 光耀
+  upcast: 每升一环 +1d6
+  desc: 命中后下一次对目标的攻击有优势。
+- key: inflict_wounds
+  cn: 伤害术
+  en: Inflict Wounds
+  level: 1
+  school: 死灵
+  classes:
+  - cleric
+  range_text: 触及
+  attack: true
+  damage: 3d10
+  damage_type: 暗蚀
+  upcast: 每升一环 +1d10
+  desc: 以死灵之触腐坏血肉。
+- key: searing_smite
+  cn: 灼热斩
+  en: Searing Smite
+  level: 1
+  school: 塑能
+  classes:
+  - paladin
+  casting_time: 1 附赠动作
+  duration: 专注，至多 1 分钟
+  concentration: true
+  damage: 1d6
+  damage_type: 火焰
+  upcast: 每升一环 +1d6（首次伤害）
+  desc: 下一次命中额外造成火焰伤害，目标每回合开始受灼烧。
+- key: thunderous_smite
+  cn: 雷鸣斩
+  en: Thunderous Smite
+  level: 1
+  school: 塑能
+  classes:
+  - paladin
+  casting_time: 1 附赠动作
+  duration: 专注，至多 1 分钟
+  concentration: true
+  damage: 2d6
+  damage_type: 雷鸣
+  desc: 下一次命中额外雷鸣伤害，目标力量豁免否则被推开 10 尺并倒地。
+- key: divine_favor
+  cn: 神恩
+  en: Divine Favor
+  level: 1
+  school: 塑能
+  classes:
+  - paladin
+  casting_time: 1 附赠动作
+  duration: 专注，至多 1 分钟
+  concentration: true
+  damage: 1d4
+  damage_type: 光耀
+  desc: 此期间每次武器命中额外造成光耀伤害。
+- key: wrathful_smite
+  cn: 愤怒斩
+  en: Wrathful Smite
+  level: 1
+  school: 塑能
+  classes:
+  - paladin
+  casting_time: 1 附赠动作
+  duration: 专注，至多 1 分钟
+  concentration: true
+  damage: 1d6
+  damage_type: 心灵
+  desc: 下一次命中额外心灵伤害，目标感知豁免否则恐慌。
+- key: hunters_mark
+  cn: 猎人印记
+  en: Hunter's Mark
+  level: 1
+  school: 预言
+  classes:
+  - ranger
+  casting_time: 1 附赠动作
+  range_text: 90 尺
+  duration: 专注，至多 1 小时
+  concentration: true
+  damage: 1d6
+  damage_type: （与武器同类型）
+  upcast: 每升一环 +1d6（更高环）
+  desc: 标记猎物：每次命中额外造成伤害，追踪其痕迹有优势。
+- key: hex
+  cn: 恶咒
+  en: Hex
+  level: 1
+  school: 附魔
+  classes:
+  - warlock
+  casting_time: 1 附赠动作
+  range_text: 90 尺
+  duration: 专注，至多 1 小时
+  concentration: true
+  damage: 1d6
+  damage_type: 暗蚀
+  upcast: 升环后可持续更久（3~4 环 8 小时，5 环以上 24 小时）
+  desc: 目标某一项属性的检定有劣势，被你的攻击命中时额外受伤。
+- key: cure_wounds
+  cn: 治疗伤害
+  en: Cure Wounds
+  level: 1
+  school: 塑能
+  classes:
+  - bard
+  - cleric
+  - druid
+  - paladin
+  - ranger
+  range_text: 触及
+  heal: 1d8+施法属性调整值
+  upcast: 每升一环 +1d8
+  desc: 以触碰治疗伤口。
+- key: healing_word
+  cn: 治愈真言
+  en: Healing Word
+  level: 1
+  school: 塑能
+  classes:
+  - bard
+  - cleric
+  - druid
+  casting_time: 1 附赠动作
+  range_text: 60 尺
+  heal: 1d4+施法属性调整值
+  upcast: 每升一环 +1d4
+  desc: 一句话就能在远处治疗。
+- key: bless
+  cn: 祝福
+  en: Bless
+  level: 1
+  school: 附魔
+  classes:
+  - cleric
+  - paladin
+  range_text: 30 尺（3 个目标）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  upcast: 每升一环多 1 个目标
+  desc: 目标攻击检定与豁免加 1d4。
+- key: bane
+  cn: 灾祸
+  en: Bane
+  level: 1
+  school: 附魔
+  classes:
+  - bard
+  - cleric
+  range_text: 30 尺（3 个目标）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: cha
+  upcast: 每升一环多 1 个目标
+  desc: 目标攻击检定与豁免减 1d4。
+- key: shield
+  cn: 护盾
+  en: Shield
+  level: 1
+  school: 防护
+  classes:
+  - sorcerer
+  - wizard
+  casting_time: 1 反应
+  duration: 1 轮
+  desc: AC +5，直到你的下回合开始。
+- key: mage_armor
+  cn: 法师护甲
+  en: Mage Armor
+  level: 1
+  school: 防护
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 触及
+  components: 语言、姿势、材料
+  duration: 8 小时
+  desc: 无甲目标 AC 变为 13 + 敏捷调整值。
+- key: shield_of_faith
+  cn: 信仰护盾
+  en: Shield of Faith
+  level: 1
+  school: 防护
+  classes:
+  - cleric
+  - paladin
+  casting_time: 1 附赠动作
+  range_text: 60 尺
+  components: 语言、姿势、材料
+  duration: 专注，至多 10 分钟
+  concentration: true
+  desc: 目标 AC +2。
+- key: faerie_fire
+  cn: 妖精之火
+  en: Faerie Fire
+  level: 1
+  school: 塑能
+  classes:
+  - bard
+  - druid
+  range_text: 60 尺（20 尺立方）
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: dex
+  desc: 未通过豁免者被勾勒出轮廓：攻击它有优势，且无法隐形。
+- key: sleep
+  cn: 睡眠
+  en: Sleep
+  level: 1
+  school: 附魔
+  classes:
+  - bard
+  - sorcerer
+  - wizard
+  range_text: 90 尺（20 尺半径）
+  components: 语言、姿势、材料
+  damage: 5d8
+  upcast: 每升一环 +2d8
+  desc: 按总生命值从低到高放倒生物（不是伤害，是把它们弄睡）。
+- key: color_spray
+  cn: 五彩喷射
+  en: Color Spray
+  level: 1
+  school: 幻术
+  classes:
+  - bard
+  - sorcerer
+  - wizard
+  range_text: 自身（15 尺锥形）
+  components: 语言、姿势、材料
+  damage: 6d10
+  upcast: 每升一环 +2d10
+  desc: 按生命值从低到高使生物目盲直到你的下回合结束。
+- key: charm_person
+  cn: 魅惑人类
+  en: Charm Person
+  level: 1
+  school: 附魔
+  classes:
+  - bard
+  - druid
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 30 尺
+  duration: 1 小时
+  save: wis
+  upcast: 每升一环多 1 个目标
+  desc: 未通过豁免的类人把你当成友善熟人；战斗中对它有优势。
+- key: command
+  cn: 命令术
+  en: Command
+  level: 1
+  school: 附魔
+  classes:
+  - bard
+  - cleric
+  - paladin
+  range_text: 60 尺
+  duration: 1 轮
+  save: wis
+  upcast: 每升一环多 1 个目标
+  desc: 用一个词命令目标：来、丢、逃、伏地、停。
+- key: sanctuary
+  cn: 庇护
+  en: Sanctuary
+  level: 1
+  school: 防护
+  classes:
+  - cleric
+  casting_time: 1 附赠动作
+  range_text: 30 尺
+  components: 语言、姿势、材料
+  duration: 1 分钟
+  desc: 攻击受保护者的人须先通过感知豁免，否则只能另找目标。
+- key: false_life
+  cn: 虚假生命
+  en: False Life
+  level: 1
+  school: 死灵
+  classes:
+  - sorcerer
+  - wizard
+  components: 语言、姿势、材料
+  duration: 1 小时
+  heal: 1d4+4（临时生命）
+  upcast: 每升一环 +5 临时生命
+  desc: 以死灵之力硬撑出一副还能打的样子。
+- key: entangle
+  cn: 纠缠
+  en: Entangle
+  level: 1
+  school: 咒法
+  classes:
+  - druid
+  range_text: 90 尺（20 尺方形）
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: str
+  desc: 地面长出藤蔓：未通过豁免者被束缚，行动区域视为困难地形。
+- key: goodberry
+  cn: 好莓果
+  en: Goodberry
+  level: 1
+  school: 变化
+  classes:
+  - druid
+  - ranger
+  range_text: 触及
+  components: 语言、姿势、材料
+  heal: 10 颗，每颗回复 1 点生命
+  desc: 浆果也能果腹，一颗抵一天的口粮。
+- key: feather_fall
+  cn: 羽落
+  en: Feather Fall
+  level: 1
+  school: 变化
+  classes:
+  - bard
+  - sorcerer
+  - wizard
+  casting_time: 1 反应
+  range_text: 60 尺
+  components: 语言、材料
+  duration: 1 分钟
+  desc: 最多 5 个下落中的生物缓缓落地，不受坠落伤害。
+- key: jump
+  cn: 跳跃
+  en: Jump
+  level: 1
+  school: 变化
+  classes:
+  - druid
+  - ranger
+  - sorcerer
+  - wizard
+  range_text: 触及
+  components: 语言、姿势、材料
+  duration: 1 分钟
+  desc: 目标跳跃距离变为三倍。
+- key: expeditious_retreat
+  cn: 疾走
+  en: Expeditious Retreat
+  level: 1
+  school: 变化
+  classes:
+  - bard
+  - sorcerer
+  - warlock
+  - wizard
+  casting_time: 1 附赠动作
+  duration: 专注，至多 10 分钟
+  concentration: true
+  desc: 每回合都能用附赠动作疾走。
+- key: detect_magic
+  cn: 侦测魔法
+  en: Detect Magic
+  level: 1
+  school: 预言
+  classes:
+  - bard
+  - cleric
+  - druid
+  - paladin
+  - ranger
+  - sorcerer
+  - wizard
+  range_text: 自身（30 尺）
+  duration: 专注，至多 10 分钟
+  concentration: true
+  ritual: true
+  desc: 感知 30 尺内的魔法，也可作为仪式施放。
+- key: silent_image
+  cn: 无声幻影
+  en: Silent Image
+  level: 1
+  school: 幻术
+  classes:
+  - bard
+  - sorcerer
+  - wizard
+  range_text: 60 尺（15 尺立方）
+  components: 语言、姿势、材料
+  duration: 专注，至多 10 分钟
+  concentration: true
+  desc: 造出一个不会出声的幻影。
+- key: unseen_servant
+  cn: 隐形仆役
+  en: Unseen Servant
+  level: 1
+  school: 咒法
+  classes:
+  - bard
+  - warlock
+  - wizard
+  range_text: 60 尺
+  components: 语言、姿势、材料
+  duration: 1 小时
+  ritual: true
+  desc: 一个看不见的仆从替你干粗活。
+- key: hellish_rebuke
+  cn: 地狱斥责
+  en: Hellish Rebuke
+  level: 1
+  school: 塑能
+  classes:
+  - warlock
+  casting_time: 1 反应
+  range_text: 60 尺
+  save: dex
+  damage: 2d10
+  damage_type: 火焰
+  upcast: 每升一环 +1d10
+  desc: 被伤害后以地狱烈焰回敬。
+- key: armor_of_agathys
+  cn: 阿加西斯铠甲
+  en: Armor of Agathys
+  level: 1
+  school: 防护
+  classes:
+  - warlock
+  components: 语言、姿势、材料
+  duration: 1 小时
+  heal: 5（临时生命）
+  upcast: 每升一环 +5 临时生命与反伤
+  desc: 获得临时生命；近战打你的人受 5 点寒冷伤害。
+- key: dissonant_whispers
+  cn: 不谐低语
+  en: Dissonant Whispers
+  level: 1
+  school: 附魔
+  classes:
+  - bard
+  range_text: 60 尺
+  save: wis
+  damage: 3d6
+  damage_type: 心灵
+  upcast: 每升一环 +1d6
+  desc: 未通过豁免者用反应逃开，还会引发机会攻击。
+- key: tashas_hideous_laughter
+  cn: 塔莎狂笑
+  en: Tasha's Hideous Laughter
+  level: 1
+  school: 附魔
+  classes:
+  - bard
+  - wizard
+  range_text: 30 尺
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: wis
+  desc: 目标倒地且失能，每受伤害可再豁免一次。
+- key: ray_of_sickness
+  cn: 疾病射线
+  en: Ray of Sickness
+  level: 1
+  school: 死灵
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 60 尺
+  attack: true
+  damage: 2d8
+  damage_type: 毒素
+  upcast: 每升一环 +1d8
+  desc: 命中后目标体质豁免，失败中毒到你的下回合结束。
+- key: absorb_elements
+  cn: 元素吸收
+  en: Absorb Elements
+  level: 1
+  school: 防护
+  classes:
+  - druid
+  - ranger
+  - sorcerer
+  - wizard
+  casting_time: 1 反应
+  components: 姿势
+  duration: 1 轮
+  desc: 受到元素伤害时获得该类型抗性，且下次近战额外造成伤害。
+- key: scorching_ray
+  cn: 灼热射线
+  en: Scorching Ray
+  level: 2
+  school: 塑能
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 120 尺
+  attack: true
+  damage: 2d6
+  damage_type: 火焰
+  upcast: 每升一环多一束（每束单独掷命中）
+  desc: 射出三束火焰，可分别指定目标。
+- key: shatter
+  cn: 破碎
+  en: Shatter
+  level: 2
+  school: 塑能
+  classes:
+  - bard
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 60 尺（10 尺半径）
+  components: 语言、姿势、材料
+  save: con
+  damage: 3d8
+  damage_type: 雷鸣
+  upcast: 每升一环 +1d8
+  desc: 刺耳的爆响，对石造 / 金属生物有劣势，对构造体额外受伤。
+- key: spiritual_weapon
+  cn: 精神武器
+  en: Spiritual Weapon
+  level: 2
+  school: 塑能
+  classes:
+  - cleric
+  casting_time: 1 附赠动作
+  range_text: 60 尺
+  duration: 1 分钟
+  attack: true
+  damage: 1d8+施法属性调整值
+  damage_type: 力场
+  upcast: 每升两环 +1d8
+  desc: 一把浮空武器，每回合可用附赠动作再攻击。
+- key: moonbeam
+  cn: 月光束
+  en: Moonbeam
+  level: 2
+  school: 塑能
+  classes:
+  - druid
+  range_text: 120 尺（5 尺半径）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: con
+  damage: 2d10
+  damage_type: 光耀
+  upcast: 每升一环 +1d10
+  desc: 可每回合移动的光柱；变形生物有劣势。
+- key: flame_blade
+  cn: 烈焰刀
+  en: Flame Blade
+  level: 2
+  school: 塑能
+  classes:
+  - druid
+  casting_time: 1 附赠动作
+  duration: 专注，至多 10 分钟
+  concentration: true
+  attack: true
+  damage: 3d6
+  damage_type: 火焰
+  upcast: 每升两环 +1d6
+  desc: 手中凝出一把火焰弯刀，可点燃可燃物。
+- key: shadow_blade
+  cn: 幽影之刃
+  en: Shadow Blade
+  level: 2
+  school: 幻术
+  classes:
+  - sorcerer
+  - warlock
+  - wizard
+  casting_time: 1 附赠动作
+  duration: 专注，至多 1 分钟
+  concentration: true
+  attack: true
+  damage: 2d8
+  damage_type: 心灵
+  upcast: 3~4 环 3d8，5~6 环 4d8
+  desc: 一把由暗影凝成的剑：微光或黑暗中有优势。
+- key: mind_spike
+  cn: 心灵尖刺
+  en: Mind Spike
+  level: 2
+  school: 附魔
+  classes:
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 60 尺
+  duration: 专注，至多 1 小时
+  concentration: true
+  save: wis
+  damage: 3d8
+  damage_type: 心灵
+  half_on_save: false
+  upcast: 每升一环 +1d8
+  desc: 命中后你始终知道目标的位置，且它下一次豁免有劣势。
+- key: cloud_of_daggers
+  cn: 匕首之云
+  en: Cloud of Daggers
+  level: 2
+  school: 咒法
+  classes:
+  - bard
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 60 尺（5 尺立方）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  damage: 4d4
+  damage_type: 挥砍
+  auto_damage: true
+  upcast: 每升一环 +2d4
+  desc: 刀刃翻飞的立方区域，进出或滞留都受伤（无豁免）。
+- key: misty_step
+  cn: 迷雾步
+  en: Misty Step
+  level: 2
+  school: 咒法
+  classes:
+  - sorcerer
+  - warlock
+  - wizard
+  casting_time: 1 附赠动作
+  desc: 瞬间传送到 30 尺内一个看得见的位置。
+- key: mirror_image
+  cn: 镜影术
+  en: Mirror Image
+  level: 2
+  school: 幻术
+  classes:
+  - sorcerer
+  - warlock
+  - wizard
+  duration: 1 分钟
+  desc: 三个幻影替你挡攻击（每次都掷骰决定打中谁）。
+- key: blur
+  cn: 朦胧术
+  en: Blur
+  level: 2
+  school: 幻术
+  classes:
+  - sorcerer
+  - wizard
+  duration: 专注，至多 1 分钟
+  concentration: true
+  desc: 身形模糊：攻击你的人有劣势。
+- key: invisibility
+  cn: 隐形术
+  en: Invisibility
+  level: 2
+  school: 幻术
+  classes:
+  - bard
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 触及
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 小时
+  concentration: true
+  upcast: 每升一环多 1 个目标
+  desc: 目标隐形直到攻击或施法。
+- key: web
+  cn: 蛛网术
+  en: Web
+  level: 2
+  school: 咒法
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 60 尺（20 尺立方）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 小时
+  concentration: true
+  save: dex
+  desc: 黏稠蛛网：未通过豁免者被束缚，区域为困难地形且可燃。
+- key: hold_person
+  cn: 定身人类
+  en: Hold Person
+  level: 2
+  school: 附魔
+  classes:
+  - bard
+  - cleric
+  - druid
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 60 尺
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: wis
+  upcast: 每升一环多 1 个目标
+  desc: 类人目标麻痹，每回合可再次豁免；近战打它是暴击。
+- key: blindness_deafness
+  cn: 致盲致聋
+  en: Blindness/Deafness
+  level: 2
+  school: 死灵
+  classes:
+  - bard
+  - cleric
+  - sorcerer
+  - wizard
+  range_text: 30 尺
+  duration: 1 分钟
+  save: con
+  upcast: 每升一环多 1 个目标
+  desc: 致盲或致聋，每回合结束可再豁免。
+- key: lesser_restoration
+  cn: 次级复原
+  en: Lesser Restoration
+  level: 2
+  school: 防护
+  classes:
+  - bard
+  - cleric
+  - druid
+  - paladin
+  - ranger
+  range_text: 触及
+  desc: 解除一项疾病或一种状态（目盲 / 耳聋 / 麻痹 / 中毒）。
+- key: aid
+  cn: 援助
+  en: Aid
+  level: 2
+  school: 防护
+  classes:
+  - cleric
+  - paladin
+  range_text: 30 尺（3 个目标）
+  components: 语言、姿势、材料
+  duration: 8 小时
+  heal: 生命上限 +5
+  upcast: 每升一环 +5
+  desc: 提高三个同伴的生命值上限。
+- key: prayer_of_healing
+  cn: 治愈祷言
+  en: Prayer of Healing
+  level: 2
+  school: 塑能
+  classes:
+  - cleric
+  casting_time: 10 分钟
+  range_text: 30 尺（最多 6 个目标）
+  heal: 2d8+施法属性调整值
+  upcast: 每升一环 +1d8
+  desc: 短休式的团体治疗。
+- key: detect_thoughts
+  cn: 探测思想
+  en: Detect Thoughts
+  level: 2
+  school: 预言
+  classes:
+  - bard
+  - sorcerer
+  - wizard
+  range_text: 自身（30 尺）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: wis
+  desc: 读取表层思想，或深挖一个目标的心智（会被察觉）。
+- key: magic_weapon
+  cn: 魔法武器
+  en: Magic Weapon
+  level: 2
+  school: 变化
+  classes:
+  - paladin
+  - wizard
+  casting_time: 1 附赠动作
+  range_text: 触及
+  duration: 专注，至多 1 小时
+  concentration: true
+  upcast: 4~5 环 +2，6 环以上 +3
+  desc: 一把非魔法武器变成 +1 魔法武器。
+- key: darkness
+  cn: 黑暗术
+  en: Darkness
+  level: 2
+  school: 塑能
+  classes:
+  - druid
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 60 尺（15 尺半径）
+  components: 语言、姿势、材料
+  duration: 专注，至多 10 分钟
+  concentration: true
+  desc: 魔法黑暗，黑暗视觉也看不穿。
+- key: pass_without_trace
+  cn: 无踪
+  en: Pass without Trace
+  level: 2
+  school: 变化
+  classes:
+  - druid
+  - ranger
+  range_text: 自身（30 尺）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 小时
+  concentration: true
+  desc: 队伍隐匿 +10，且不留下足迹。
+- key: heat_metal
+  cn: 灼热金属
+  en: Heat Metal
+  level: 2
+  school: 变化
+  classes:
+  - bard
+  - druid
+  range_text: 60 尺
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: con
+  damage: 2d8
+  damage_type: 火焰
+  upcast: 每升一环 +1d8
+  desc: 烧红金属：穿着金属甲的目标每回合受伤（不豁免则攻击与检定有劣势）。
+- key: enlarge_reduce
+  cn: 变大缩小
+  en: Enlarge/Reduce
+  level: 2
+  school: 变化
+  classes:
+  - druid
+  - sorcerer
+  - wizard
+  range_text: 30 尺
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  damage: 1d4
+  desc: 变大：伤害 +1d4、力量检定有优势；缩小：伤害 -1d4。
+- key: dragon_breath
+  cn: 龙息
+  en: Dragon's Breath
+  level: 2
+  school: 变化
+  classes:
+  - sorcerer
+  - wizard
+  casting_time: 1 附赠动作
+  range_text: 触及
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: dex
+  damage: 2d6
+  damage_type: （酸 / 寒冷 / 火焰 / 闪电 / 毒素任选）
+  upcast: 每升一环 +1d6
+  desc: 让目标获得一口喷吐，可用附赠动作喷出（15 尺锥形）。
+- key: levitate
+  cn: 浮空
+  en: Levitate
+  level: 2
+  school: 变化
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 60 尺
+  components: 语言、姿势、材料
+  duration: 专注，至多 10 分钟
+  concentration: true
+  save: con
+  desc: 让一个生物或物件上下浮动 20 尺。
+- key: zone_of_truth
+  cn: 真言领域
+  en: Zone of Truth
+  level: 2
+  school: 附魔
+  classes:
+  - bard
+  - cleric
+  - paladin
+  range_text: 60 尺（15 尺半径）
+  duration: 10 分钟
+  save: cha
+  desc: 区域内的生物无法说谎（可以沉默）。
+- key: gust_of_wind
+  cn: 疾风
+  en: Gust of Wind
+  level: 2
+  school: 塑能
+  classes:
+  - druid
+  - sorcerer
+  - wizard
+  range_text: 自身（60 尺线形）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: str
+  desc: 强风推人、吹散气体、熄灭明火。
+- key: silence
+  cn: 沉默
+  en: Silence
+  level: 2
+  school: 幻术
+  classes:
+  - bard
+  - cleric
+  - ranger
+  range_text: 120 尺（20 尺半径）
+  duration: 专注，至多 10 分钟
+  concentration: true
+  ritual: true
+  desc: 区域内无法发出声音，也免疫雷鸣伤害；施法者无法用语言成分。
+- key: fireball
+  cn: 火球术
+  en: Fireball
+  level: 3
+  school: 塑能
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 150 尺（20 尺半径）
+  components: 语言、姿势、材料
+  save: dex
+  damage: 8d6
+  damage_type: 火焰
+  upcast: 每升一环 +1d6
+  desc: 经典解法：火焰吞没范围，可燃物着火。
+- key: lightning_bolt
+  cn: 闪电束
+  en: Lightning Bolt
+  level: 3
+  school: 塑能
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 自身（100 尺线形）
+  components: 语言、姿势、材料
+  save: dex
+  damage: 8d6
+  damage_type: 闪电
+  upcast: 每升一环 +1d6
+  desc: 一道直线闪电，能点燃可燃物。
+- key: call_lightning
+  cn: 召唤闪电
+  en: Call Lightning
+  level: 3
+  school: 咒法
+  classes:
+  - druid
+  range_text: 120 尺（5 尺半径）
+  duration: 专注，至多 10 分钟
+  concentration: true
+  save: dex
+  damage: 3d10
+  damage_type: 闪电
+  upcast: 每升一环 +1d10
+  desc: 雷云每回合可再劈一次。
+- key: vampiric_touch
+  cn: 吸血鬼之触
+  en: Vampiric Touch
+  level: 3
+  school: 死灵
+  classes:
+  - warlock
+  - wizard
+  duration: 专注，至多 1 分钟
+  concentration: true
+  attack: true
+  damage: 3d6
+  damage_type: 暗蚀
+  heal: 伤害的一半
+  upcast: 每升一环 +1d6
+  desc: 吸血回复自身，每回合可用动作再攻击。
+- key: thunder_step
+  cn: 雷霆步
+  en: Thunder Step
+  level: 3
+  school: 咒法
+  classes:
+  - bard
+  - druid
+  - sorcerer
+  - wizard
+  range_text: 90 尺
+  save: con
+  damage: 3d8
+  damage_type: 雷鸣
+  upcast: 每升一环 +1d8
+  desc: 传送 90 尺，起点留下雷鸣爆响（可带一名同伴）。
+- key: counterspell
+  cn: 反制法术
+  en: Counterspell
+  level: 3
+  school: 防护
+  classes:
+  - sorcerer
+  - warlock
+  - wizard
+  casting_time: 1 反应
+  range_text: 60 尺
+  components: 姿势
+  desc: 打断一个正在施法的生物：3 环及以下自动失败，更高环需掷施法属性检定。
+- key: dispel_magic
+  cn: 解除魔法
+  en: Dispel Magic
+  level: 3
+  school: 防护
+  classes:
+  - bard
+  - cleric
+  - druid
+  - paladin
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 120 尺
+  upcast: 用更高环施展可自动解除更高环的法术
+  desc: 结束目标身上的法术效果；高环需掷施法属性检定。
+- key: fly
+  cn: 飞行
+  en: Fly
+  level: 3
+  school: 变化
+  classes:
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 触及
+  components: 语言、姿势、材料
+  duration: 专注，至多 10 分钟
+  concentration: true
+  upcast: 每升一环多 1 个目标
+  desc: 获得 60 尺飞行速度。
+- key: haste
+  cn: 加速
+  en: Haste
+  level: 3
+  school: 变化
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 30 尺
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  desc: 目标速度翻倍、AC +2、多一个动作（限攻击/疾走/撤离等）；结束时力竭。
+- key: slow
+  cn: 缓慢
+  en: Slow
+  level: 3
+  school: 变化
+  classes:
+  - sorcerer
+  - wizard
+  range_text: 120 尺（40 尺立方，6 个目标）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: wis
+  desc: 目标速度减半、AC 与敏捷豁免 -2，且不能用反应、每回合只能做一件事。
+- key: fear
+  cn: 恐惧
+  en: Fear
+  level: 3
+  school: 幻术
+  classes:
+  - bard
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 自身（30 尺锥形）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: wis
+  desc: 未通过豁免者丢下手中物件并逃跑。
+- key: hypnotic_pattern
+  cn: 催眠图纹
+  en: Hypnotic Pattern
+  level: 3
+  school: 幻术
+  classes:
+  - bard
+  - sorcerer
+  - warlock
+  - wizard
+  range_text: 120 尺（30 尺立方）
+  components: 姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: wis
+  desc: 未通过豁免者被魅惑、失能、速度归零。
+- key: mass_healing_word
+  cn: 群体治愈真言
+  en: Mass Healing Word
+  level: 3
+  school: 塑能
+  classes:
+  - bard
+  - cleric
+  casting_time: 1 附赠动作
+  range_text: 60 尺（最多 6 个目标）
+  heal: 1d4+施法属性调整值
+  upcast: 每升一环 +1d4
+  desc: 一句话同时拉起整支队伍。
+- key: revivify
+  cn: 复生
+  en: Revivify
+  level: 3
+  school: 死灵
+  classes:
+  - cleric
+  - paladin
+  range_text: 触及
+  components: 语言、姿势、材料
+  desc: 让一分钟内死去的同伴复活，回到 1 点生命。
+- key: animate_dead
+  cn: 死灵术
+  en: Animate Dead
+  level: 3
+  school: 死灵
+  classes:
+  - cleric
+  - wizard
+  range_text: 10 尺
+  components: 语言、姿势、材料
+  duration: 24 小时（可续）
+  upcast: 每升一环多召唤 2 具
+  desc: 唤醒一具骷髅或僵尸听命（用怪物表里的 骷髅 / 僵尸）。
+- key: sleet_storm
+  cn: 冰雨
+  en: Sleet Storm
+  level: 3
+  school: 咒法
+  classes:
+  - druid
+  - sorcerer
+  - wizard
+  range_text: 150 尺（40 尺半径，20 尺高）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: dex
+  desc: 湿滑冰雨：内部为困难地形、视线受阻，施法者需专注豁免否则法术中断。
+- key: stinking_cloud
+  cn: 臭云术
+  en: Stinking Cloud
+  level: 3
+  school: 咒法
+  classes:
+  - bard
+  - sorcerer
+  - wizard
+  range_text: 90 尺（20 尺半径）
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: con
+  desc: 未通过豁免者每回合都要掷，失败则呕吐失能。
+- key: bestow_curse
+  cn: 降咒
+  en: Bestow Curse
+  level: 3
+  school: 死灵
+  classes:
+  - bard
+  - cleric
+  - wizard
+  range_text: 触及
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: wis
+  upcast: 4 环以上无需专注（直到解除）
+  desc: 选择一项诅咒：能力检定劣势、攻击劣势、每回合浪费行动、或额外受伤。
+- key: protection_from_energy
+  cn: 能量防护
+  en: Protection from Energy
+  level: 3
+  school: 防护
+  classes:
+  - cleric
+  - druid
+  - ranger
+  - sorcerer
+  - wizard
+  range_text: 触及
+  duration: 专注，至多 1 小时
+  concentration: true
+  desc: 目标获得某一元素伤害抗性（酸 / 寒冷 / 火焰 / 闪电 / 雷鸣）。
+- key: tidal_wave
+  cn: 潮涌
+  en: Tidal Wave
+  level: 3
+  school: 咒法
+  classes:
+  - druid
+  - sorcerer
+  - wizard
+  range_text: 120 尺（30 尺长 10 尺宽 10 尺高）
+  components: 语言、姿势、材料
+  save: dex
+  damage: 4d8
+  damage_type: 钝击
+  desc: 巨浪砸下，未通过豁免者倒地。
+- key: blink
+  cn: 闪现
+  en: Blink
+  level: 3
+  school: 变化
+  classes:
+  - sorcerer
+  - wizard
+  duration: 1 分钟
+  desc: 每回合可能跳到以太位面，攻击你时有概率落空。
+- key: daylight
+  cn: 日光术
+  en: Daylight
+  level: 3
+  school: 塑能
+  classes:
+  - cleric
+  - druid
+  - paladin
+  - ranger
+  - sorcerer
+  - wizard
+  range_text: 60 尺（60 尺半径）
+  duration: 1 小时
+  desc: 制造一片真正的日光，可解除魔法黑暗。
+- key: conjure_animals
+  cn: 召唤动物
+  en: Conjure Animals
+  level: 3
+  school: 咒法
+  classes:
+  - druid
+  - ranger
+  range_text: 60 尺
+  duration: 专注，至多 1 小时
+  concentration: true
+  upcast: 更高环可召唤更多 / 更强
+  desc: 召来一群野兽助战（用怪物表里的 狼 / 恐狼 等）。
+- key: wind_wall
+  cn: 风墙
+  en: Wind Wall
+  level: 3
+  school: 塑能
+  classes:
+  - druid
+  - ranger
+  range_text: 120 尺
+  components: 语言、姿势、材料
+  duration: 专注，至多 1 分钟
+  concentration: true
+  save: str
+  damage: 3d8
+  damage_type: 钝击
+  desc: 一道风墙挡住箭矢与飞行的生物。
+- key: leomunds_tiny_hut
+  cn: 李欧蒙小屋
+  en: Leomund's Tiny Hut
+  level: 3
+  school: 塑能
+  classes:
+  - bard
+  - wizard
+  casting_time: 1 分钟
+  range_text: 自身（10 尺半径半球）
+  components: 语言、姿势、材料
+  duration: 8 小时
+  ritual: true
+  desc: 安全宿营的半球护罩。

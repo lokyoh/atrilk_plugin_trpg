@@ -1,0 +1,224 @@
+# 种族表（建卡第 2 步）
+# 一条一个种族；亚种写在 subraces 里，属性加值在种族之上叠加。
+# bonus / saves 等用的是程序内部键（str / dex / con / int / wis / cha）。
+
+- key: human
+  cn: 人类
+  en: Human
+  bonus:
+    str: 1
+    dex: 1
+    con: 1
+    int: 1
+    wis: 1
+    cha: 1
+  speed: 30
+  size: 中型
+  traits:
+  - 全属性 +1，适应力极强，在任意文明地区都不易引起注意
+  languages:
+  - 通用语
+  - 一门自选语言
+  desc: 寿命短却野心勃勃，遍布世界的每一个角落，是最常见的冒险者。
+- key: elf
+  cn: 精灵
+  en: Elf
+  bonus:
+    dex: 2
+  speed: 30
+  size: 中型
+  traits:
+  - 黑暗视觉 60 尺
+  - 敏锐感官（察觉熟练）
+  - 精类血统：免疫魔法睡眠，对抗魅惑有优势
+  - 出神：4 小时完成长休
+  languages:
+  - 通用语
+  - 精灵语
+  subraces:
+  - key: high_elf
+    cn: 高等精灵
+    bonus:
+      int: 1
+    traits:
+    - 额外习得一门自选语言
+    - 戏法：任选一个法师戏法
+    - 武器训练：长剑、短剑、短弓、长弓
+    desc: 血脉中流淌着魔法，学识渊博。
+  - key: wood_elf
+    cn: 木精灵
+    bonus:
+      wis: 1
+    traits:
+    - 额外习得一门自选语言
+    - 轻捷步伐：速度提升至 35 尺
+    - 林间隐匿：自然环境中隐匿有优势
+    desc: 与森林共生，行动迅捷而隐秘。
+  - key: drow
+    cn: 卓尔（黑暗精灵）
+    bonus:
+      cha: 1
+    traits:
+    - 黑暗视觉提升至 120 尺
+    - 阳光敏感：直射阳光下攻击与察觉检定有劣势
+    - 卓尔魔法：舞光术；等级提升后可习得浮空术、黑暗术
+    desc: 幽暗地域的精灵，被地表世界所忌惮。
+  desc: 优雅而长寿的族群，感官敏锐，与魔法有着天然的亲和。
+- key: dwarf
+  cn: 矮人
+  en: Dwarf
+  bonus:
+    con: 2
+  speed: 25
+  size: 中型
+  traits:
+  - 黑暗视觉 60 尺
+  - 矮人坚韧：对抗毒素有优势，且对中毒有抗性
+  - 矮人战斗训练：战斧、手斧、轻锤、战锤
+  - 工具熟练：任选一种工匠工具
+  - 石材敏锐：石制建筑相关的历史检定有双倍熟练加值
+  languages:
+  - 通用语
+  - 矮人语
+  subraces:
+  - key: hill_dwarf
+    cn: 丘陵矮人
+    bonus:
+      wis: 1
+    traits:
+    - 矮人强健：每级生命值上限 +1
+    desc: 坚韧而警觉，最有耐心的一支。
+  - key: mountain_dwarf
+    cn: 山地矮人
+    bonus:
+      str: 2
+    traits:
+    - 矮人护甲训练：可穿轻甲与中甲
+    desc: 矮人中的战士与铁匠，身强体壮。
+  desc: 岩石与炉火之民，坚韧、固执而重信义。
+- key: halfling
+  cn: 半身人
+  en: Halfling
+  bonus:
+    dex: 2
+  speed: 25
+  size: 小型
+  traits:
+  - 幸运：d20 掷出 1 时可重掷一次
+  - 勇敢：对抗恐惧有优势
+  - 半身人灵巧：可穿过比自身大一级生物的空间
+  languages:
+  - 通用语
+  - 半身人语
+  subraces:
+  - key: lightfoot
+    cn: 轻足半身人
+    bonus:
+      cha: 1
+    traits:
+    - 天生善于隐藏，在仅被较大生物遮挡时也能尝试隐匿
+    desc: 善于交际、行踪不定。
+  - key: stout
+    cn: 壮足半身人
+    bonus:
+      con: 1
+    traits:
+    - 对抗毒素有优势，且对毒素伤害有抗性
+    desc: 比同族更结实耐劳。
+  desc: 身形娇小却运气极佳，重视安逸的家园生活。
+- key: dragonborn
+  cn: 龙裔
+  en: Dragonborn
+  bonus:
+    str: 2
+    cha: 1
+  speed: 30
+  size: 中型
+  traits:
+  - 龙族血统：选择一种龙类，决定吐息武器与伤害抗性
+  - 吐息武器：以动作喷吐能量，范围内敏捷豁免减半伤害
+  - 伤害抗性与祖先龙类一致
+  languages:
+  - 通用语
+  - 龙语
+  desc: 骄傲的龙之血脉，荣誉高于一切。
+- key: gnome
+  cn: 侏儒
+  en: Gnome
+  bonus:
+    int: 2
+  speed: 25
+  size: 小型
+  traits:
+  - 黑暗视觉 60 尺
+  - 侏儒狡黠：对魔法进行的智力 / 感知 / 魅力豁免有优势
+  languages:
+  - 通用语
+  - 侏儒语
+  subraces:
+  - key: forest_gnome
+    cn: 森林侏儒
+    bonus:
+      dex: 1
+    traits:
+    - 自然幻术：任选一个幻术戏法
+    - 与小型动物交谈：可传达简单概念
+    desc: 与林中生灵为伴。
+  - key: rock_gnome
+    cn: 岩石侏儒
+    bonus:
+      con: 1
+    traits:
+    - 工匠知识：任选一项工匠工具熟练
+    - 发条装置：可制作小型机械装置
+    desc: 天生的发明家与工匠。
+  desc: 矮小却好奇心旺盛，热衷于发明与恶作剧。
+- key: half_elf
+  cn: 半精灵
+  en: Half-Elf
+  bonus:
+    cha: 2
+  speed: 30
+  size: 中型
+  traits:
+  - 黑暗视觉 60 尺
+  - 精类血统：免疫魔法睡眠，对抗魅惑有优势
+  - 自选两项技能熟练
+  - 额外习得一门自选语言
+  languages:
+  - 通用语
+  - 精灵语
+  desc: 介于两个族群之间，善于交际又懂得自处。
+- key: half_orc
+  cn: 半兽人
+  en: Half-Orc
+  bonus:
+    str: 2
+    con: 1
+  speed: 30
+  size: 中型
+  traits:
+  - 黑暗视觉 60 尺
+  - 威吓熟练
+  - 不屈韧性：生命值降到 0 时可改为保留 1 点（每次长休一次）
+  - 狂暴攻击：近战暴击时额外掷一个伤害骰
+  languages:
+  - 通用语
+  - 兽人语
+  desc: 被两个世界排斥，用蛮力与意志证明自己。
+- key: tiefling
+  cn: 提夫林
+  en: Tiefling
+  bonus:
+    cha: 2
+    int: 1
+  speed: 30
+  size: 中型
+  traits:
+  - 黑暗视觉 60 尺
+  - 火焰抗性
+  - 炼狱血脉：习得奇术（Thaumaturgy）戏法；等级提升后可习得地狱斥责、黑暗术
+  languages:
+  - 通用语
+  - 炼狱语
+  desc: 背负着血脉中的契约与偏见，命运由自己书写。
