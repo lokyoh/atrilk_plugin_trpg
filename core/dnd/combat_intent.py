@@ -1,7 +1,8 @@
 """玩家战斗描述 → 结构化意图，**纯规则、纯函数、暂不执行**。
 
 现在只做**影子解析**：把玩家那句话解析成「攻击谁 / 用什么武器 / 施什么法术」，
-结果写进存档（``save.progress["_intent_log"]``）供统计，**不参与任何结算**。
+结果**追加写进存档目录下的独立文件** ``intent_log.jsonl``（一行一条、全量不截断），
+供统计与回放，**不参与任何结算**。
 等命中率看得过去了，再让它接管 ``submit_action`` 的战斗分支、跳过 DM 调用。
 
 为什么不用模型：这层存在的意义就是省掉战斗里的模型往返，用模型来理解一句话
@@ -21,29 +22,32 @@
 
 from __future__ import annotations
 
+import json
 import re
+import time
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .card import DndCharacter
 from .combat import CombatState
 from .equipment import get_weapon, parse_item_stack
+from .save_store import save_dir
 
 __all__ = [
-    "INTENT_LOG_KEY",
-    "INTENT_LOG_LIMIT",
+    "INTENT_LOG_FILENAME",
     "Intent",
+    "intent_log_path",
     "intent_stats",
     "parse_combat_intent",
-    "recent_intents",
+    "read_intents",
     "record_intent",
 ]
 
-#: 影子解析结果落在存档的这个键下（滚动保留最近若干条）
-INTENT_LOG_KEY = "_intent_log"
-INTENT_LOG_LIMIT = 40
+#: 解析日志文件名：存在 ``saves/<save_id>/`` 下，一行一条 JSON，**全量不截断**
+INTENT_LOG_FILENAME = "intent_log.jsonl"
 
 #: 认得的一级动词。顺序即优先级，越靠前越先认。
 _VERBS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -282,11 +286,12 @@ def parse_combat_intent(text: str, combat: CombatState, card: DndCharacter) -> I
                 reason="有攻击动词但没认出目标",
                 raw=raw,
             )
-        bits = ["攻击动词", "目标：" + target]
+        named = bool(_hit_name(flat, enemies))
+        bits = ["攻击动词"]
+        # 目标是自己点名的、还是靠代词兜底的，日志里要分得清——后者更容易判错
+        bits.append(("目标：" if named else "代词就近：") + target)
         if weapon:
             bits.append("武器：" + weapon)
-        if pronoun and not _hit_name(flat, enemies):
-            bits.append("代词就近")
         return Intent(
             "attack",
             target=target,
@@ -340,35 +345,76 @@ def parse_combat_intent(text: str, combat: CombatState, card: DndCharacter) -> I
     return Intent("unknown", confidence=0.0, reason="没有可识别的动词与目标", raw=raw)
 
 
+def intent_log_path(save: Any) -> Path | None:
+    """这份存档的解析日志路径；没有 ``save_id`` 时返回 ``None``。"""
+    save_id = str(getattr(save, "save_id", "") or "").strip()
+    if not save_id:
+        return None
+    return save_dir(save_id) / INTENT_LOG_FILENAME
+
+
 def record_intent(
     save: Any, intent: Intent, *, round_no: int = 0, actor: str = ""
 ) -> dict[str, Any]:
-    """把一条解析结果追加进存档的滚动日志（超出上限丢最旧的）。"""
+    """把一条解析结果**追加**进日志文件（一行一条 JSON）。
+
+    用独立文件而不是 ``save.json`` 里的字段：日志只增不改、还会很长，
+    混进存档会让每次保存都重写整份进度，也不好在外部直接扫。
+    """
     entry = intent.to_dict()
     entry["round"] = int(round_no or 0)
     entry["actor"] = actor
-    progress = getattr(save, "progress", None)
-    if progress is None:
+    entry["at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    path = intent_log_path(save)
+    if path is None:
         return entry
-    log = progress.setdefault(INTENT_LOG_KEY, [])
-    log.append(entry)
-    if len(log) > INTENT_LOG_LIMIT:
-        del log[: len(log) - INTENT_LOG_LIMIT]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # 上次若被杀在半个 JSON 上，文件末尾没有换行——直接追加会把新条目粘到
+        # 那半行后面，两条一起报废。补一个换行，让坏行只坏它自己。
+        pad = ""
+        if path.is_file() and path.stat().st_size:
+            with path.open("rb") as fh:
+                fh.seek(-1, 2)
+                if fh.read(1) != b"\n":
+                    pad = "\n"
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(pad + json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        # 写不进去不该影响这一轮（调用方本来也只是实验）
+        return entry
     return entry
 
 
-def recent_intents(save: Any, limit: int = 10) -> list[dict[str, Any]]:
-    """取最近几条解析结果。"""
-    log = (getattr(save, "progress", None) or {}).get(INTENT_LOG_KEY) or []
-    return list(log)[-limit:]
+def read_intents(save: Any, limit: int | None = None) -> list[dict[str, Any]]:
+    """读解析日志：``limit=None`` 读全部，否则读最后若干条。坏行跳过。"""
+    path = intent_log_path(save)
+    if path is None or not path.is_file():
+        return []
+    items: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # 半行（写到一半被杀）不该毁掉整份日志
+                if isinstance(item, dict):
+                    items.append(item)
+    except OSError:
+        return []
+    return items[-limit:] if limit else items
 
 
 def intent_stats(save: Any) -> dict[str, Any]:
-    """统计这份存档里的解析表现：总数、可用数、各动词条数。"""
-    log = list((getattr(save, "progress", None) or {}).get(INTENT_LOG_KEY) or [])
-    total = len(log)
-    usable = sum(1 for item in log if item.get("usable"))
-    kinds = Counter(str(item.get("kind") or "unknown") for item in log)
+    """统计这份存档的解析表现：总数、可用数、命中率、各动词条数。"""
+    items = read_intents(save)
+    total = len(items)
+    usable = sum(1 for item in items if item.get("usable"))
+    kinds = Counter(str(item.get("kind") or "unknown") for item in items)
     return {
         "total": total,
         "usable": usable,

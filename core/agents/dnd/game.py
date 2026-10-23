@@ -951,13 +951,15 @@ def _partial_phase(save, state, user_id: str) -> str:
 
 
 def _shadow_intent(text: str, save, combat, card, actor) -> None:
-    """把玩家的战斗描述解析成意图并落档；**任何异常都不许影响结算**。"""
+    """把玩家的战斗描述解析成意图，追加进存档目录下的 ``intent_log.jsonl``。
+
+    日志是独立文件，所以**不用再存盘一次**；**任何异常都不许影响结算**。
+    """
     try:
         from ...dnd.combat_intent import parse_combat_intent, record_intent
 
         intent = parse_combat_intent(text, combat, card)
         record_intent(save, intent, round_no=combat.round, actor=actor.name)
-        save_save(save)
     except Exception as e:  # 影子解析只是实验，出错就当没发生
         log.warning(f"战斗意图影子解析失败（不影响结算）：{str_traceback(e)}")
 
