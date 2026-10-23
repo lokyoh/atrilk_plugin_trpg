@@ -118,6 +118,8 @@ class TurnResult:
     ended: bool = False
     #: 要展示给玩家的判定明细（骰点 + 成败）；暗骰不会出现在这里
     rulings: list[str] = field(default_factory=list)
+    #: 只是一句提示（如「还没轮到你」）：不附战场图、不拼当前行动者前缀
+    notice_only: bool = False
     #: 开场轮整理出的世界背景手册：落盘路径与正文（没有则为 ``None`` / 空串）
     world_brief_path: Any = None
     world_brief_text: str = ""
@@ -1044,12 +1046,12 @@ async def submit_action(
             save_combat(save, combat)
             actor = current_actor(combat)
         if actor is not None and str(user_id) != actor.cid:
+            # 不是他的回合：只告诉他现在轮到谁，别再糊一整份战场文字（附图由
+            # handlers 按 notice_only 一起跳过）。
             return TurnResult(
                 Verdict.NEED_INFO,
-                message=(
-                    f"⚔️ 现在是【{actor.name}】的回合，等他行动完再轮到你。\n\n"
-                    + combat_text(save, combat)
-                ),
+                message=f"⚔️ 现在是【{actor.name}】的回合，等他行动完再轮到你。",
+                notice_only=True,
             )
         state.waiting = [actor.cid] if actor is not None else []
         state.actions = {}
@@ -1363,6 +1365,11 @@ async def run_dm_round(
     narration = (result.content or "").strip() or "……（DM 沉默了片刻）"
     # 「接下来你们可以」只用于提醒正在玩的玩家：进历史 / 复盘时去掉。
     archived = strip_player_hints(narration)
+    # 战斗中连玩家消息里也不摆这份清单：回合制下该做什么由行动经济、战场图与
+    # 回合提示说了算，一段清单只会和刚发的战场图重复。DM 偶尔仍会照剧情模板写，
+    # 这里统一剥掉；剥成空串就保留原文，免得发出一条空消息。
+    if combat is not None:
+        narration = strip_player_hints(narration) or narration
     log_event(save, "narration", archived, actor="dm")
     rulings_for_player = _player_rulings(
         save, actions, order, context, skip=skip_resolution

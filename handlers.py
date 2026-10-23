@@ -71,6 +71,7 @@ from .core.dnd import (
     parse_skill_request,
     player_name,
     purge_expired,
+    read_doc,
     record_usages,
     report,
     save_card,
@@ -79,8 +80,10 @@ from .core.dnd import (
     set_binding,
     story_files,
 )
-from .core.dnd.combat_render import combat_to_html, player_panel_html
+from .core.dnd.clock import clock_text
 from .core.dnd.event_progress import event_summary
+from .core.dnd.events import load_pool
+from .core.dnd.image_render import combat_to_html, narration_to_html, player_panel_html
 from .core.trpg import DiceError, roll
 from .matchers import (
     create_card,
@@ -306,6 +309,69 @@ def _combat_actor_hint(save_id: str) -> str:
         return f"🎯 当前行动者：【{actor.name}】"
     except Exception:
         return ""
+
+
+# --------------------------------------------------------------------------- #
+# DM 叙述卡：把叙述渲染成图片，顶部带此刻的时间 / 地点 / 事件
+# --------------------------------------------------------------------------- #
+
+
+def _world_time_text(save) -> str:
+    """当前世界时间的展示文本；取不到就留空（这一条就不显示）。"""
+    try:
+        return clock_text(load_pool(save))
+    except Exception:
+        return ""
+
+
+def _scene_title(save) -> str:
+    """当前场景的展示名：优先文档标题，取不到就退回文档键。"""
+    key = (save.current_scene or "").strip()
+    if not key:
+        return ""
+    try:
+        doc = read_doc(save.world_key, "scene", key)
+    except Exception:
+        doc = None
+    title = (doc.title or "").strip() if doc is not None else ""
+    return title or key
+
+
+def _event_line(save) -> str:
+    """眼下这件事（「【第 2 件事】黑帆疑云」）；没有事件就留空。"""
+    try:
+        lines = event_summary(save).splitlines()
+    except Exception:
+        return ""
+    return lines[0].strip() if lines else ""
+
+
+async def _story_image(
+    save_id: str, narration: str, *, rulings: list[str] | None = None
+) -> MessageSegment | None:
+    """把 DM 叙述渲染成一张卡；渲染失败返回 ``None``（调用方退回纯文本）。"""
+    try:
+        save = load_save(save_id)
+        time_text = place_text = event_text = ""
+        in_combat = False
+        if save is not None:
+            time_text = _world_time_text(save)
+            place_text = _scene_title(save)
+            event_text = _event_line(save)
+            in_combat = load_combat(save) is not None
+        return await _render_html_image(
+            narration_to_html(
+                narration,
+                time_text=time_text,
+                place_text=place_text,
+                event_text=event_text,
+                combat=in_combat,
+                rulings=rulings,
+            )
+        )
+    except Exception as e:  # 卡是加分项：出错就退回纯文本，绝不让叙述发不出去
+        log.warning(f"DM 叙述卡渲染失败，退回纯文本：{str_traceback(e)}")
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -1328,14 +1394,18 @@ async def _start_round(event: MessageEvent, bot: Bot):
     # 必须在 finish() 之前发——finish 会抛异常终止，后面代码不会再跑。
     brief_note = await _send_world_brief(event, result, latest.save_id, bot)
 
-    extra = f"\n\n{result.rulings_text}" if result.rulings_text else ""
-    await start_round.finish(
-        "🎬 开局！本局玩家："
-        + ("、".join(names) or "（只有你）")
-        + f"\n\n📖 {narration}"
-        + extra
-        + brief_note
+    # 开场白同样做成一张叙述卡（顶部带时间 / 地点 / 事件）；渲染失败退回原文
+    story = await _story_image(
+        latest.save_id, narration, rulings=list(getattr(result, "rulings", []) or [])
     )
+    head = "🎬 开局！本局玩家：" + ("、".join(names) or "（只有你）")
+    if story is not None:
+        msg: Message = Message(head + "\n\n") + story
+    else:
+        extra = f"\n\n{result.rulings_text}" if result.rulings_text else ""
+        msg = Message(head + f"\n\n📖 {narration}" + extra)
+    msg += Message(brief_note)
+    await start_round.finish(msg)
 
 
 async def _send_world_brief(
@@ -1835,24 +1905,37 @@ async def _dm_action(event: MessageEvent):
         action=event.get_plaintext().strip(),
         chat_id=key,
     )
-    text = result.text
+
+    # 只是提示（还没轮到你 / 请描述行动）：一句话回完就走，不拼前缀也不附图
+    if result.notice_only:
+        await dm_action.finish(result.text)
+
+    actor_hint = _combat_actor_hint(save_id)
+    in_combat = bool(actor_hint)
+
+    # DM 的叙述做成一张卡（顶部带此刻的时间 / 地点 / 事件）。渲染不出来时
+    # 退回原来的纯文本，内容一个字都不少——所以卡是加分项，不是唯一出路。
+    story = None
+    if result.narration:
+        story = await _story_image(
+            save_id, result.narration, rulings=list(result.rulings)
+        )
+
+    msg: Message = Message(f"{actor_hint}\n\n" if actor_hint else "")
+    msg += story if story is not None else Message(result.text)
+
     if result.ended:
-        text += (
+        msg += Message(
             "\n\n🏁 本局就此结档（存档与复盘都保留）。"
             "想开新的一局用 /跑团.开局；想回味这一局可以翻一下存档目录里的 story.md。\n"
             + format_report(save_id)
         )
 
-    # 战斗中：每轮附战场图 + 当前玩家面板图片，并补一句「现在轮到谁」
-    actor_hint = _combat_actor_hint(save_id)
-    if actor_hint:
-        text = f"{actor_hint}\n\n{text}"
+    # 战斗中：每轮附战场图 + 当前玩家面板图片（常用名词附在最后）
+    if in_combat:
         images = await _combat_images(save_id)
         if images:
-            msg: Message = Message(text)
             for seg in images:
                 msg += seg
-            # 图片消息底部附这场仗的常用名词（敌人 / 武器 / 法术），点按即可复制去描述行动
             msg += Message("\n\n" + _combat_quick_footer(save_id))
-            await dm_action.finish(msg)
-    await dm_action.finish(text)
+    await dm_action.finish(msg)
