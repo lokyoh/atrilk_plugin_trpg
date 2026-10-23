@@ -35,6 +35,7 @@ import random
 import re
 import time
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -84,6 +85,7 @@ from .npcs import (
     resolve_monster,
     roster_hp,
     sync_combatant,
+    sync_roster_after_combat,
     update_npc,
 )
 from .progression import xp_for_cr
@@ -100,9 +102,11 @@ __all__ = [
     "advance_turn",
     "all_enemies_out",
     "apply_damage",
+    "apply_condition",
     "apply_threat_profile",
     "attack",
     "auto_crit_on_hit",
+    "auto_enemy_turns",
     "can_act",
     "can_target",
     "clear_combat",
@@ -117,6 +121,8 @@ __all__ = [
     "effective_ac",
     "effective_hp",
     "enemy_attack",
+    "enemy_attack_count",
+    "enemy_target",
     "find_combatant",
     "forget_defeat",
     "heal_combatant",
@@ -205,6 +211,13 @@ class Combatant:
     #: 体型（中型 / 小型 / 大型……）。**重型武器**对小型攻击者有劣势，
     #: 擒抱 / 推撞的体型限制也看它。
     size: str = "中型"
+    #: 它**在第几轮已经行动过**（0 = 还没）。系统替敌人自动结算时先看这个，
+    #: 免得同一轮既被 DM 手动打了一次、又被自动再打一次。
+    acted_round: int = 0
+    #: 法术 / 效果挂上的状态还剩几轮：``{状态名: 轮数}``。
+    #: 只记**会自动到期**的那些（法术数据里的 ``condition_rounds``）；
+    #: 没有记的状态不会自动消失（魅惑这类以小时计，交给剧情）。
+    condition_rounds: dict[str, int] = field(default_factory=dict)
 
     @property
     def is_enemy(self) -> bool:
@@ -249,6 +262,8 @@ class Combatant:
             "regen_suppressed": self.regen_suppressed,
             "legendary_resistance_used": self.legendary_resistance_used,
             "size": self.size,
+            "acted_round": self.acted_round,
+            "condition_rounds": dict(self.condition_rounds),
         }
 
     @classmethod
@@ -284,6 +299,12 @@ class Combatant:
                 0, _int_or(data.get("legendary_resistance_used"), 0)
             ),
             size=str(data.get("size", "中型") or "中型"),
+            acted_round=max(0, _int_or(data.get("acted_round"), 0)),
+            condition_rounds={
+                str(name): max(0, _int_or(rounds, 0))
+                for name, rounds in (data.get("condition_rounds") or {}).items()
+                if str(name).strip()
+            },
         )
 
 
@@ -476,10 +497,22 @@ def save_combat(save: Save, state: CombatState) -> Path:
 
 
 def clear_combat(save: Save) -> bool:
-    """结束战斗并删除战斗状态；原本不在战斗中返回 ``False``。"""
+    """结束战斗并删除战斗状态；原本不在战斗中返回 ``False``。
+
+    **收尾顺手把名单对齐**（:func:`~.npcs.sync_roster_after_combat`）：
+    战斗期间 DM 不能动名单，血量与结局都由这里记；不趁这一刻回填，
+    战后名单就永远停在开战前的样子（实测出现过「名单 15/22 存活、战场上一只都没了」）。
+    同步失败只记日志——它不该拖住「战斗已经结束」这件事。
+    """
     path = combat_path(save.save_id)
     if not path.is_file():
         return False
+    state = load_combat(save)  # 先读：删掉就没得同步了
+    if state is not None:
+        try:
+            sync_roster_after_combat(save, state)
+        except Exception as e:
+            log.warning(f"战斗结束后同步 NPC 名单失败：{str_traceback(e)}")
     path.unlink()
     return True
 
@@ -582,6 +615,78 @@ def combatant_conditions(save: Save, combatant: Combatant) -> list[str]:
         card = get_character(save, combatant.cid)
         return normalize_conditions(card.conditions) if card is not None else []
     return normalize_conditions(combatant.conditions)
+
+
+def apply_condition(
+    save: Save, combatant: Combatant, names: Iterable[str], *, rounds: int = 0
+) -> str:
+    """给参战者挂状态（敌我通用），返回一句给 DM 的说明；没挂上返回空串。
+
+    - **玩家**：写进角色卡（``card.conditions``），战斗外也照样生效；
+    - **敌人**：写进 ``Combatant.conditions``——状态只活这一场，战后不回填名单；
+    - ``rounds > 0`` 时记进 ``condition_rounds``，在**它自己的回合开始**时递减，
+      归零自动摘掉（控制法术的「撑几轮」就在这儿兑现）。
+
+    状态名先规范化（「俯伏」→ 倒地、「被魅惑」→ 魅惑），免疫的系统挡得住
+    （骷髅免疫中毒、幽魂免疫倒地……挂了也白挂）。
+    """
+    wanted = [name for name in normalize_conditions(list(names)) if name]
+    if not wanted:
+        return ""
+    if combatant.is_enemy:
+        blocked = blocked_conditions(rules_of(resolve_monster(combatant.monster)), wanted)
+        wanted = [name for name in wanted if name not in blocked]
+        if not wanted:
+            return f"{combatant.name} 免疫这些状态，没挂上。"
+
+    current = combatant_conditions(save, combatant)
+    merged = list(dict.fromkeys([*current, *wanted]))
+    if combatant.is_enemy:
+        combatant.conditions = merged
+    else:
+        card = get_character(save, combatant.cid)
+        if card is None:
+            return ""
+        card.conditions = merged
+        set_character(save, card)
+    if rounds > 0:
+        for name in wanted:
+            combatant.condition_rounds[name] = rounds
+
+    state_text = f"陷入「{'、'.join(wanted)}」"
+    if rounds > 0:
+        state_text += f"（{rounds} 轮后自动解除）"
+    return state_text
+
+
+def _tick_condition_timers(save: Save, combatant: Combatant) -> list[str]:
+    """轮到它的回合：计时状态递减，到期的摘掉（返回给 DM 的说明）。
+
+    只处理 ``condition_rounds`` 里记过的；没记的（魅惑这类以小时计）不会自动消失，
+    由剧情或 DM 用 update_character 收尾。
+    """
+    if not combatant.condition_rounds:
+        return []
+    lines: list[str] = []
+    for name in list(combatant.condition_rounds):
+        left = combatant.condition_rounds[name] - 1
+        if left > 0:
+            combatant.condition_rounds[name] = left
+            continue
+        combatant.condition_rounds.pop(name, None)
+        current = combatant_conditions(save, combatant)
+        if name not in current:
+            continue
+        remaining = [item for item in current if item != name]
+        if combatant.is_enemy:
+            combatant.conditions = remaining
+        else:
+            card = get_character(save, combatant.cid)
+            if card is not None:
+                card.conditions = remaining
+                set_character(save, card)
+        lines.append(f"⌛ {combatant.name} 的「{name}」已结束")
+    return lines
 
 
 def combatant_exhaustion(save: Save, combatant: Combatant) -> int:
@@ -852,6 +957,11 @@ def _walk(
         if combatant.is_enemy:
             if is_out(save, combatant):
                 continue
+            # 计时状态（定身 / 目盲……）在它自己的回合开始递减——
+            # 必须排在 can_act 之前，否则被「麻痹」定住的怪永远轮不到、
+            # 这个状态也就永远摘不掉。
+            if commit:
+                state.pending.extend(_tick_condition_timers(save, combatant))
             if not can_act(save, combatant):
                 # 失能类状态（震慑 / 麻痹 / 昏迷……）：人还在场上（照样能被打），
                 # 但这一动轮空——由 DM 在叙述里带一句
@@ -868,6 +978,8 @@ def _walk(
             enemies.append(combatant)
             continue
         # —— 玩家：回合开始先结算持续伤害（中毒等），再走倒地濒死 / 跳过 ——
+        if commit:
+            state.pending.extend(_tick_condition_timers(save, combatant))
         if commit and can_act(save, combatant):
             dot = tick_dot(save, state, combatant, rng=rng)
             if dot:
@@ -1841,6 +1953,12 @@ def _pick_weapon(save, state, card, attacker, target) -> tuple[Any, str]:
     return chosen, f"自动选用的武器：{chosen.cn}（{_weapon_brief(chosen)}）"
 
 
+#: 玩家说「我用拳头打」时的写法；这些是真要徒手，不算「没认出武器」。
+_UNARMED_WORDS = frozenset(
+    {"徒手", "拳头", "空手", "赤手", "拳", "掌", "unarmed", "fist", "punch"}
+)
+
+
 def _reach(weapon) -> int:
     """近战触及范围（有「触及」属性的武器是 10 尺，其余 5 尺）。"""
     return 10 if "触及" in (getattr(weapon, "properties", "") or "") else 5
@@ -1916,6 +2034,27 @@ def attack(
         # DM 没说用哪件：**按目标距离挑**——近了用近战、够不着就用远程，
         # 永远不会拿着长剑去够 30 尺外的敌人（从前一律取 weapons[0]）。
         weapon, pick_note = _pick_weapon(save, state, card, attacker, target)
+    elif weapon is None and weapon_ref:
+        # 指定了武器却查不到（卡上没有 / 名字对不上）：从前一声不响按徒手算，
+        # DM 看到回执里的「徒手」也不明所以，照样写「剑锋劈下」——
+        # 玩家说的武器与结算的武器对不上。这里要么明说「改成哪件」，
+        # 要么明说「只能徒手」，让 DM 有得可写。
+        if str(weapon_ref).strip().lower() in _UNARMED_WORDS:
+            pass  # 玩家本就是要赤手空拳
+        else:
+            fallback, note = _pick_weapon(save, state, card, attacker, target)
+            if fallback is not None:
+                weapon = fallback
+                pick_note = (
+                    f"没认出武器「{weapon_ref}」"
+                    f"（{card.name} 的装备里也没有），已改用 {fallback.cn}；"
+                    f"{note}"
+                )
+            else:
+                pick_note = (
+                    f"没认出武器「{weapon_ref}」，{card.name} 身上也没有别的武器，"
+                    "按徒手结算"
+                )
 
     # 指定了武器却不在角色卡装备里：照算，但提醒 DM（临时拾取 / 借用要有说法）
     warn = ""
@@ -2211,10 +2350,30 @@ def enemy_attack(
     monster = resolve_monster(enemy.monster)
     if monster is None:
         return f"{enemy.name} 没有对应的怪物数据，请改用 roll_dice 手算。", False
+    # 攻击名认不出就**回退到第一项攻击并说明**，不打回。
+    #
+    # 打回一次就是一整批功能调用作废（模型会把同一轮的调用整段重发），实测：
+    # DM 连猜三轮「沉重拳击」（这怪只有「腐爪」），每轮两条一起废、再重发「腐爪」——
+    # 六次无效往返只为问一个名字。程序这边明明知道它只有哪几招，
+    # 挑一项打下去、把「你要的那个没有，我用了这个」讲清楚就够了。
+    # 与玩家侧「武器认不出 → 自动挑武器」是同一条口径。
     attack_obj = monster.get_attack(attack_name)
+    fallback_note = ""
     if attack_obj is None:
-        names = "、".join(a.name for a in monster.attacks) or "（无）"
-        return f"{monster.cn} 没有「{attack_name}」这项攻击，可用：{names}。", False
+        if not monster.attacks:
+            return (
+                f"{monster.cn} 的数据里没有攻击项，请改用 roll_dice 手算。",
+                False,
+            )
+        wanted = str(attack_name or "").strip()
+        attack_obj = monster.attacks[0]
+        names = "、".join(a.name for a in monster.attacks)
+        fallback_note = (
+            f"（{monster.cn}没有「{wanted}」这项攻击，已改用「{attack_obj.name}」；"
+            f"它有：{names}）"
+            if wanted
+            else ""
+        )
 
     target = find_combatant(state, target_ref, kind="player") or find_combatant(
         state, target_ref
@@ -2274,6 +2433,9 @@ def enemy_attack(
 
     target_ac = effective_ac(save, target, state)
     bonus = monster.attack_bonus(attack_obj)
+    # 记一笔「它这一轮已经出手了」：自动结算据此不重复打同一只怪
+    # （DM 手动补刀也算），同一轮里连打几次（多重攻击）不受影响。
+    enemy.acted_round = state.round
     result = roll_check(
         bonus,
         target_ac,
@@ -2288,6 +2450,8 @@ def enemy_attack(
         f"（目标 {target.name} AC {target_ac}{cover_text(state, target)}"
         + (f"，距离 {gate.distance} 尺）" if gate.distance >= 0 else "）")
     ]
+    if fallback_note:
+        lines.append(fallback_note)
     if state_reason:
         lines.append(f"（{state_reason}）")
     if trait_reason:
@@ -2343,6 +2507,186 @@ def enemy_attack(
         )
     )
     return "\n".join(lines), True
+
+
+# --------------------------------------------------------------------------- #
+# 敌人回合自动结算：靠近 → 选招 → 掷骰扣血
+# --------------------------------------------------------------------------- #
+#
+# 为什么要它：**「怎么算」本来就全是程序的事**（命中、伤害、抗性、暴击、射程、
+# 倒地濒死、死亡豁免都在这一层），只有「谁打谁、用哪招」压在 DM 身上。
+# 于是每轮每只怪都要 DM 单独调一次 ``enemy_attack``，一局十几次；而攻击名还得
+# 它自己猜——实测有怪物只有「腐爪」，DM 连猜三轮「沉重拳击」，每轮两条调用
+# 一起作废再重发，六次往返只为问一个名字。
+#
+# 自动结算只做**机械部分**：挑一个目标、够不着就先走过去、挑一招够得着的、
+# 该打几次打几次。战术判断（吐息什么时候放、先掐治疗还是先控场、要不要投降）
+# 一律留给 DM——工具还在，它随时能接管。
+
+#: 中文数字 → 攻击次数（数据卡里「多重攻击：发动两次啃咬攻击」是汉字）
+_CN_COUNTS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5}
+
+
+def enemy_attack_count(monster: Monster | None) -> int:
+    """这只怪一回合打几次（读数据卡的「多重攻击」特性，读不到按 1 次）。
+
+    5e 把多重攻击写成一句话（「魔冢发动两次时械剑刃攻击」），没有独立字段；
+    图鉴里这类特性 300+ 条，全是「…N 次…」的句式，按次数取足够稳。
+    上限 4 次：再多的多半是「每轮能打十下」的特殊怪，交给 DM 手动处理。
+    """
+    if monster is None:
+        return 1
+    for trait in monster.traits or ():
+        text = str(trait)
+        if "多重攻击" not in text:
+            continue
+        hit = re.search(r"([一二两三四五1-5１-５])\s*次", text)
+        if hit is None:
+            return 2  # 写了多重攻击却没写次数：按最普遍的两次算
+        char = hit.group(1)
+        if char in _CN_COUNTS:
+            return _CN_COUNTS[char]
+        return max(1, min(4, int(char.translate(str.maketrans("１２３４５", "12345")))))
+    return 1
+
+
+def enemy_target(save: Save, state: CombatState, enemy: Combatant) -> Combatant | None:
+    """敌人在自己的回合打谁：**专攻目标**优先，其次最近的活人（同距打血最少的）。
+
+    够不着的算「远」但不排除——先记下来，调用方会先让它走过去。
+    没有棋盘的老存档一律算同距，那就按血量挑，至少不会一直打满血那个。
+    """
+    pool = [
+        c
+        for c in state.order
+        if c.kind == "player" and not is_out(save, c) and can_target(save, c)
+    ]
+    if not pool:
+        return None
+    focus = str(getattr(state, "threat_focus", "") or "")
+    if focus:
+        for c in pool:
+            if c.cid == focus:
+                return c
+    pinned = has_position(enemy)
+
+    def key(c: Combatant) -> tuple[int, int]:
+        distance = distance_feet(enemy, c) if pinned and has_position(c) else 0
+        return (distance, effective_hp(save, c)[0])
+
+    return min(pool, key=key)
+
+
+def _pick_enemy_attack(
+    state: CombatState, enemy: Combatant, target: Combatant, monster: Monster
+) -> tuple[Any, bool]:
+    """挑一招打这个目标，返回 ``(攻击项, 现在够不够得着)``。
+
+    优先级：**够得着的近战** > 够得着的远程 > 第一项（够不着，调用方先移动）。
+    近战优先是因为远程在贴身时本来就有劣势（5e），而且怪物多半只有近战。
+    """
+    if not monster.attacks:
+        return None, False
+    fallback: Any = None
+    for item in monster.attacks:
+        gate = range_check(
+            state,
+            enemy,
+            target,
+            reach=item.reach,
+            normal=item.ranged_normal,
+            max_range=item.ranged_max,
+        )
+        if not gate.ok:
+            continue
+        if item.ranged_normal == 0:  # 近战够得着：直接用
+            return item, True
+        if fallback is None:
+            fallback = item
+    if fallback is not None:
+        return fallback, True
+    return monster.attacks[0], False
+
+
+def auto_enemy_turns(
+    save: Save,
+    state: CombatState,
+    *,
+    enemies: list[Combatant] | None = None,
+    rng: Any = None,
+) -> list[str]:
+    """系统替敌人打完这一轮（机械部分），返回**可以直接播给玩家**的结算文案。
+
+    :param enemies: 这一轮夹在玩家之间行动的敌人；留空则取场上所有还站着的。
+        传 :func:`advance_turn` 的返回值最准——那是系统算出来的「该谁动」。
+
+    每只怪做的事：挑目标 → 够不着就先 :func:`move_combatant` 靠近 →
+    按 :func:`_pick_enemy_attack` 选招 → 按 :func:`enemy_attack_count` 打 N 次。
+    某一步做不成就写一句「这回合空过」而不是抛错：战斗不能因为一只怪卡住就不动。
+    """
+    report: list[str] = []
+    pool = list(enemies) if enemies is not None else living_enemies(state)
+    for enemy in pool:
+        if not enemy.is_enemy or is_out(save, enemy) or not can_act(save, enemy):
+            continue
+        if int(getattr(enemy, "acted_round", 0) or 0) == state.round:
+            continue  # 这一轮已经替它打过了（或 DM 手动打过）
+        monster = resolve_monster(enemy.monster)
+        if monster is None:
+            report.append(f"（{enemy.name} 没有怪物数据，这一回合空过）")
+            enemy.acted_round = state.round
+            continue
+
+        target = enemy_target(save, state, enemy)
+        if target is None:
+            break  # 没人可打了（全队倒地），剩下的敌人不用再动
+
+        attack, reachable = _pick_enemy_attack(state, enemy, target, monster)
+        if attack is None:
+            report.append(f"（{enemy.name} 没有攻击项，这一回合空过）")
+            enemy.acted_round = state.round
+            continue
+        if not reachable:
+            # 够不着就走过去。移动失败（被堵住 / 本回合额度用完）也照样往下走：
+            # 它会得到一句「这回合还是够不着」，而不是让整轮结算中断。
+            walked = move_combatant(save, state, enemy.cid, target=target.name)
+            report.append(walked.splitlines()[0])
+            attack, reachable = _pick_enemy_attack(state, enemy, target, monster)
+            if attack is None or not reachable:
+                report.append(f"（{enemy.name} 这回合还是够不着 {target.name}）")
+                enemy.acted_round = state.round
+                continue
+
+        times = enemy_attack_count(monster)
+        if enemy.cid == str(getattr(state, "threat_boss", "") or ""):
+            times = min(times, 2)  # 首领每轮至多两次（另一次算传奇行动）
+        for _ in range(times):
+            if is_out(save, enemy):
+                break
+            if is_out(save, target) or not can_target(save, target):
+                # 目标倒了就换一个还站着的（同一轮里继续打）
+                target = enemy_target(save, state, enemy)
+                if target is None:
+                    break
+                attack, reachable = _pick_enemy_attack(state, enemy, target, monster)
+                if attack is None or not reachable:
+                    break
+            text, _hit = enemy_attack(
+                save, state, enemy.cid, target.cid, attack.name, rng=rng
+            )
+            report.append(text)
+        enemy.acted_round = state.round
+
+    # 增援（attrition 档）：原来挂在 enemy_attack 上，敌人攻击改成系统自动结算后
+    # 就搬到这儿——否则「打到一半追加一波」这条规则再也不会触发。
+    try:
+        wave = summon_reinforcements(save, state, rng=rng)
+    except Exception as e:  # 增援是增强项，不该让这一轮结算崩掉
+        log.warning(f"放增援失败（忽略）：{str_traceback(e)}")
+        wave = ""
+    if wave:
+        report.append(wave)
+    return report
 
 
 def update_enemy(

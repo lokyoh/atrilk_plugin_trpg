@@ -18,6 +18,7 @@ from ATRI.configs.plugin_config import PluginConfig
 
 __all__ = [
     "SERVICE_NAME",
+    "auto_enemy_turns",
     "battle_map_always",
     "history_events",
     "npc_roster_limit",
@@ -38,6 +39,7 @@ _DEFAULTS: dict[str, Any] = {
     "npc_roster_limit": 6,
     "battle_map_always": False,
     "world_bible_max_chars": 800,
+    "auto_enemy_turns": True,
 }
 
 
@@ -96,6 +98,11 @@ def battle_map_always() -> bool:
 def world_bible_max_chars() -> int:
     """世界圣经提示词块的字数上限（0 = 不限制）。"""
     return _as_int(_raw("world_bible_max_chars"), low=0, high=5000)
+
+
+def auto_enemy_turns() -> bool:
+    """敌人回合是否由系统自动结算（关掉则敌人不自动出手，只玩家侧结算）。"""
+    return _as_bool(_raw("auto_enemy_turns"))
 
 
 def use_partial(save) -> bool:

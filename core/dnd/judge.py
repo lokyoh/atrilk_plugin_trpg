@@ -24,6 +24,7 @@ from .difficulty import dc_for
 from .skills import SKILL_MAP, get_skill
 
 __all__ = [
+    "COMBAT_REASON",
     "DndAction",
     "DndRuleJudge",
     "dnd_judge",
@@ -75,12 +76,20 @@ NEED_INFO_RULES: tuple[KeywordRule, ...] = (
     ),
 )
 
+#: 战斗行动的判定说明。
+#:
+#: 命中它就是**战斗动作**（攻击 / 施法）——这类行动由 ``start_combat`` 之后的系统
+#: 结算（attack / cast_spell / check），判断器**不再替玩家预掷检定**：
+#: 从前「用法术妖精之火攻击」会被当成「提到魔法」而掷一次智力（奥秘），
+#: 于是同一次行动被结算两遍，存档里留下与实际结果矛盾的判定。
+COMBAT_REASON = "战斗行动。"
+
 #: 命中即通过：明确的行动指令
 ACCEPT_RULES: tuple[KeywordRule, ...] = (
     KeywordRule(
         r"(攻击|砍|劈|刺|射|施法|施放|释放法术|投掷)",
         Verdict.ACCEPT,
-        reason="战斗行动。",
+        reason=COMBAT_REASON,
     ),
     KeywordRule(
         r"(移动|跑|走|冲|跳|爬|潜行|躲藏|后退)", Verdict.ACCEPT, reason="移动行动。"
@@ -165,7 +174,9 @@ class DndRuleJudge(KeywordRuleJudge):
         base = await self.judge(text, context)
 
         # 4. 通过时，若叙述里含检定关键词且带角色，附上建议检定
-        if base.accepted and character is not None:
+        #    战斗动作例外：命中 / 伤害 / 豁免由战斗系统结算，判断器不预掷——
+        #    预掷出的那次（如施法被当成「提到魔法」掷奥秘）会与正式结算打架。
+        if base.accepted and character is not None and base.reason != COMBAT_REASON:
             suggested = self._suggest_check(text, character)
             if suggested:
                 skill_key, dc, advantage = suggested
@@ -219,7 +230,13 @@ class DndRuleJudge(KeywordRuleJudge):
             (r"(悄悄|平衡|翻滚|挣脱)", "acrobatics"),
             (r"(野外|追踪|辨识方向)", "survival"),
             (r"(历史|传说|典故)", "history"),
-            (r"(魔法|符文|法术)", "arcana"),
+            # 奥秘是「辨识魔法」的技能，只在真的去辨认时才掷；
+            # 光是提到「用魔法 / 用法术」属于施法，走 cast_spell 而不是奥秘检定。
+            (
+                r"(符文|魔法阵|奥术|辨识.{0,6}(魔法|法术)"
+                r"|(魔法|法术).{0,4}(痕迹|效果|残留|来源))",
+                "arcana",
+            ),
         )
         for pattern, key in rules:
             if re.search(pattern, text):

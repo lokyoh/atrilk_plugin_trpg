@@ -548,9 +548,6 @@ _START_PICK_TTL = 600.0
 #: 「生成新世界 / 新故事」的触发词
 _GEN_WORDS = {"生成", "重生成", "generate", "regenerate", "new"}
 
-#: 「装一份内置预设世界」的触发词（零模型调用）
-_PRESET_WORDS = {"预设", "preset", "默认"}
-
 #: 「用无尽玩法开局」的触发词。与 :data:`...dnd.gamemode.MODES` 里的 words
 #: 同源，这里再写一份是为了在**解析参数**阶段就能分辨「玩法词」与「世界名」，
 #: 不必先把世界列表读出来。
@@ -610,6 +607,27 @@ def _world_intro(world) -> str:
         preview = "、".join(regions[:3]) + ("…" if len(regions) > 3 else "")
         return f"地区 {len(regions)} 个：{preview}"
     return "（还没有世界地图）"
+
+
+async def _ensure_worlds():
+    """世界库是空的就先装内置预设世界（零模型调用），再返回世界列表。
+
+    现生成一个世界要一两分钟、还要花钱；**没有世界时默认给预设**——装完照常
+    出现在世界列表里，想现生成的仍然可以 ``/跑团.开局 生成 [主题]``。
+    """
+    worlds = list_worlds()
+    if worlds:
+        return worlds
+    from .core.dnd.presets import ensure_preset, list_presets
+
+    if not list_presets():
+        return []
+    try:
+        ensure_preset()
+    except Exception as e:  # 装不上就退回空列表，由调用方给人话提示
+        log.warning(f"自动装预设世界失败：{str_traceback(e)}")
+        return []
+    return list_worlds()
 
 
 def _world_chooser(worlds, note: str = "") -> str:
@@ -919,7 +937,7 @@ async def _start_game(
         await start_game.finish(text)
 
     # ·「无尽」：一条命令开局。装预设世界（零模型调用，已装则复用）+ 建档 +
-    #   把无尽玩法写进存档。之前要先「开局 预设」再「开局 选世界」，两步。
+    #   把无尽玩法写进存档（预设世界平时是开局时自动装的，这里只是省掉选世界那一步）。
     if head.lower() in _ENDLESS_WORDS:
         from .core.dnd.presets import ensure_preset, list_presets
 
@@ -938,25 +956,6 @@ async def _start_game(
         )
         save_id, text = _open_save(user_id, key, preset_key, mode="endless")
         await start_game.finish(text)
-
-    # ·「预设」：装一份内置世界（不调模型），装完照常出现在世界列表里
-    if head in _PRESET_WORDS:
-        from .core.dnd.presets import install_preset, list_presets
-
-        if not list_presets():
-            await start_game.finish("插件里没有内置的预设世界（presets/ 是空的）。")
-        try:
-            preset_key = install_preset()
-        except Exception as e:
-            log.warning(f"安装预设世界失败：{str_traceback(e)}")
-            await start_game.finish(f"⚠️ 预设世界装不上：{e}")
-        info = get_world(preset_key)
-        await start_game.finish(
-            f"📦 已装好预设世界「{info.title if info is not None else preset_key}」"
-            "（世界里的事件会在开局时按队伍水平织出来）。\n"
-            "· 用它开局 → /跑团.开局（会在世界列表里列出来）\n"
-            "· 想现生成一个 → /跑团.开局 生成 [主题]"
-        )
 
     # ·「生成」：生成一个新世界（事件在建档、开局时才织，不在这一步）
     if head in _GEN_WORDS:
@@ -989,14 +988,22 @@ async def _start_game(
             )
             if world is None:
                 if not worlds:
-                    await start_game.finish(
-                        "🌍 还没有任何世界。发送 /跑团.开局 生成 [主题] 创建一个"
-                        "（不给主题就随机）。"
+                    # 世界库是空的：先装内置预设（一两秒），装完再匹配一次
+                    worlds = await _ensure_worlds()
+                    world = next(
+                        (w for w in worlds if target == w.title or target == w.key),
+                        None,
                     )
-                _set_pending_pick(key, user_id, "world")
-                await start_game.finish(
-                    _world_chooser(worlds, note=f"没有找到世界「{target}」。")
-                )
+                if not worlds:
+                    await start_game.finish(
+                        "🌍 还没有任何世界，插件里也没有内置的预设世界。\n"
+                        "发送 /跑团.开局 生成 [主题] 创建一个（不给主题就随机）。"
+                    )
+                if world is None:
+                    _set_pending_pick(key, user_id, "world")
+                    await start_game.finish(
+                        _world_chooser(worlds, note=f"没有找到世界「{target}」。")
+                    )
 
         # 选中世界：**先看这个世界有没有现成的事件可选**。
         # 有的话多问一轮（挑一件入场事件），没有就直接建档——
@@ -1034,15 +1041,16 @@ async def _start_game(
         )
         await start_game.finish(text)
 
-    # · 裸 /跑团.开局：还没有世界就直接生成；有世界则展示世界选择
+    # · 裸 /跑团.开局：**还没有世界就先装内置预设**（零模型调用、一两秒就完），
+    #   不再一上来就调模型现生成一个——现生成要一两分钟、还要花钱，而绝大多数
+    #   人只是想直接开跑。想现生成的仍然可以 /跑团.开局 生成 [主题]。
     if not worlds:
-        await matcher.send(
-            "🎲 开始准备这一局（需要一些时间，完成后我会汇报）：\n"
-            "① 生成世界地图　② 建立存档、等人加入\n"
-            "期间可以先做别的，不必等在这里。"
-        )
-        _spawn(asyncio.create_task(_generate_world(get_bot(), event, key, user_id, "")))
-        return
+        worlds = await _ensure_worlds()
+        if not worlds:
+            await start_game.finish(
+                "🌍 还没有任何世界，插件里也没有内置的预设世界。\n"
+                "发送 /跑团.开局 生成 [主题] 创建一个（不给主题就随机）。"
+            )
     _set_pending_pick(key, user_id, "world")
     await start_game.finish(_world_chooser(worlds))
 

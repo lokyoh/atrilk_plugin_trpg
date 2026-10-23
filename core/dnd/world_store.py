@@ -252,6 +252,9 @@ class WorldInfo:
     theme: str = ""
     created_at: float = 0.0
     updated_at: float = 0.0
+    #: 装的是哪**一版**预设世界（``presets/<name>/index.json`` 的 ``version``）。
+    #: 非预设世界为空串。有了它，改过预设之后才知道「已经装的那份是旧的」。
+    preset_version: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -261,6 +264,7 @@ class WorldInfo:
             "theme": self.theme,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "preset_version": self.preset_version,
         }
 
     @classmethod
@@ -272,6 +276,7 @@ class WorldInfo:
             theme=str(data.get("theme", "") or ""),
             created_at=float(data.get("created_at", 0.0) or 0.0),
             updated_at=float(data.get("updated_at", 0.0) or 0.0),
+            preset_version=str(data.get("preset_version", "") or ""),
         )
 
 
@@ -329,6 +334,7 @@ def upsert_world(
     title: str = "",
     intro: str = "",
     theme: str = "",
+    preset_version: str = "",
 ) -> WorldInfo:
     """新建或更新世界注册信息；留空的字段保持原值。"""
     key = _safe_key(world_key)
@@ -348,6 +354,8 @@ def upsert_world(
         found["intro"] = clean_name(intro)
     if theme:
         found["theme"] = str(theme)
+    if preset_version:
+        found["preset_version"] = str(preset_version)
     found["updated_at"] = now
     _write_registry(data)
     return WorldInfo.from_dict(found)

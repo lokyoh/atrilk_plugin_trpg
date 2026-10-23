@@ -670,6 +670,9 @@
   en: Color Spray
   level: 1
   school: 幻术
+  conditions:
+  - 目盲
+  condition_rounds: 1
   classes:
   - bard
   - sorcerer
@@ -693,6 +696,8 @@
   range_text: 30 尺
   duration: 1 小时
   save: wis
+  conditions:
+  - 魅惑
   upcast: 每升一环多 1 个目标
   desc: 未通过豁免的类人把你当成友善熟人；战斗中对它有优势。
 - key: command
@@ -707,6 +712,9 @@
   range_text: 60 尺
   duration: 1 轮
   save: wis
+  conditions:
+  - 倒地
+  condition_rounds: 1
   upcast: 每升一环多 1 个目标
   desc: 用一个词命令目标：来、丢、逃、伏地、停。
 - key: sanctuary
@@ -745,6 +753,9 @@
   duration: 专注，至多 1 分钟
   concentration: true
   save: str
+  conditions:
+  - 束缚
+  condition_rounds: 10
   desc: 地面长出藤蔓：未通过豁免者被束缚，行动区域视为困难地形。
 - key: goodberry
   cn: 好莓果
@@ -1120,6 +1131,9 @@
   duration: 专注，至多 1 小时
   concentration: true
   save: dex
+  conditions:
+  - 束缚
+  condition_rounds: 10
   desc: 黏稠蛛网：未通过豁免者被束缚，区域为困难地形且可燃。
 - key: hold_person
   cn: 定身人类
@@ -1138,6 +1152,9 @@
   duration: 专注，至多 1 分钟
   concentration: true
   save: wis
+  conditions:
+  - 麻痹
+  condition_rounds: 10
   upcast: 每升一环多 1 个目标
   desc: 类人目标麻痹，每回合可再次豁免；近战打它是暴击。
 - key: blindness_deafness
@@ -1520,6 +1537,9 @@
   duration: 专注，至多 1 分钟
   concentration: true
   save: wis
+  conditions:
+  - 恐慌
+  condition_rounds: 10
   desc: 未通过豁免者丢下手中物件并逃跑。
 - key: hypnotic_pattern
   cn: 催眠图纹

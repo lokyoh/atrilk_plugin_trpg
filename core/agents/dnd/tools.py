@@ -20,27 +20,23 @@ from ATRI.log import log
 
 from ...dnd.attributes import ABILITIES, get_ability
 from ...dnd.battlemap import (
-    battlefield_text,
     distance_feet,
     has_map,
-    normalize_terrain,
     range_check,
-    set_terrain,
 )
 from ...dnd.bestiary import bestiary_text, find_bestiary
 from ...dnd.card import DndCharacter
-from ...dnd.clock import FATIGUE_DC
 from ...dnd.combat import (
     apply_damage as combat_damage,
 )
 from ...dnd.combat import (
+    apply_condition,
     apply_threat_profile,
     auto_crit_on_hit,
     clear_combat,
     combat_text,
     combatant_conditions,
     effective_ac,
-    enemy_attack,
     find_combatant,
     heal_combatant,
     load_combat,
@@ -51,8 +47,6 @@ from ...dnd.combat import (
     roll_damage,
     save_combat,
     start_combat,
-    summon_reinforcements,
-    update_enemy,
     use_resource,
 )
 from ...dnd.combat import (
@@ -157,7 +151,6 @@ __all__ = [
     "CastSpellTool",
     "CheckTool",
     "EndCombatTool",
-    "EnemyAttackTool",
     "GetRuleTool",
     "MoveSceneTool",
     "MoveTool",
@@ -171,9 +164,7 @@ __all__ = [
     "RollDiceTool",
     "SecretRollTool",
     "StartCombatTool",
-    "UpdateBattlefieldTool",
     "UpdateCharacterTool",
-    "UpdateEnemyTool",
     "UpdateNpcTool",
     "UpdateSceneTool",
 ]
@@ -986,6 +977,30 @@ class UpdateCharacterTool(AgentTool):
         field = str(field or "").strip().lower()
         text = "" if value is None else str(value).strip()
 
+        # 战斗中的生命值与死亡豁免只由系统结算——伤害、治疗、倒地、死亡豁免
+        # 在 attack / cast_spell / heal 的回执里都写清楚了。
+        # 从前 DM 能直接写 hp=0、死亡豁免=死亡：已经倒地的人被再写一遍，
+        # 才 0 次失败的玩家被提前判死。这里把这两个字段在战斗中封掉，
+        # 并把该走哪条路指出来（战报 2026-10-23 的教训）。
+        if load_combat(save) is not None:
+            if field in {"hp", "current_hp", "生命值", "当前hp"}:
+                return (
+                    "战斗中不能手改生命值：伤害由 attack / cast_spell 结算，"
+                    "治疗走 heal（会自动恢复意识并清空死亡豁免进度）。"
+                    "想让他掉血，就让他正常挨一次攻击。"
+                )
+            if (
+                field in {"死亡豁免", "death_save", "death_saves"}
+                and text not in {"复活", "revive", "复苏"}
+            ):
+                return (
+                    f"战斗中不能手改死亡豁免（{card.name} 现在 "
+                    f"{card.death_saves_success} 成功 / {card.death_saves_failures} 失败）："
+                    "轮到他时系统自动掷 DC 10，3 次成功才伤势稳定、3 次失败才死亡；"
+                    "倒地期间挨打、暴击、单次伤害超过生命上限也会自动累计。"
+                    "要救他用 heal；剧情上的复活（复活术 / 神迹）才写「复活」。"
+                )
+
         if field in {"hp", "current_hp", "生命值", "当前hp"}:
             was_downed = card.is_downed
             if text.lower() in {"满", "满血", "max", "full"}:
@@ -1277,6 +1292,34 @@ def _travel_hint(world_key: str, origin: str, destination: str) -> str:
         return ""
 
 
+def _event_entry_line(slot) -> str:
+    """刚挂上的那件事件，DM 该怎么进门：**入口场景 + 一句流言**。
+
+    **给 DM 的一定是可定位的场景名**（图节点的 ``at``），不是 ``stage``——
+    stage 是「风骸岛 · 巨龙之憩」这种给人看的说法，世界库里没有它，
+    拿去 move_scene 必然定位不到（2026-10-24 修）。
+    """
+    where = ""
+    nodes = getattr(getattr(slot, "graph", None), "nodes", None) or {}
+    for node in nodes.values():
+        if getattr(node, "requires", None):
+            continue
+        at = str(getattr(node, "at", "") or "").strip()
+        if at:
+            where = at
+            break
+    parts: list[str] = []
+    if where:
+        parts.append(f"入口：{where}")
+    try:
+        rumor = slot.rumor_for(int(getattr(slot, "since_day", 1) or 1))
+    except Exception:  # 流言只是点缀，挑不出就不给
+        rumor = ""
+    if rumor:
+        parts.append(f"风声：{rumor}")
+    return "；".join(parts)
+
+
 class MoveSceneTool(AgentTool):
     """切换场景（缺什么生成什么），并构建出本局专属的场景副本存进存档。"""
 
@@ -1346,8 +1389,10 @@ class MoveSceneTool(AgentTool):
 
             installed = install_preset_events_for_province(save)
             if installed:
-                where = f"（{installed[0].stage}）" if installed[0].stage else ""
-                journey = f"\n【{installed[0].title}{where}】{installed[0].hint or ''}"
+                first = installed[0]
+                where = f"（{first.stage}）" if first.stage else ""
+                # 给 DM 的是**入口场景**（可定位），不是 stage 那一串场面话
+                journey = f"\n【{first.title}{where}】{_event_entry_line(first)}"
         except Exception as e:  # 装不上不该让人走不动
             log.warning(f"装预写事件失败：{str_traceback(e)}")
         # 世界时间与路上的事在这里算：每走一跳判一次（见 event_flow.step_move）
@@ -1356,7 +1401,12 @@ class MoveSceneTool(AgentTool):
             from .event_flow import step_move
 
             report = step_move(save, key, origin=origin)
-            journey = report.dm_hint() or journey
+            # **两件事都要说**：「这一趟走了多久、路上出了什么」与「刚挂上了哪件事」。
+            # 早先写的是 ``journey = report.dm_hint() or journey``——
+            # step_move 的回执几乎总是非空，于是刚装上的事件（含入口场景）
+            # 每次都被覆盖掉，DM 眼前只剩「这一趟」，不知道该往哪儿走。
+            moved = report.dm_hint()
+            journey = (moved + journey) if moved else journey
         except Exception as e:  # 事件系统出问题不该让人走不动
             log.warning(f"推进世界时间失败：{str_traceback(e)}")
             journey = journey or ""
@@ -1479,7 +1529,7 @@ class StartCombatTool(AgentTool):
     function_name = "start_combat"
     #: 返回里有战场地图与开战指引，放宽
     max_result_chars = 4000
-    description = "开战：掷先攻排序并接管回合（敌人回合用 enemy_attack 结算）"
+    description = "开战：掷先攻排序并接管回合（敌人回合由系统自动结算）"
     args = (
         ToolArg(
             "enemies",
@@ -1601,8 +1651,8 @@ class StartCombatTool(AgentTool):
         )
         lines.append(
             "按上面的顺序叙述：标记「现在」的那位就是本轮该行动的玩家。"
-            "玩家攻击用 attack、要位置用 move、施法用 cast_spell，敌人反击用 enemy_attack"
-            "（都由系统掷命中与伤害）；不要替还没轮到的玩家决定行动。"
+            "玩家攻击用 attack、要位置用 move、施法用 cast_spell（都由系统掷命中与伤害）；"
+            "敌人回合由系统自动结算，你只写叙述。不要替还没轮到的玩家决定行动。"
         )
         lines.append(
             "怪物特性里**能算的那些由系统自动结算**，不用你记也不用你写："
@@ -1645,54 +1695,6 @@ class MoveTool(AgentTool):
         ref = str(player or "").strip() or str(context.user_id or "")
         return move_combatant(
             save, state, ref, target=str(target or ""), pos=str(pos or "")
-        )
-
-
-class UpdateBattlefieldTool(AgentTool):
-    """微调战场地形（DM 想加个箱子、砸出个缺口时用）。"""
-
-    function_name = "update_battlefield"
-    max_result_chars = 1200
-    description = "改战场某格地形（砸墙 / 推货架 / 点火后地图跟上叙述）"
-    args = (
-        ToolArg("x", "int", "列（从 1 开始）"),
-        ToolArg("y", "int", "行（从 1 开始）"),
-        ToolArg("terrain", "str", "空地/困难/半掩体/四分之三掩体/障碍/危险/浅水"),
-        ToolArg("note", "str", "这块地形是什么（可选）"),
-    )
-
-    @staticmethod
-    async def call(
-        context: AgentContext,
-        x: Any = 0,
-        y: Any = 0,
-        terrain: Any = "",
-        note: Any = "",
-        **kwargs: Any,
-    ) -> str:
-        save = load_save(context.save_id) if context.save_id else None
-        if save is None:
-            return "当前没有存档"
-        state = load_combat(save)
-        if state is None:
-            return "现在不在战斗中，没有可调整的战场"
-        if not has_map(state):
-            return "这场战斗没有棋盘（旧战斗存档），地形直接叙述即可"
-        key = normalize_terrain(str(terrain or ""))
-        if not key:
-            return "没认出这个地形。可用：空地 / 困难 / 半掩体 / 四分之三掩体 / 障碍 / 危险 / 浅水"
-        col, row = _parse_int(x, 0), _parse_int(y, 0)
-        if not set_terrain(state, col - 1, row - 1, key):
-            return f"坐标 {col},{row} 超出棋盘（{state.width}×{state.height}）"
-        extra = str(note or "").strip()
-        if extra:
-            state.note = f"{state.note}；{extra}" if state.note else extra
-        save_combat(save, state)
-        return (
-            f"已把 {col},{row} 改成「{terrain}」"
-            + (f"（{extra}）" if extra else "")
-            + "。\n"
-            + battlefield_text(state, with_map=False)
         )
 
 
@@ -1746,99 +1748,6 @@ class AttackTool(AgentTool):
             if note:
                 text += f"\n{note}"
         return text
-
-
-class EnemyAttackTool(AgentTool):
-    """敌人攻击玩家：按怪物数据自动结算。"""
-
-    function_name = "enemy_attack"
-    description = "敌人攻击玩家：自动掷命中与伤害并扣该玩家生命"
-    args = (
-        ToolArg("enemy", "str", "敌人名，如 地精1"),
-        ToolArg("target", "str", "被攻击的玩家：角色名或 user_id"),
-        ToolArg("attack_name", "str", "用哪项攻击（可选，默认第一项）"),
-        ToolArg("advantage", "str", "普通 / 优势 / 劣势"),
-    )
-
-    @staticmethod
-    async def call(
-        context: AgentContext,
-        enemy: Any = "",
-        target: Any = "",
-        attack_name: Any = "",
-        advantage: Any = "普通",
-        **kwargs: Any,
-    ) -> str:
-        save = load_save(context.save_id) if context.save_id else None
-        if save is None:
-            return "当前没有存档，无法结算攻击"
-        state = load_combat(save)
-        if state is None:
-            return "现在不在战斗中，先用 start_combat 开战"
-        text, _hit = enemy_attack(
-            save,
-            state,
-            str(enemy or ""),
-            str(target or ""),
-            str(attack_name or ""),
-            advantage=_parse_advantage(advantage),
-        )
-        # 增援（attrition 档）：敌人被清掉一半以上时自动来一波
-        try:
-            wave = summon_reinforcements(save, state)
-        except Exception as e:  # 增援是增强，不该让攻击结算失败
-            log.warning(f"放增援失败（忽略）：{str_traceback(e)}")
-            wave = ""
-        if wave:
-            text = text + "\n" + wave
-        return text
-
-
-class UpdateEnemyTool(AgentTool):
-    """直接改敌人状态（陷阱、环境、逃跑、投降、被擒……）。"""
-
-    function_name = "update_enemy"
-    description = (
-        "直接改敌人状态：生命增减 / 退场 / 附注 / 挂状态"
-        "（陷阱、环境伤害、中毒、被束缚、投降等）"
-    )
-    args = (
-        ToolArg("name", "str", "敌人名，如 地精1"),
-        ToolArg("hp", "str", "新值（12）或增减（-5），留空不改"),
-        ToolArg("out", "str", "是否退场：是 / 否"),
-        ToolArg("note", "str", "附注（可选）"),
-        ToolArg(
-            "conditions",
-            "str",
-            "状态列表，如「中毒、束缚」；「清空」=全清（可选）",
-        ),
-    )
-
-    @staticmethod
-    async def call(
-        context: AgentContext,
-        name: Any = "",
-        hp: Any = "",
-        out: Any = "",
-        note: Any = "",
-        conditions: Any = "",
-        **kwargs: Any,
-    ) -> str:
-        save = load_save(context.save_id) if context.save_id else None
-        if save is None:
-            return "当前没有存档，无法修改敌人状态"
-        state = load_combat(save)
-        if state is None:
-            return "现在不在战斗中，无需修改敌人状态"
-        return update_enemy(
-            save,
-            state,
-            str(name or ""),
-            hp=str(hp or ""),
-            out=str(out or ""),
-            note=str(note or ""),
-            conditions=str(conditions or ""),
-        )
 
 
 class HealTool(AgentTool):
@@ -2347,6 +2256,16 @@ class CastSpellTool(AgentTool):
         # —— 非战斗效果 ——
         if not spell_obj.attack and not spell_obj.save and not spell_obj.damage:
             lines.append(spell_obj.desc or "（无直接战斗数值）")
+            if spell_obj.conditions and targets:
+                for item in targets:
+                    cond_note = apply_condition(
+                        save,
+                        item,
+                        spell_obj.conditions,
+                        rounds=spell_obj.condition_rounds,
+                    )
+                    if cond_note:
+                        lines.append(f"· {_target_name(item)}：{cond_note}")
             lines.append(
                 "请按法术效果叙述；需要时用 roll_dice / update_character 辅助。"
             )
@@ -2365,7 +2284,7 @@ class CastSpellTool(AgentTool):
             lines.append(
                 (spell_obj.desc or "")
                 + "——由你按法术效果裁决（后续命中追加、按生命值放倒、区域滞留等）；"
-                "要直接扣血就用 update_enemy / update_character。"
+                "要直接扣血就用 update_character。"
             )
             return warn + "\n".join(lines)
 
@@ -2469,6 +2388,7 @@ class CastSpellTool(AgentTool):
                 spell_obj.damage_expr(casting_mod, level=card.level)
             )
             lines.append(f"伤害 {detail} {spell_obj.damage_type_text}")
+        cond_applied = False
         for item in targets:
             if _target_down(save, item):
                 lines.append(f"· {_target_name(item)} 已经倒下了，跳过。")
@@ -2476,6 +2396,18 @@ class CastSpellTool(AgentTool):
             # 豁免检定：自动套目标状态（束缚劣势 / 麻痹等自动失败）
             # 法术的豁免：**魔法效应**，所以魔法抗性在这里生效（龙息则不算）
             result = _target_save(save, item, spell_obj.save, dc, state=state, magical=True)
+            # 豁免失败 → 把法术附带的状态直接挂上（定身 = 麻痹、恐惧 = 恐慌……）。
+            # 以前这里只写一句「请按法术效果叙述」：DM 说了算，引擎不认，
+            # 于是被定住的怪下一轮照样行动、近战也不按麻痹算暴击。
+            cond_note = ""
+            if spell_obj.conditions and not result.success:
+                cond_note = apply_condition(
+                    save,
+                    item,
+                    spell_obj.conditions,
+                    rounds=spell_obj.condition_rounds,
+                )
+                cond_applied = cond_applied or bool(cond_note)
             if not spell_obj.damage:
                 lines.append(
                     f"· {_target_name(item)}：{result.describe()} → "
@@ -2485,6 +2417,8 @@ class CastSpellTool(AgentTool):
                         else "失败（请按法术效果叙述）"
                     )
                 )
+                if cond_note:
+                    lines.append(f"  　{cond_note}")
                 continue
             if result.success:
                 if spell_obj.half_on_save:
@@ -2519,6 +2453,11 @@ class CastSpellTool(AgentTool):
                         damage_type=spell_obj.damage_type_text,
                     )
                 )
+            if cond_note:
+                lines.append(f"  　{cond_note}")
+        # 敌人的状态记在 combat.json 里：不落盘的话下一轮读到的还是没被控住的样子
+        if cond_applied:
+            save_combat(save, state)
         return warn + "\n".join(lines)
 
 
@@ -2709,13 +2648,13 @@ class UpdateNpcTool(AgentTool):
         ToolArg("name", "str", "NPC 名，如 黑心商人卡尔"),
         ToolArg("template", "str", "平民/士兵/老兵/首领 或怪物模板（可选）"),
         ToolArg("hp", "str", "当前生命（可选）"),
-        ToolArg("status", "str", "存活/受伤/倒下/逃跑/被俘/失踪（可选）"),
+        ToolArg("status", "str", "存活/受伤/倒下/逃跑/被俘/失踪"),
         ToolArg(
             "note",
             "str",
             "身份、关系、欠的账、**说话风格**（口头禅/语气/称呼；不写下次就换了个人，可选）",
         ),
-        ToolArg("place", "str", "最后出现的地点（可选）"),
+        ToolArg("place", "str", "最后出现的地点"),
     )
     #: 记账：把这人记进名单，叙述不必等它（这一轮怎么演，DM 心里已经有数了）
     bookkeeping = True
@@ -2737,6 +2676,21 @@ class UpdateNpcTool(AgentTool):
         npc_name = str(name or "").strip()
         if not npc_name:
             return "请给出 NPC 的名字"
+
+        # **战斗中一律不维护名单**：参战者的血量、状态、退场只认战场。
+        #
+        # 战场由 attack / cast_spell / 系统自动结算的敌人回合直接写，
+        # 打完再由 ``sync_roster_after_combat`` 一次性回填。名单是按模板合并的
+        # （三只「溺亡水手1/2/3」在 npcs.json 里只有一条「溺亡水手」），
+        # 边打边写必然两套账——实际跑过：名单 15/22「存活」，
+        # 战场上它只剩 9、隔壁那只早倒了。
+        if load_combat(save) is not None:
+            return (
+                f"战斗中不维护 NPC 名单（{npc_name}）：参战者的血量与退场由战场结算"
+                "（attack / cast_spell / 系统自动的敌人回合），"
+                "战斗结束后会自动同步回名单。这一场之外的人物，等打完再记。"
+            )
+
         record = find_npc(save, npc_name)
         template_text = str(template or "").strip()
 
@@ -3044,9 +2998,6 @@ DM_TOOLS: tuple[type[AgentTool], ...] = (
     MoveTool,
     AttackTool,
     CastSpellTool,
-    EnemyAttackTool,
-    UpdateEnemyTool,
-    UpdateBattlefieldTool,
     UpdateNpcTool,
     HealTool,
     EndCombatTool,

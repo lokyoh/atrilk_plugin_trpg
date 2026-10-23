@@ -11,7 +11,8 @@
    完成后清空本轮并记下 DM 决定的下一轮名单，转回 1
 
 **战斗**（:mod:`~...dnd.combat`）时改由先攻顺序驱动：轮到的玩家提交后立刻主持，
-该回合结束后系统推进到下一名玩家，中间的敌人回合交给 DM 用 ``enemy_attack`` 结算。
+该回合结束后系统推进到下一名玩家，中间的敌人回合由 :func:`~...dnd.combat.auto_enemy_turns`
+自动结算（挑目标 / 靠近 / 选招 / 掷骰），DM 只负责叙述。
 
 本模块负责第 3、4 步的编排：:func:`submit_action` 接住单个玩家的行动，
 :func:`run_dm_round` 把整轮行动一起交给 DM，并把玩家行动与 DM 叙述写进存档事件日志。
@@ -34,6 +35,7 @@ from ...dnd.card import split_glued_items
 from ...dnd.combat import (
     advance_turn,
     all_enemies_out,
+    auto_enemy_turns,
     clear_combat,
     combat_text,
     combatant_conditions,
@@ -388,8 +390,6 @@ _STORY_RULING_TOOLS = (
     "check",
     "attack",
     "cast_spell",
-    "enemy_attack",
-    "update_enemy",
     "update_character",
     "update_npc",
     "start_combat",
@@ -423,7 +423,6 @@ _PLAYER_RULING_TOOLS = (
     "check",
     "roll_dice",
     "attack",
-    "enemy_attack",
     "cast_spell",
     "heal",
 )
@@ -1213,15 +1212,31 @@ async def run_dm_round(
 
         action_text = "\n\n".join(blocks)
         if len(blocks) > 1 and not partial:
-            action_text = "本轮有多名玩家同时行动，请一并处理：\n\n" + action_text
+            # 点名有几个人：从前只说「一并处理」，模型常常只写了第一个人的结果，
+            # 其余人的行动就凭空蒸发（玩家白等一轮，还得重提）。
+            action_text = (
+                f"本轮有 {len(blocks)} 名玩家同时行动，请**逐一结算每一个人**：\n\n"
+                + action_text
+                + "\n\n（上面每个人都要在叙述里有结果——漏掉谁，他就白等这一轮。）"
+            )
 
     # 场景只给简介（名称 / 定位 / 氛围 / 最近变化）；要看布局、在场者、隐藏信息，
     # 由 DM 自己用 get_scene 查完整副本。
     scene = scene_brief(save)
 
+    # 战斗中的提示词另有格式（先攻序 / 棋盘 / 血量），这里先读出来——
+    # 有没有在打仗决定了下面那几块给不给。
+    combat = load_combat(save)
+
     # 世界圣经：专有名词与事实的唯一来源（人名 / 势力 / 地名不跑偏的关键）；
     # 没有圣经的老世界照常空着，不影响主持。**按距离裁**：额度固定，装进来的
     # 就是 DM 看得见的——远处那一国的账房先生不该占眼前这几百字。
+    #
+    # **战斗中整个省掉**：这一轮要解决的是「这一刀砍不砍中」，几百字人名地名
+    # 既用不上，又会把已经很长的战斗块顶得更长（圣经每轮都要重发），
+    # 还容易把远处的名字带进眼前的战场。命名该守的规矩战斗里一条没少——
+    # 只是砍完刀、出了战斗，下一轮它照常回来。
+    #
     # 开局那一轮还没有当前场景（场景是 DM 这一轮才 move_scene 进去的），
     # 就拿入场事件的入口地点当「玩家在哪儿」；都取不到才不裁。
     near = save.current_scene
@@ -1232,10 +1247,14 @@ async def run_dm_round(
             near = entry_place(save.world_key, str(getattr(save, "story_key", "") or ""))
         except Exception as e:  # 裁不了就不裁，别影响开局
             log.debug(f"取入场事件的地点失败：{str_traceback(e)}")
-    bible = bible_text(
-        save.world_key,
-        near=near,
-        max_chars=settings.world_bible_max_chars(),
+    bible = (
+        ""
+        if combat is not None
+        else bible_text(
+            save.world_key,
+            near=near,
+            max_chars=settings.world_bible_max_chars(),
+        )
     )
 
     # 全队阵亡：自动进入收尾流程，让这一轮就能收尾（wrap_up 才不会被拦）
@@ -1270,7 +1289,6 @@ async def run_dm_round(
     party_block = _party_block(save, order, focus)
 
     # 战斗中：把先攻顺序、当前回合与随后的敌人回合一并告诉 DM。
-    combat = load_combat(save)
     combat_label = (combat.note or "").strip() if combat is not None else ""
     scene_before = (save.current_scene or "").strip()
     combat_block = ""
@@ -1400,9 +1418,28 @@ async def run_dm_round(
     combat = load_combat(save)
     if combat is not None and not all_enemies_out(combat):
         if not context.data.get("combat_started"):
-            # 本回合结束，推进到下一名玩家；中间的敌人回合交给下一轮叙述
-            advance_turn(save, combat)
+            # 本回合结束，推进到下一名玩家；夹在中间的敌人交给系统结算。
+            #
+            # **敌人回合由系统打完**（选目标 / 够不着先靠近 / 选招 / 打几次），
+            # 结果直接拼进叙述给玩家看——命中、伤害、抗性本来就是程序算得出的，
+            # 让 DM 每只怪调一次 enemy_attack 只是多出十几次往返，还会把攻击名
+            # 猜错（实测「沉重拳击」猜了三轮）。战术部分仍归 DM：吐息、施法、
+            # 撤退、抓人质照旧用工具接管。
+            enemies_acted, _moved_to = advance_turn(save, combat)
             save_combat(save, combat)
+            if settings.auto_enemy_turns():
+                try:
+                    acted = auto_enemy_turns(save, combat, enemies=enemies_acted)
+                except Exception as e:  # 自动结算失败不该毁掉这一轮
+                    log.warning(f"敌人回合自动结算失败：{str_traceback(e)}")
+                    acted = []
+                if acted:
+                    narration = f"{narration}\n\n" + "\n".join(acted)
+                    combat.pending.append(
+                        "⚔ 敌人这一回合已由系统结算（血量已扣、玩家已经看到，"
+                        "叙述接着往下推进即可，不必复述）"
+                    )
+                    save_combat(save, combat)
         _following, next_player = peek_following(save, combat)
         state.waiting = [next_player.cid] if next_player is not None else []
         # 玩家侧提示：开战那一条给完整的战斗现状 + 操作说明，往后每轮只报下一位

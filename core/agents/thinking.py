@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
@@ -51,6 +52,121 @@ __all__ = [
     "ThinkingAgent",
     "ToolArg",
 ]
+
+
+#: 模型常写的几种「看着对、解析不了」的写法，在这里先修一遍再交给共享解释器。
+#:
+#: 战报（2026-10-23）里 ``move(player=l_o_o_k, pos=8,10)`` 连着失败了四次——
+#: 逗号把坐标劈成两个参数，整行调用作废，模型只能一遍遍重写，
+#: 连带把已经写好的叙述也重生成一遍。这类格式问题程序自己能修，不该让模型猜。
+_CALL_BLOCK_RE = re.compile(r"```[ \t]*[A-Za-z_]*[ \t]*\n(?P<body>.*?)```", re.S)
+#: 行首是「功能名(」的调用行
+_CALL_LINE_HEAD_RE = re.compile(r"^[ \t]*[A-Za-z_]\w*[ \t]*\(")
+#: ``pos=8,10``：逗号紧跟数字，是坐标而不是下一个参数
+_BARE_COORD_RE = re.compile(
+    r"(?P<key>[A-Za-z_]\w*)=(?P<a>[^\s,()\"'=\[\]{}]+)[ \t]*,[ \t]*(?P<b>\d+)"
+)
+
+#: 参数名的常见误写：模型记成别的工具上的名字，或干脆写了「value」。
+_ARG_ALIASES: dict[str, str] = {
+    "value": "players",
+    "who": "players",
+    "名单": "players",
+}
+
+
+def _repair_call_text(text: str) -> str:
+    """修补代码块里的调用写法（全角括号、没加引号的坐标）。
+
+    只动行首是调用的行，叙述正文（包括字符串值里的全角括号）原样保留。
+    """
+    if not text:
+        return text
+
+    def _fix_block(match: re.Match) -> str:
+        body = match.group("body")
+        lines = []
+        for line in body.split("\n"):
+            if _CALL_LINE_HEAD_RE.match(line):
+                line = line.replace("）", ")").replace("（", "(")
+                line = _BARE_COORD_RE.sub(
+                    lambda m: f'{m.group("key")}="{m.group("a")},{m.group("b")}"',
+                    line,
+                )
+            lines.append(line)
+        fixed = "\n".join(lines)
+        return match.group(0).replace(body, fixed, 1)
+
+    return _CALL_BLOCK_RE.sub(_fix_block, text)
+
+
+def _collapse_args(tool: Any, args: Mapping[str, Any]) -> dict[str, Any]:
+    """把写错的参数名并到功能真正声明的那个上。
+
+    例：``await_players(player=恽默)`` / ``await_players(value=无)`` 都并成
+    ``players``。只有在**唯一候选**时才并（前缀互为子串，或命中别名表），
+    拿不准就原样交给 :func:`~ATRI.system.agent.brain.action_parser.normalize_args`
+    报错——那至少能让模型看到「参数不存在，可用：players」。
+    """
+    declared = [arg.name for arg in getattr(tool, "args", ()) or ()]
+    if not declared:
+        return dict(args)
+
+    fixed: dict[str, Any] = {}
+    for key, value in args.items():
+        if key in declared:
+            fixed.setdefault(key, value)
+            continue
+        alias = _ARG_ALIASES.get(key, "")
+        if alias not in declared:
+            candidates = [d for d in declared if d.startswith(key) or key.startswith(d)]
+            alias = candidates[0] if len(candidates) == 1 else ""
+        if alias and alias not in fixed:
+            fixed[alias] = value
+        else:
+            fixed[key] = value
+    return fixed
+
+
+#: 工具回执压成一行前的最小长度（短的本来就不占地方，压了反而丢信息）
+_SHRINK_MIN_CHARS = 400
+
+#: 单轮里保留几条完整回执；更早的压成一行。
+#: 每一步思考都会把整份历史重发一遍，战斗块动辄三四千字，
+#: 五六步下来输入能从 7.8k 涨到 8.7k（战报 2026-10-23 实测）。
+_KEEP_FULL_FEEDBACKS = 2
+
+#: 「调用 X 返回：…」整段（到下一个调用或结尾为止）
+_CALL_RESULT_RE = re.compile(r"调用 (?P<name>[a-z_]+) 返回：[\s\S]*?(?=\n调用 |\Z)")
+
+
+def _shrink_old_feedback(messages: Any, keep: int = _KEEP_FULL_FEEDBACKS) -> None:
+    """把更早几轮的工具回执压成一行，只留最近几条完整的。
+
+    模型已经消费过那些结果（它的下一条输出就是照着写的），
+    重发整份只是把同一批字一遍遍付费；真需要细节时它可以再查。
+    """
+    users = [m for m in getattr(messages, "messages", ()) if getattr(m, "role", "") == "user"]
+    if len(users) <= keep:
+        return
+    for msg in users[:-keep]:
+        for part in getattr(getattr(msg, "content", None), "contents", ()) or ():
+            if getattr(part, "type", "") != "text":
+                continue
+            text = getattr(part, "content", "") or ""
+            if len(text) < _SHRINK_MIN_CHARS:
+                continue
+            shrunk = _CALL_RESULT_RE.sub(
+                lambda m: f"调用 {m.group('name')} 返回：（已结算，不再重复）", text
+            )
+            if shrunk != text:
+                part.content = shrunk
+
+
+def _error_brief(exc: BaseException) -> str:
+    """异常的一句话摘要：给模型看的，别把整个堆栈塞进提示词。"""
+    detail = str(exc).strip().replace("\n", " ")
+    return f"{type(exc).__name__}：{detail[:120]}" if detail else type(exc).__name__
 
 
 class AgentFinishError(Exception):
@@ -219,8 +335,22 @@ class ThinkingAgent(TrpgAgent):
 
         多代码块合并、DSML 原生调用、坏调用容错都在共享解释器里，这里只转发，
         避免与主 Agent 各自维护一套解析。
+
+        转发前先做一次**格式修补**（全角括号、``pos=8,10`` 这类没加引号的坐标）：
+        程序能修的就不必让模型重写一遍（那会连带把叙述也重新生成一次）。
+        修补后解析出的调用变多才采用，否则维持原样。
         """
-        return action_parser.split_response(text)
+        content, calls, issues = action_parser.split_response(text)
+        if not issues:
+            return content, calls, issues
+        repaired = _repair_call_text(text)
+        if repaired == text:
+            return content, calls, issues
+        r_content, r_calls, r_issues = action_parser.split_response(repaired)
+        if len(r_calls) > len(calls):
+            log.debug(f"修补后多解析出 {len(r_calls) - len(calls)} 个调用")
+            return r_content, r_calls, r_issues
+        return content, calls, issues
 
     # ---- 循环 ----
 
@@ -288,14 +418,19 @@ class ThinkingAgent(TrpgAgent):
                     continue
                 # 与主 Agent 共用同一套参数校验：问题回填让模型重写，
                 # 而不是等 tool.call 抛 TypeError 只报「执行失败」
-                args, arg_issues = action_parser.normalize_args(tool, call["args"])
+                args, arg_issues = action_parser.normalize_args(
+                    tool, _collapse_args(tool, call["args"])
+                )
                 if arg_issues:
                     log.debug(f"跑团功能 {name} 参数不合规：{arg_issues}")
                     feedback.append(
                         f"功能 {name} 的参数不合规：{'；'.join(arg_issues)}。"
                         "请对照功能说明里的参数重写本次调用"
                     )
-                    needs_result = True
+                    # 记账类功能（await_players 这类）写不写成都不会改变叙述的写法，
+                    # 为它把整段叙述重写一遍是白花一次整份提示词——只记反馈，不暂缓。
+                    if not tool.bookkeeping:
+                        needs_result = True
                     continue
                 try:
                     result = await tool.call(context, **args)
@@ -310,7 +445,12 @@ class ThinkingAgent(TrpgAgent):
                     continue
                 except Exception as e:
                     log.warning(f"跑团功能 {name} 执行失败：{str_traceback(e)}")
-                    feedback.append(f"功能 {name} 执行失败，请勿再次调用")
+                    # 带上原因：只说「执行失败」时模型无从判断该换参数还是换功能，
+                    # 只能盲试（战报里 move_scene 失败后它就这么连换了两个地点）。
+                    feedback.append(
+                        f"功能 {name} 执行失败（{_error_brief(e)}）。"
+                        "请换参数或换一种写法重试；若反复失败就改用其它功能达成目的。"
+                    )
                     needs_result = True
                     continue
                 if not tool.bookkeeping:
@@ -343,6 +483,8 @@ class ThinkingAgent(TrpgAgent):
                     "然后**单独**调用结束功能输出最终内容。"
                 )
 
+            # 结果已经给了模型一轮，重发整份只是重复付费：把更早的回执压成一行
+            _shrink_old_feedback(messages)
             messages.add_message(
                 LLMMessage("user", LLMContents().text("\n".join(feedback)))
             )

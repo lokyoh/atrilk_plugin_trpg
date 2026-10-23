@@ -18,6 +18,11 @@
 
 约定：``index.json`` 里写了的文档，磁盘上就必须有对应文件——缺文件会直接报错，
 宁可装不上，也不要装出半个世界。
+
+**版本**：``index.json`` 的 ``version`` 是这份预设的版本号（六位日期 ``YYMMDD``）。
+改了 ``presets/`` 下任何文件，**提交前**跑一次 ``scripts/bump_preset_version.py``——
+它会检查 ``presets/`` 是否有改动，有就把版本号提到当天。版本号一变，
+下次开局 :func:`ensure_preset` 就会按新版就地重装一遍，用户不需要手动清理旧世界。
 """
 
 from __future__ import annotations
@@ -45,10 +50,15 @@ from .world_store import (
 __all__ = [
     "DEFAULT_PRESET",
     "PRESET_ROOT",
+    "PRESET_THEME",
+    "VERSION_FORMAT",
+    "VERSION_KEY",
     "ensure_preset",
     "install_preset",
     "list_presets",
     "load_preset_index",
+    "preset_version",
+    "today_version",
 ]
 
 #: 预设目录在插件根目录下（``atrilk_plugin_trpg/presets``）
@@ -62,6 +72,28 @@ _PRESET_WORLD_DOC = MAIN_DOC_KEY
 
 #: 预设装进世界库时注册的主题标记
 PRESET_THEME = "预设"
+
+#: 预设索引里版本号那个键
+VERSION_KEY = "version"
+
+#: 版本号的写法：**六位日期** ``YYMMDD``（如 ``261024`` = 2026-10-24）。
+#: 不取 1.0 / 1.1 那套：预设改的是内容不是接口，日期本身就是「第几版」，
+#: 还能顺带看出最后改动是哪天。改了 ``presets/`` 下任何文件，
+#: 提交前用 ``scripts/bump_preset_version.py`` 把它提到当天——
+#: 版本号一变，下次开局就会按新版重装一遍。
+VERSION_FORMAT = "%y%m%d"
+
+
+def preset_version(name: str = DEFAULT_PRESET) -> str:
+    """预设的版本号（``presets/<name>/index.json`` 的 ``version``）；没有为空串。"""
+    return str(_read_preset_index(_preset_dir(name)).get(VERSION_KEY, "") or "")
+
+
+def today_version() -> str:
+    """今天的版本号（六位日期）。"""
+    import time
+
+    return time.strftime(VERSION_FORMAT)
 
 
 def list_presets() -> list[str]:
@@ -150,7 +182,7 @@ def _preset_profile(directory: Path) -> tuple[str, str]:
     path = directory / "docs" / "world" / f"{_PRESET_WORLD_DOC}.md"
     if not path.is_file():
         return "", ""
-    # 延迟导入：presets 只在「开局 预设」时用到，不该拖累插件导入链
+    # 延迟导入：presets 只在「装预设世界」时用到，不该拖累插件导入链
     from ..agents.dnd.gen_world import parse_world_profile
 
     return parse_world_profile(path.read_text(encoding="utf-8"))
@@ -242,31 +274,54 @@ def install_preset(name: str = DEFAULT_PRESET, *, world_key: str = "") -> str:
     )
 
     title, intro = _preset_profile(directory)
-    upsert_world(key, title=title or name, intro=intro, theme=PRESET_THEME)
+    version = preset_version(name)
+    upsert_world(
+        key,
+        title=title or name,
+        intro=intro,
+        theme=PRESET_THEME,
+        preset_version=version,
+    )
 
     try:
         _seed_bible(key, index)
     except Exception as e:  # 圣经是增强项：播种失败不影响安装结果
         log.warning(f"预设世界「{name}」圣经播种失败：{str_traceback(e)}")
 
-    log.info(f"预设世界「{name}」已安装：{count} 篇文档 → {key}")
+    log.info(
+        f"预设世界「{name}」已安装：{count} 篇文档 → {key}"
+        + (f"（版本 {version}）" if version else "")
+    )
     return key
 
 
 def ensure_preset(name: str = DEFAULT_PRESET) -> str:
-    """保证这个预设世界**已经装过**，返回它的世界键（幂等）。
+    """保证这个预设世界**已经装过、且是最新版**，返回它的世界键（幂等）。
 
-    与 :func:`install_preset` 的差别只有一个：**已经装过就直接复用**。
-    这是给「一条命令开局」用的——``/跑团.开局 无尽`` 反复发，
-    不该每次都往世界列表里塞一个一模一样的灰烬海。
+    与 :func:`install_preset` 的差别：**已经装过就直接复用**。
+    这是给「开局」用的——``/跑团.开局`` 反复发，不该每次都往世界列表里
+    塞一个一模一样的阿塞尔提姆。
 
     识别方式：世界注册表里 ``theme`` 等于 :data:`PRESET_THEME`、
     且标题与预设解析出来的世界名一致。标题来自同一份文档，
     所以这条判断与「装的是同一个预设」等价。
+
+    **版本不一致就重装**：预设改过之后（``index.json`` 的 ``version`` 变了），
+    库里那一份是旧的，就地用同一个 ``world_key`` 覆盖一遍——
+    而不是另建一个世界：另建会让世界列表里出现两个同名世界，
+    已经开过的存档也还指着旧的那份。存档那边不用管：文档是按键读的，
+    换内容不换键，跑过的局照样接着跑。
     """
     title, _intro = _preset_profile(_preset_dir(name))
+    version = preset_version(name)
     if title:
         for world in list_worlds():
             if world.theme == PRESET_THEME and world.title == title:
+                if version and world.preset_version != version:
+                    log.info(
+                        f"预设世界「{title}」有新版本"
+                        f"（{world.preset_version or '无'} → {version}），就地重装"
+                    )
+                    return install_preset(name, world_key=world.key)
                 return world.key
     return install_preset(name)

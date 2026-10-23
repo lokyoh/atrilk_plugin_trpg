@@ -206,6 +206,12 @@ class Spell:
     heal: str = ""  #: 治疗表达式
     half_on_save: bool = True  #: 需豁免的伤害法术：豁免成功是否减半
     auto_damage: bool = False  #: 无需攻击 / 豁免便直接造成伤害（如魔法飞弹）
+    #: 豁免失败时给目标挂的状态（规范状态名，见 ``conditions.CONDITIONS``）。
+    #: 5e 的控制法术都是「豁免失败 → 陷入某状态」，以前只能靠 DM 叙述，
+    #: 现在由 cast_spell 直接挂到敌人 / 角色卡上，回合推进据此跳过、攻击姿态也自动改。
+    conditions: tuple[str, ...] = ()
+    #: 状态撑几轮（0 = 不自动到期，交给 DM / 剧情）。到期由回合推进自动清掉。
+    condition_rounds: int = 0
     upcast: str = ""  #: 升环施放的效果
     scaling: str = ""  #: 戏法随等级成长
     desc: str = ""
@@ -353,6 +359,8 @@ def _spell(row: dict[str, Any]) -> Spell:
         heal=str(row.get("heal", "")),
         half_on_save=bool(row.get("half_on_save", True)),
         auto_damage=bool(row.get("auto_damage", False)),
+        conditions=as_texts(row.get("conditions")),
+        condition_rounds=max(0, int(row.get("condition_rounds", 0) or 0)),
         upcast=str(row.get("upcast", "")),
         scaling=str(row.get("scaling", "")),
         desc=str(row.get("desc", "")),

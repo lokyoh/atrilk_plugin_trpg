@@ -66,6 +66,7 @@ __all__ = [
     "roster_hp",
     "save_npcs",
     "sync_combatant",
+    "sync_roster_after_combat",
     "tier_by_key",
     "tier_from_key",
     "tier_names",
@@ -736,3 +737,83 @@ def sync_combatant(save: Save, enemy) -> None:
     elif record.status in {"倒下"}:
         record.status = "存活"
     upsert_npc(save, record)
+
+
+#: 退场类的「活的结局」：这三种都由 DM 在战场上定，战后原样保留
+_OUT_STATUSES = {"逃跑", "被俘", "失踪", "退场"}
+
+
+def sync_roster_after_combat(save: Save, state) -> int:
+    """战斗收尾：把这一场的结果**一次性对齐回名单**，返回改动了几条。
+
+    为什么要有它：战斗中不再允许 DM 用 ``update_npc`` 改参战者（名单是按模板
+    合并的，战场上是逐个个体，两套账必然对不上）。所以战斗期间一切改动都由
+    战斗系统直接写 ``combat.json``，**打完再由这里统一回填**：
+
+    - 具名 NPC（``Combatant.npc`` 有值）：血量、上限、结局（倒下 / 逃跑 / 存活）；
+    - 杂兵：名单里是按**怪物模板合并的一条**（三只「溺亡水手」只有一条记录），
+      没有「哪个个体」可言，就写还活着的那只里血最多的当代表——全倒了才写「倒下」。
+      这样至少不会出现「名单 15/22 存活、战场上其实一只都没了」。
+
+    只动参战者，场外的人物一条不碰；DM 写的 ``note`` 也不覆盖。
+    """
+    order = list(getattr(state, "order", ()) or ())
+    changed = 0
+    handled: set[str] = set()
+
+    for combatant in order:
+        if not getattr(combatant, "is_enemy", False):
+            continue
+        name = str(getattr(combatant, "npc", "") or "")
+        if not name:
+            continue
+        record = find_npc(save, name)
+        if record is None:
+            continue
+        handled.add(record.name)
+        hp = max(0, int(getattr(combatant, "hp", 0) or 0))
+        max_hp = max(1, int(getattr(combatant, "max_hp", 0) or record.max_hp or 1))
+        if hp <= 0:
+            status = "倒下"
+        elif bool(getattr(combatant, "out", False)):
+            status = record.status if record.status in _OUT_STATUSES else "逃跑"
+        else:
+            status = "存活"
+        if (record.hp, record.max_hp, record.status) != (hp, max_hp, status):
+            record.hp, record.max_hp, record.status = hp, max_hp, status
+            upsert_npc(save, record)
+            changed += 1
+
+    # 杂兵：按怪物模板聚合
+    groups: dict[str, list] = {}
+    for combatant in order:
+        if not getattr(combatant, "is_enemy", False):
+            continue
+        if str(getattr(combatant, "npc", "") or ""):
+            continue
+        key = str(getattr(combatant, "monster", "") or "")
+        if key:
+            groups.setdefault(key, []).append(combatant)
+
+    for template, units in groups.items():
+        for record in list_npcs(save):
+            if record.name in handled or record.template != template:
+                continue
+            alive = [
+                int(getattr(unit, "hp", 0) or 0)
+                for unit in units
+                if int(getattr(unit, "hp", 0) or 0) > 0
+                and not bool(getattr(unit, "out", False))
+            ]
+            max_hp = max(
+                [int(getattr(unit, "max_hp", 0) or 0) for unit in units]
+                + [record.max_hp or 1]
+            )
+            hp = max(alive) if alive else 0
+            status = "存活" if alive else "倒下"
+            if (record.hp, record.status) != (hp, status):
+                record.hp, record.max_hp, record.status = hp, max_hp, status
+                upsert_npc(save, record)
+                changed += 1
+
+    return changed

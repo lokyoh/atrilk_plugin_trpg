@@ -500,6 +500,160 @@ async def ensure_site(
     return picked, content
 
 
+#: 地点文档里的房间顺序行：「1. 主甲板」/「  1. 主甲板」/「1、主甲板」
+_ROOM_ROW_RE = re.compile(r"^\s*\d+\s*[.、]\s*(?P<name>\S.+?)\s*$")
+#: 子场所小节：「## 二·巨龙之憩修道院（place）」
+_SUBSITE_HEAD_RE = re.compile(r"^##\s*二\s*[·・]\s*(?P<name>[^（(\n]+?)\s*[（(]")
+#: 本处房间顺序：「## 二、房间顺序」
+_ROOMS_HEAD_RE = re.compile(r"^##\s*二\s*[、]\s*房间顺序")
+
+
+def _section_lines(text: str, start: int) -> list[str]:
+    """某个 ``## `` 小标题到下一个 ``## `` 之间的行（不含标题行本身）。"""
+    lines = str(text or "").splitlines()
+    out: list[str] = []
+    for line in lines[start + 1 :]:
+        if re.match(r"^##\s", line):
+            break
+        out.append(line)
+    return out
+
+
+def _rooms_of(text: str) -> list[str]:
+    """地点文档**本处**的房间顺序（失落矿坑那批：``## 二、房间顺序``）。"""
+    lines = str(text or "").splitlines()
+    for index, line in enumerate(lines):
+        if not _ROOMS_HEAD_RE.match(line):
+            continue
+        rooms: list[str] = []
+        for item in _section_lines(text, index):
+            found = _ROOM_ROW_RE.match(item)
+            if found:
+                rooms.append(found.group("name").strip())
+        return rooms
+    return []
+
+
+def _subsites(text: str) -> list[tuple[str, list[str]]]:
+    """地点文档里的**子场所**小节（风骸岛那份：岛上三个场所共用一份地点文档）。
+
+    官方模组一处地方常常是「岛上 / 堡里 / 船上」再分房间，而我们的世界库只把
+    **房间**落成场景、挂在地点名下——「罗盘玫瑰号残骸」这种**场所名**就只存在于
+    这里的小节标题里。不读它，DM 说「去罗盘玫瑰号」时程序只能当成一个新地方
+    去生成（生成出来的船与预设的七个舱室毫无关系）。
+    """
+    lines = str(text or "").splitlines()
+    out: list[tuple[str, list[str]]] = []
+    for index, line in enumerate(lines):
+        found = _SUBSITE_HEAD_RE.match(line)
+        if not found:
+            continue
+        rooms: list[str] = []
+        collecting = False
+        for item in _section_lines(text, index):
+            if "房间顺序" in item:
+                collecting = True
+                continue
+            if not collecting:
+                continue
+            row = _ROOM_ROW_RE.match(item)
+            if row:
+                rooms.append(row.group("name").strip())
+            elif item.strip().startswith("-"):
+                collecting = False  # 房间列表结束（下一项是「邻接」之类）
+        out.append((found.group("name").strip(), rooms))
+    return out
+
+
+def _same_place(wanted: str, title: str) -> bool:
+    """两个地名是不是一处（允许一方是另一方的简称）。"""
+    left = clean_name(str(wanted or ""))
+    right = clean_name(str(title or ""))
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    shorter, longer = sorted((left, right), key=len)
+    return len(shorter) >= 2 and shorter in longer
+
+
+def _subsite_rooms(world_key: str, name: str) -> list[str]:
+    """按**场所名**找它的房间顺序（扫第 4 层文档的小节）。
+
+    找不到返回空表——空表不是错误，只是「这个名字不是某个场所」。
+    """
+    wanted = clean_name(str(name or ""))
+    if not wanted:
+        return []
+    for site in names_at_level(world_key, 4):
+        doc = read_at_level(world_key, 4, site)
+        if doc is None:
+            continue
+        for title, rooms in _subsites(doc.content):
+            if rooms and _same_place(wanted, title):
+                return rooms
+    return []
+
+
+def _first_scene(world_key: str, names: list[str]):
+    """一串名字里**第一个已经是场景**的（按文档里写的顺序）。
+
+    房间顺序是作者定的次序，比索引顺序可信：拿它当「这一处的入口」。
+    """
+    for name in names:
+        cleaned = clean_name(str(name or ""))
+        if not cleaned:
+            continue
+        doc = read_doc(world_key, "scene", cleaned)
+        if doc is not None:
+            return doc
+    return None
+
+
+def _site_entry_scene(world_key: str, site: str):
+    """某地点的**入口场景**：同名场景 → 「房间顺序」第一个 → 辖下任意一个。
+
+    **地点是一片地方，场景才是演出的那一处**：风骸岛辖下有 26 个房间，
+    凡达林有一整条街。玩家说「去风骸岛」时该走进它辖下的第一处，
+    而不是拿地名去生成一份新的——那一份与预设的房间毫无关系，
+    事件节点的 at 永远对不上它（2026-10-24 修）。
+
+    没有辖下场景时返回 ``None``，交给调用方生成（新地点本来就该生成）。
+    """
+    doc = read_doc(world_key, "scene", site)
+    if doc is not None:
+        return doc
+    site_doc = read_at_level(world_key, 4, site)
+    if site_doc is None:
+        return None
+    # 本处有「二、房间顺序」就照它；没有（一处地方分成几个场所那样）
+    # 就取**第一个场所**的第一个房间——那正是作者排的入口。
+    rooms = _rooms_of(site_doc.content)
+    if not rooms:
+        for _title, sub_rooms in _subsites(site_doc.content):
+            if sub_rooms:
+                rooms = sub_rooms
+                break
+    return _first_scene(world_key, rooms) or _first_scene(
+        world_key, _scenes_of_site(world_key, site)
+    )
+
+
+def _scenes_of_site(world_key: str, site: str) -> list[str]:
+    """某地点辖下的场景名（没有「房间顺序」时的退路）。"""
+    wanted = clean_name(str(site or ""))
+    if not wanted:
+        return []
+    index = load_index(world_key)
+    out: list[str] = []
+    for key, entry in (index.get("docs") or {}).get("scene", {}).items():
+        meta = entry if isinstance(entry, dict) else {}
+        owner = clean_name(str(meta.get("site") or meta.get("parent") or ""))
+        if owner == wanted:
+            out.append(str(key))
+    return out
+
+
 def _find_site_hint(
     world_key: str, name: str, kind: str = ""
 ) -> tuple[str, str, str, str] | None:
@@ -531,9 +685,21 @@ def _find_site_hint(
 
 
 async def _make_scene(
-    world_key: str, name: str, kind: str, detailed: str, context: str
+    world_key: str,
+    name: str,
+    kind: str,
+    detailed: str,
+    context: str,
+    *,
+    near: str = "",
 ) -> tuple[str, str, str] | None:
-    """用某地点的详细文档生成场景，返回 ``(种类, 场景键, 场景正文)``。"""
+    """用某地点的详细文档生成场景，返回 ``(种类, 场景键, 场景正文)``。
+
+    :param near: 这次生成的对象所在的地方（给世界圣经按距离裁用）。
+        **必须显式传**——早先这里写的是 ``near=region or location``，而这两个名字
+        在本模块里根本没有定义，于是「DM 报了个地点名」的每一次 ``move_scene``
+        都在这里抛 ``NameError``（整局再也走不动，2026-10-24 修）。
+    """
     existing = read_doc(world_key, "scene", name)
     if existing is not None:
         return kind, existing.key, existing.content
@@ -542,7 +708,7 @@ async def _make_scene(
         scene_agent,
         f"场景「{name}」",
         world_key,
-        near=region or location,
+        near=near or name,
         location=detailed,
         kind=DOC_KIND_LABELS.get(kind, "地点"),
         context=context,
@@ -574,6 +740,21 @@ def _first_province(realm_text: str) -> tuple[str, str, str] | None:
     return provinces[0] if provinces else None
 
 
+#: 复合地名的分隔符：间隔号、斜杠、竖线、破折号（半角与全角都收）
+_COMPOUND_SEP_RE = re.compile(r"[·・/／\\|｜—\-–]+")
+
+
+def _split_compound(name: str) -> tuple[str, str] | None:
+    """把「风骸岛·登山路」拆成 ``("风骸岛", "登山路")``；不是复合写法返回 ``None``。
+
+    只拆一层：前缀保留原样（可能本身也带分隔符，递归时会再拆一次）。
+    """
+    parts = [part.strip() for part in _COMPOUND_SEP_RE.split(name) if part.strip()]
+    if len(parts) < 2:
+        return None
+    return "·".join(parts[:-1]), parts[-1]
+
+
 async def ensure_scene(
     world_key: str,
     location: str,
@@ -602,9 +783,30 @@ async def ensure_scene(
     # 2. 已经是地点（三个种类都试）
     site_doc = read_at_level(world_key, 4, name)
     if site_doc is not None:
+        # **地点是一片地方，场景才是演出的那一处**：它辖下已经有了房间，
+        # 就直接走进第一个（见 :func:`_site_entry_scene`），不要再去生成一份
+        # 同名的仿制品——风骸岛辖下 26 个房间，生成出来的是第 27 个，
+        # 事件节点的 at 永远对不上它，那一局就再也走不进事件。
+        doc = _site_entry_scene(world_key, name)
+        if doc is not None:
+            return "scene", doc.key, doc.content
         return await _make_scene(
-            world_key, name, site_doc.kind, site_doc.content, site_doc.content
+            world_key,
+            name,
+            site_doc.kind,
+            site_doc.content,
+            site_doc.content,
+            near=region or name,
         )
+
+    # 2.5 只是一处**场所**（「罗盘玫瑰号残骸」「巨龙之憩修道院」）：
+    #     它们没有自己的文档，只写在某份地点文档的「二·X」小节里。
+    #     没有这一步，DM 照事件的 stage 去 move_scene 必然定位不到，
+    #     于是凭空生成一个同名的新地方（白花一次模型调用，还与预设无关）。
+    rooms = _subsite_rooms(world_key, name)
+    doc = _first_scene(world_key, rooms)
+    if doc is not None:
+        return "scene", doc.key, doc.content
 
     # 3. 省文档的地点索引里有它 → 落地点 → 织场景
     found = _find_site_hint(world_key, name, want)
@@ -621,8 +823,20 @@ async def ensure_scene(
         if detailed is None:
             return None
         return await _make_scene(
-            world_key, name, detailed[0], detailed[1], province_text
+            world_key, name, detailed[0], detailed[1], province_text, near=province
         )
+
+    # 3.5 名字写成「区域·地点」（DM 很爱这么写：风骸岛·登山路）：拆开再找一次。
+    #     不拆的话它会走到下面「生成新地点」那条路——凭空多花一次模型调用，
+    # 生成出来的东西还跟预设世界里的那个地点对不上。
+    split = _split_compound(name)
+    if split is not None:
+        head, tail = split
+        retried = await ensure_scene(
+            world_key, tail, kind=kind, region=head or str(region or "")
+        )
+        if retried is not None:
+            return retried
 
     region_name = clean_name(str(region or ""))
     world_text = load_doc(world_key, "world", "main") or ""
@@ -638,7 +852,7 @@ async def ensure_scene(
             picked = _first_site(province_text, want)
             if picked is not None:
                 picked_name, picked_kind, base = picked
-                existing_scene = read_doc(world_key, "scene", picked_name)
+                existing_scene = _site_entry_scene(world_key, picked_name)
                 if existing_scene is not None:
                     return "scene", existing_scene.key, existing_scene.content
                 detailed = await ensure_site(
@@ -651,7 +865,12 @@ async def ensure_scene(
                 )
                 if detailed is not None:
                     return await _make_scene(
-                        world_key, picked_name, detailed[0], detailed[1], province_text
+                        world_key,
+                        picked_name,
+                        detailed[0],
+                        detailed[1],
+                        province_text,
+                        near=name,
                     )
 
     # 5. location 本身是某个**王国** → 落王国 → 取第一个省 → 取第一个地点
@@ -688,6 +907,7 @@ async def ensure_scene(
                                 detailed[0],
                                 detailed[1],
                                 province_text,
+                                near=picked_province[0],
                             )
 
     # 6. 兜底：给了种类，就用所在王国 / 省的上下文直接把这个名字当新地点生成
@@ -711,7 +931,14 @@ async def ensure_scene(
             province=parent,
         )
         if detailed is not None:
-            return await _make_scene(world_key, name, detailed[0], detailed[1], context)
+            return await _make_scene(
+                world_key,
+                name,
+                detailed[0],
+                detailed[1],
+                context,
+                near=parent or region_name,
+            )
     return None
 
 
