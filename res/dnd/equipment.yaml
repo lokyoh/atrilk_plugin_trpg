@@ -93,6 +93,10 @@ shields:
   base_ac: 2
   weight: 6
 weapons:
+# 数值对照《快速参考 (5e_2014).md》武器表（2014 PHB）。
+# 词条：灵巧 / 轻型 / 投掷(带射程) / 双手 / 两用(双手伤害见 two_handed_damage) /
+#       重型(小型生物攻击劣势) / 弹药(每次攻击耗一枚, 战后回收一半) / 装填 / 触及 / 特殊
+# —— 简易近战 ——
 - key: club
   cn: 棍棒
   category: 简易近战
@@ -109,6 +113,8 @@ weapons:
   - 灵巧
   - 轻型
   - 投掷
+  thrown_normal: 20
+  thrown_max: 60
 - key: greatclub
   cn: 巨棒
   category: 简易近战
@@ -124,6 +130,8 @@ weapons:
   properties:
   - 轻型
   - 投掷
+  thrown_normal: 20
+  thrown_max: 60
 - key: javelin
   cn: 标枪
   category: 简易近战
@@ -131,6 +139,18 @@ weapons:
   damage_type: 穿刺
   properties:
   - 投掷
+  thrown_normal: 30
+  thrown_max: 120
+- key: light_hammer
+  cn: 轻锤
+  category: 简易近战
+  damage: 1d4
+  damage_type: 钝击
+  properties:
+  - 轻型
+  - 投掷
+  thrown_normal: 20
+  thrown_max: 60
 - key: mace
   cn: 硬头槌
   category: 简易近战
@@ -142,7 +162,15 @@ weapons:
   damage: 1d6
   damage_type: 钝击
   properties:
-  - 双手
+  - 两用
+  two_handed_damage: 1d8
+- key: sickle
+  cn: 镰刀
+  category: 简易近战
+  damage: 1d4
+  damage_type: 挥砍
+  properties:
+  - 轻型
 - key: spear
   cn: 矛
   category: 简易近战
@@ -150,23 +178,39 @@ weapons:
   damage_type: 穿刺
   properties:
   - 投掷
-  - 双手
+  - 两用
+  two_handed_damage: 1d8
+  thrown_normal: 20
+  thrown_max: 60
+# —— 简易远程 ——
 - key: light_crossbow
   cn: 轻弩
   category: 简易远程
   damage: 1d8
   damage_type: 穿刺
   properties:
-  - 双手
+  - 弹药
   - 装填
+  - 双手
   ranged_normal: 80
   ranged_max: 320
+- key: dart
+  cn: 飞镖
+  category: 简易远程
+  damage: 1d4
+  damage_type: 穿刺
+  properties:
+  - 灵巧
+  - 投掷
+  thrown_normal: 20
+  thrown_max: 60
 - key: shortbow
   cn: 短弓
   category: 简易远程
   damage: 1d6
   damage_type: 穿刺
   properties:
+  - 弹药
   - 双手
   ranged_normal: 80
   ranged_max: 320
@@ -175,19 +219,40 @@ weapons:
   category: 简易远程
   damage: 1d4
   damage_type: 钝击
+  properties:
+  - 弹药
   ranged_normal: 30
   ranged_max: 120
+# —— 军用近战 ——
 - key: battleaxe
   cn: 战斧
   category: 军用近战
   damage: 1d8
   damage_type: 挥砍
+  properties:
+  - 两用
+  two_handed_damage: 1d10
+- key: flail
+  cn: 链枷
+  category: 军用近战
+  damage: 1d8
+  damage_type: 钝击
+- key: glaive
+  cn: 长柄刀
+  category: 军用近战
+  damage: 1d10
+  damage_type: 挥砍
+  properties:
+  - 重型
+  - 触及
+  - 双手
 - key: greataxe
   cn: 巨斧
   category: 军用近战
   damage: 1d12
   damage_type: 挥砍
   properties:
+  - 重型
   - 双手
 - key: greatsword
   cn: 巨剑
@@ -195,12 +260,55 @@ weapons:
   damage: 2d6
   damage_type: 挥砍
   properties:
+  - 重型
   - 双手
+- key: halberd
+  cn: 戟
+  category: 军用近战
+  damage: 1d10
+  damage_type: 挥砍
+  properties:
+  - 重型
+  - 触及
+  - 双手
+- key: lance
+  cn: 骑枪
+  category: 军用近战
+  damage: 1d12
+  damage_type: 穿刺
+  properties:
+  - 触及
+  - 特殊
 - key: longsword
   cn: 长剑
   category: 军用近战
   damage: 1d8
   damage_type: 挥砍
+  properties:
+  - 两用
+  two_handed_damage: 1d10
+- key: maul
+  cn: 巨锤
+  category: 军用近战
+  damage: 2d6
+  damage_type: 钝击
+  properties:
+  - 重型
+  - 双手
+- key: morningstar
+  cn: 钉头锤
+  category: 军用近战
+  damage: 1d8
+  damage_type: 穿刺
+- key: pike
+  cn: 长矛
+  category: 军用近战
+  damage: 1d10
+  damage_type: 穿刺
+  properties:
+  - 重型
+  - 触及
+  - 双手
 - key: rapier
   cn: 细剑
   category: 军用近战
@@ -224,39 +332,56 @@ weapons:
   properties:
   - 灵巧
   - 轻型
-- key: warhammer
-  cn: 战锤
+- key: trident
+  cn: 三叉戟
   category: 军用近战
-  damage: 1d8
-  damage_type: 钝击
+  damage: 1d6
+  damage_type: 穿刺
+  properties:
+  - 投掷
+  - 两用
+  two_handed_damage: 1d8
+  thrown_normal: 20
+  thrown_max: 60
 - key: warpick
   cn: 战镐
   category: 军用近战
   damage: 1d8
   damage_type: 穿刺
-- key: halberd
-  cn: 戟
+- key: warhammer
+  cn: 战锤
   category: 军用近战
-  damage: 1d10
+  damage: 1d8
+  damage_type: 钝击
+  properties:
+  - 两用
+  two_handed_damage: 1d10
+- key: whip
+  cn: 鞭子
+  category: 军用近战
+  damage: 1d4
   damage_type: 挥砍
   properties:
-  - 双手
+  - 灵巧
   - 触及
-- key: longbow
-  cn: 长弓
+# —— 军用远程 ——
+- key: blowgun
+  cn: 吹箭筒
   category: 军用远程
-  damage: 1d8
+  damage: 1
   damage_type: 穿刺
   properties:
-  - 双手
-  ranged_normal: 150
-  ranged_max: 600
+  - 弹药
+  - 装填
+  ranged_normal: 25
+  ranged_max: 100
 - key: hand_crossbow
   cn: 手弩
   category: 军用远程
   damage: 1d6
   damage_type: 穿刺
   properties:
+  - 弹药
   - 轻型
   - 装填
   ranged_normal: 30
@@ -267,7 +392,30 @@ weapons:
   damage: 1d10
   damage_type: 穿刺
   properties:
-  - 双手
+  - 弹药
+  - 重型
   - 装填
+  - 双手
   ranged_normal: 100
   ranged_max: 400
+- key: longbow
+  cn: 长弓
+  category: 军用远程
+  damage: 1d8
+  damage_type: 穿刺
+  properties:
+  - 弹药
+  - 重型
+  - 双手
+  ranged_normal: 150
+  ranged_max: 600
+- key: net
+  cn: 捕网
+  category: 军用远程
+  damage: "—"
+  damage_type: ""
+  properties:
+  - 特殊
+  - 投掷
+  thrown_normal: 5
+  thrown_max: 15

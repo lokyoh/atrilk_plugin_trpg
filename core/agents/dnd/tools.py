@@ -463,10 +463,16 @@ def _query_weapon(name: str) -> str:
         raise KeyError(f"未知武器：{name}")
     lines = [f"{weapon.cn}（{weapon.category.value}）"]
     lines.append(f"伤害：{weapon.damage} {weapon.damage_type}")
+    if weapon.is_versatile:
+        lines.append(f"两用：双手 {weapon.two_handed_damage}")
     if weapon.properties:
         lines.append("属性：" + "、".join(weapon.properties))
     if weapon.is_ranged:
         lines.append(f"射程：{weapon.ranged_normal}/{weapon.ranged_max} 尺")
+    if weapon.is_thrown:
+        lines.append(f"投掷射程：{weapon.thrown_normal}/{weapon.thrown_max} 尺")
+    if weapon.is_ammunition:
+        lines.append("弹药：" + " / ".join(weapon.ammo_names) + "（每次攻击耗一枚）")
     return "\n".join(lines)
 
 
@@ -705,6 +711,13 @@ def _query_difficulty(name: str) -> str:
     )
 
 
+def _query_rule(name: str) -> str:
+    """查探索 / 环境规则（坠落伤害、旅行步调、强行军、攀爬游泳）。"""
+    from ...dnd import environment
+
+    return environment.rule_lookup(str(name or "").strip())
+
+
 def _query_condition(name: str) -> str:
     """查状态条件：留空列全部，给名字出结算效果（支持同义写法 / 力竭）。"""
     text = str(name or "").strip()
@@ -754,6 +767,7 @@ _DATA_TABLES = {
     "npc_tier": _query_npc_tier,
     "condition": _query_condition,
     "difficulty": _query_difficulty,
+    "rule": _query_rule,
 }
 
 _DATA_ALIASES = {
@@ -804,6 +818,12 @@ _DATA_ALIASES = {
     "dc": "difficulty",
     "难度": "difficulty",
     "难度表": "difficulty",
+        "rule": "rule",
+        "规则": "rule",
+        "探索规则": "rule",
+        "坠落": "rule",
+        "旅行": "rule",
+        "强行军": "rule",
     # —— 全局世界库文档 ——
     "world": "world",
     "世界": "world",
@@ -881,11 +901,10 @@ class QueryDataTool(AgentTool):
     max_result_chars = 2500
     description = (
         "查 DND 数据表（race/profession/skill/weapon/armor/monster/bestiary/item/"
-        "spell/condition/difficulty/npc_tier/npc）或世界库文档（world/realm/"
+        "spell/condition/difficulty/rule/npc_tier/npc）或世界库文档（world/realm/"
         "province/city/place/dungeon/scene/event），table 可写中文；"
-        "bestiary=怪物图鉴名录（只有名字/类型/CR/栖息地，可写 name=cr 5 按 CR 挑）；"
-        "monster 按图鉴四套分类查：name 写类型/栖息地/群组（如「森林」「类地精」，可组合），"
-        "或写「随机 幽暗地域 亡灵」让系统抽一只"
+        "bestiary=图鉴名录（cr 5 按 CR 挑）；monster 按类型/栖息地/群组查或写"
+        "「随机 幽暗地域 亡灵x3」；rule 查探索规则（坠落/旅行步调/强行军）"
     )
     args = (
         ToolArg("table", "str", "表名 / 文档类型"),
@@ -916,8 +935,8 @@ class QueryDataTool(AgentTool):
         if handler is None:
             return (
                 "未知数据表，可用：race / profession / skill / weapon / armor / monster / "
-                "bestiary / item / spell / condition / difficulty / npc_tier / npc，或世界库文档："
-                "world / realm / province / city / place / dungeon / scene / event"
+                "bestiary / item / spell / condition / difficulty / rule / npc_tier / npc，"
+                "或世界库文档：world / realm / province / city / place / dungeon / scene / event"
             )
         try:
             return handler(text)
@@ -940,14 +959,15 @@ class UpdateCharacterTool(AgentTool):
             "field",
             "str",
             "hp / temp_hp / conditions / concentrating / 死亡豁免 / exhaustion / exp / "
-            "level / name / notes / features / tags / spells / equipment",
+            "level / name / notes / features / tags / spells / equipment / attune（同调）",
         ),
         ToolArg(
             "value",
             "str",
             "新值；hp 可写「满血」；conditions/spells/equipment 用、分隔（可写「清空」）；"
             "concentrating 写法术名（换专注会顶替旧法术）或「中断」；"
-            "features/tags 追加；死亡豁免可写 清空/复活/稳定/死亡/成功N/失败N",
+            "features/tags 追加；死亡豁免可写 清空/复活/稳定/死亡/成功N/失败N；"
+            "attune 写物品名同调、终止+物品名解除（至多 3 件）",
         ),
         ToolArg("player", "str", "改谁：角色名或 user_id；单人可留空"),
     )
@@ -1142,11 +1162,28 @@ class UpdateCharacterTool(AgentTool):
                 message = "装备已设为：" + "、".join(card.equipment)
                 if unknown:
                     message += f"；没认出这些写法（已按原名收下）：{'、'.join(unknown)}"
+        elif field in {"attune", "attunement", "同调"}:
+            # 同调（5e2014）：短休中专注一件物品完成；至多 3 件，不认重复的相同物品
+            if text.lower() in _CONDITION_CLEAR_WORDS:
+                dropped = len(card.attuned)
+                card.attuned = []
+                message = f"同调已全部终止（{dropped} 件）"
+            elif text.startswith(("终止", "解除", "放弃")):
+                target = text[2:].strip(" ：:")
+                ok, note = card.unattune(target)
+                if not ok:
+                    return f"【{card.name}】{note}" if card.name else note
+                message = note
+            else:
+                ok, note = card.attune(text)
+                if not ok:
+                    return f"【{card.name}】{note}" if card.name else note
+                message = note
         else:
             return (
                 "不支持的字段，可用：hp / temp_hp / conditions / concentrating / "
                 "死亡豁免 / exhaustion / exp / level / name / notes / features / "
-                "tags / spells / equipment"
+                "tags / spells / equipment / attune（同调）"
             )
 
         if save is not None:
@@ -1442,26 +1479,25 @@ class StartCombatTool(AgentTool):
     function_name = "start_combat"
     #: 返回里有战场地图与开战指引，放宽
     max_result_chars = 4000
-    description = "宣布开战：掷先攻、排顺序并接管回合（敌人回合用 enemy_attack 结算）"
+    description = "开战：掷先攻排序并接管回合（敌人回合用 enemy_attack 结算）"
     args = (
         ToolArg(
             "enemies",
             "str",
             "敌人清单：地精x3 / 3只地精；具名 NPC 写「名字:档位」，如 卡尔:老兵、打手x2:士兵；"
-            "想让系统替你挑就写「随机 幽暗地域 亡灵x3」（按图鉴的类型 / 栖息地 / 群组 / 挑战等级抽）",
+            "懒得挑就写「随机 幽暗地域 亡灵x3」（按类型/栖息地/群组/CR 抽）",
         ),
         ToolArg("note", "str", "起因（可选），如「在酒馆后巷伏击」"),
         ToolArg(
             "terrain",
             "str",
-            "战场环境（可选），如「雨夜的窄巷」；留空用当前场景自动生成",
+            "战场环境（可选），如「雨夜的窄巷」；留空按当前场景生成",
         ),
         ToolArg(
             "daylight",
             "str",
-            "这里有没有日光（可选）：写「是」或「否」。地牢、室内、夜间写「否」，"
-            "野外白天写「是」。只影响日照敏感的怪（狗头人 / 卓尔……）——"
-            "有日光时它们的攻击带劣势；留空则由你每次自行裁定",
+            "有无日光（可选，是/否）：地牢、室内、夜间写「否」，野外白天写「是」；"
+            "只影响日照敏感的怪（狗头人 / 卓尔……），留空则由你裁定",
         ),
     )
 
@@ -1667,9 +1703,11 @@ class AttackTool(AgentTool):
     description = "玩家攻击：自动掷命中与伤害并扣血（武器默认取卡上第一件）"
     args = (
         ToolArg("target", "str", "攻击目标，如 地精2"),
-        ToolArg("weapon", "str", "武器（可选，默认第一件）"),
+        ToolArg("weapon", "str", "武器（可选）"),
         ToolArg("player", "str", "谁在攻击：角色名或 user_id；单人可留空"),
         ToolArg("advantage", "str", "普通 / 优势 / 劣势"),
+        ToolArg("two_handed", "str", "两用武器双手持用：是/否（默认否）"),
+        ToolArg("off_hand", "str", "副手攻击（双武器，伤害不加大幅值）：是/否"),
     )
 
     @staticmethod
@@ -1679,6 +1717,8 @@ class AttackTool(AgentTool):
         weapon: Any = "",
         player: Any = "",
         advantage: Any = "普通",
+        two_handed: Any = "",
+        off_hand: Any = "",
         **kwargs: Any,
     ) -> str:
         save = load_save(context.save_id) if context.save_id else None
@@ -1697,6 +1737,8 @@ class AttackTool(AgentTool):
             str(target or ""),
             str(weapon or ""),
             advantage=_parse_advantage(advantage),
+            two_handed=str(two_handed or "").strip() in {"是", "双手", "yes", "y", "true"},
+            off_hand=str(off_hand or "").strip() in {"是", "副手", "yes", "y", "true"},
         )
         # 行动经济（软提示）：真正掷过攻击才记一次「动作」；超支只提醒，不拦截。
         if f"【{card.name}】" in text:
@@ -2201,6 +2243,14 @@ class CastSpellTool(AgentTool):
         if not card.is_caster:
             return f"{card.name} 的职业没有施法能力，无法施展法术。"
 
+        # 5e：着装不具有熟练项的护甲 / 盾牌时不能施法（先脱甲再施）
+        castable, cast_block = card.can_cast()
+        if not castable:
+            return (
+                f"{card.name} {cast_block}——无法施展 {spell_obj.cn}。"
+                "（先用 update_character 换下护甲 / 盾牌，或让 DM 按叙述裁决）"
+            )
+
         warn = ""
         if not card.knows_spell(spell_obj):
             warn = f"（注意：{spell_obj.cn} 不在 {card.name} 的法术表里，若是卷轴 / 神赐请自行解释）\n"
@@ -2333,7 +2383,8 @@ class CastSpellTool(AgentTool):
         # —— 法术攻击 ——
         if spell_obj.attack:
             lines.append(f"法术攻击 {card.spell_attack_bonus:+d}")
-            damage_expr = spell_obj.damage_expr(casting_mod)
+            # 戏法按**角色等级**成长（5e2014：17 级的火焰箭是 4d10）
+            damage_expr = spell_obj.damage_expr(casting_mod, level=card.level)
             # 触碰类法术攻击算近战（麻痹 / 昏迷的目标在 5 尺内被命中即暴击）
             melee_spell = any(
                 word in str(spell_obj.range_text or "")
@@ -2388,7 +2439,9 @@ class CastSpellTool(AgentTool):
 
         # —— 自动命中（如魔法飞弹 / 匕首之云）——
         if spell_obj.auto_damage:
-            damage, detail = roll_damage(spell_obj.damage_expr(casting_mod))
+            damage, detail = roll_damage(
+                spell_obj.damage_expr(casting_mod, level=card.level)
+            )
             lines.append(f"自动命中：伤害 {detail} {spell_obj.damage_type_text}")
             for item in targets:
                 if _target_down(save, item):
@@ -2412,7 +2465,9 @@ class CastSpellTool(AgentTool):
         damage = 0
         detail = ""
         if spell_obj.damage:
-            damage, detail = roll_damage(spell_obj.damage_expr(casting_mod))
+            damage, detail = roll_damage(
+                spell_obj.damage_expr(casting_mod, level=card.level)
+            )
             lines.append(f"伤害 {detail} {spell_obj.damage_type_text}")
         for item in targets:
             if _target_down(save, item):
@@ -2478,7 +2533,7 @@ class RestTool(AgentTool):
     function_name = "rest"
     description = (
         "结算休息：长休回满生命与法术位、清临时生命、力竭 -1、恢复一半已耗生命骰；"
-        "短休回契约法术位，可用 hit_dice 指定花几颗生命骰回血"
+        "短休回契约法术位"
     )
     args = (
         ToolArg("kind", "str", "长休 / 短休"),
@@ -2534,38 +2589,32 @@ class RestTool(AgentTool):
                 card.current_hp = None
                 card.temp_hp = 0
                 # 口粮：长休要吃一顿。**5e 的力竭恢复要求进食饮水**，
-                # 所以饿着睡不恢复力竭，反而要按饥饿规则过豁免。
+                # 所以饿着睡不恢复力竭；挨饿的计时按参考文档「粮食与水」：
+                # 连续 **3 + 体质调整值** 天不进食才开始每日 +1 力竭
+                # （不是「一天不吃就过豁免」——那条是 2024 的口径，2014 没有）。
                 if card.rations > 0:
                     card.rations -= 1
+                    card.hunger_days = 0
                     notes.append(f"吃掉 1 份口粮（剩 {card.rations} 份）")
                     if card.exhaustion:
                         card.exhaustion = max(0, card.exhaustion - 1)
                         notes.append(f"力竭降至 {card.exhaustion} 级")
-                elif card.exhaustion:
-                    hungry = card.check_save("con", FATIGUE_DC)
-                    if hungry.success:
-                        notes.append(
-                            f"没有口粮，饿着睡了一夜但撑住了"
-                            f"（体质豁免 {hungry.total} ≥ {FATIGUE_DC}，力竭未降）"
-                        )
-                    else:
-                        card.exhaustion = min(6, card.exhaustion + 1)
-                        notes.append(
-                            f"没有口粮（体质豁免 {hungry.total} < {FATIGUE_DC}，"
-                            f"力竭升到 {card.exhaustion} 级）"
-                        )
                 else:
-                    hungry = card.check_save("con", FATIGUE_DC)
-                    if hungry.success:
-                        notes.append(
-                            f"没有口粮，饿着睡了一夜但撑住了（体质豁免 {hungry.total}）"
-                        )
-                    else:
+                    card.hunger_days += 1
+                    limit = card.hunger_limit()
+                    if card.hunger_days > limit:
                         card.exhaustion = min(6, card.exhaustion + 1)
                         notes.append(
-                            f"没有口粮，饿到力竭 {card.exhaustion} 级"
-                            f"（体质豁免 {hungry.total} < {FATIGUE_DC}）"
+                            f"没有口粮：挨饿第 {card.hunger_days} 天"
+                            f"（体质撑不过 {limit} 天），力竭升到 {card.exhaustion} 级"
                         )
+                    else:
+                        notes.append(
+                            f"没有口粮，今天没吃东西"
+                            f"（还能再撑 {limit - card.hunger_days} 天）"
+                        )
+                    if card.exhaustion:
+                        notes.append("饿着睡不恢复力竭")
                 before = card.spell_slots_text()
                 card.restore_slots(kind="long")
                 card.clear_death_state()
@@ -2637,6 +2686,17 @@ class RestTool(AgentTool):
             lines.extend(rest_time(save, long=long_rest))
         except Exception as e:  # 时间推进失败不该毁掉一次休息
             log.warning(f"推进休息时间失败：{str_traceback(e)}")
+        if not long_rest:
+            # 5e2014：同调在短休中专注完成——这里点给 DM，别让他忘了这条入口
+            holders = [c for c in cards if c.attuned]
+            if holders:
+                lines.append(
+                    "同调中：" + "；".join(f"{c.name} {c.attunement_text()}" for c in holders)
+                )
+            lines.append(
+                "（短休里可以同调魔法物品：update_character 的 attune=物品名，"
+                "同时至多 3 件）"
+            )
         return "\n".join(lines)
 
 
@@ -2653,8 +2713,7 @@ class UpdateNpcTool(AgentTool):
         ToolArg(
             "note",
             "str",
-            "身份、关系、欠的账、**说话风格**（口头禅、语气、称呼习惯）；"
-            "下次照着写就不会换了个人（可选）",
+            "身份、关系、欠的账、**说话风格**（口头禅/语气/称呼；不写下次就换了个人，可选）",
         ),
         ToolArg("place", "str", "最后出现的地点（可选）"),
     )

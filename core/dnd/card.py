@@ -41,11 +41,14 @@ from .conditions import (
     split_text,
 )
 from .equipment import (
+    Armor,
     Weapon,
+    armor_proficient,
     compute_armor_class,
     get_armor,
     get_weapon,
     parse_item_stack,
+    weapon_proficient,
 )
 from .items import get_item
 from .profession import DndClass, get_class
@@ -239,6 +242,10 @@ class DndCharacter(TrpgCharacter):
     score_rolls: dict[str, list[int]] = field(default_factory=dict)
     #: 熟练技能（内部键）
     skill_proficiencies: list[str] = field(default_factory=list)
+    #: 护甲 / 盾牌熟练项（类别名：轻甲 / 中甲 / 重甲 / 盾牌），职业 + 种族结算
+    armor_proficiencies: list[str] = field(default_factory=list)
+    #: 武器熟练项（``简易武器`` / ``军用武器`` 或具体武器键 / 中文名）
+    weapon_proficiencies: list[str] = field(default_factory=list)
     #: 装备（字符串形式，如 ``长剑`` / ``箭×20``）
     equipment: list[str] = field(default_factory=list)
     #: 已选装备包键（多选一的记录）
@@ -258,9 +265,15 @@ class DndCharacter(TrpgCharacter):
     #: 力竭等级（0~6）
     exhaustion: int = 0
     #: 口粮份数。5e 的初始装备包给 10 份，长休吃一份；
-    #: 吃不上就按饥饿规则过一次体质豁免（见 ``agents/dnd/tools.py`` 的 rest）。
+    #: 吃不上就按饥饿规则计时（见 :meth:`hunger_limit`）。
     #: **刻意不做逐日口粮清单**：一个整数够回答「还剩几顿」，多一套物品记录只是负担。
     rations: int = 10
+    #: 连续未进食天数（5e2014「粮食与水」：3 + 体质调整值 天才开始挨饿，
+    #: 之后每饿一天 +1 力竭；吃上一天就归零）
+    hunger_days: int = 0
+    #: 已同调的魔法物品（物品 key）。5e2014「同调」：短休中专注一件物品完成同调，
+    #: **同时至多 3 件**，且不能与多于一件**相同**的物品同调。
+    attuned: list[str] = field(default_factory=list)
     #: 已知 / 可用法术（法术 key，法师为法术书收录，其他职业为已习得 / 可准备）
     spells: list[str] = field(default_factory=list)
     #: 已消耗的法术位：``{"1": 2}`` 表示 1 环已用 2 个（上限由职业与等级推出）
@@ -279,6 +292,9 @@ class DndCharacter(TrpgCharacter):
     #: 已消耗的生命骰数（短休花掉的；长休按 5e 回一半，见
     #: :meth:`regain_hit_dice`）。总数 = 等级，恢复见 :meth:`restore_hit_dice`
     hit_dice_used: int = 0
+    #: 游泳速度（尺）；水生种族（海精灵 / 崔斯特 / 蜥蜴人等）在建卡或 DM 设定后非零。
+    #: 用于水下战斗——有游泳速度时水下近战武器攻击不受劣势（见 combat.attack）。
+    swim_speed: int = 0
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -286,6 +302,9 @@ class DndCharacter(TrpgCharacter):
         self.skill_proficiencies = list(dict.fromkeys(self.skill_proficiencies))
         self.equipment = list(dict.fromkeys(self.equipment))
         self.conditions = list(dict.fromkeys(self.conditions))
+        # 旧存档没有熟练项字段：按职业 + 种族补一遍（之后 DM 可以自行增改）
+        if not self.armor_proficiencies and not self.weapon_proficiencies:
+            self._fill_default_proficiencies()
         self.death_saves_success = max(0, min(3, int(self.death_saves_success or 0)))
         self.death_saves_failures = max(0, min(3, int(self.death_saves_failures or 0)))
         self.stable = bool(self.stable)
@@ -308,6 +327,9 @@ class DndCharacter(TrpgCharacter):
         self.concentrating = str(self.concentrating or "").strip()
         # 生命骰消耗不能超过等级、也不能为负
         self.hit_dice_used = max(0, min(self.level, int(self.hit_dice_used or 0)))
+        self.hunger_days = max(0, int(self.hunger_days or 0))
+        # 同调去重（手改存档可能写重）
+        self.attuned = list(dict.fromkeys(str(k) for k in (self.attuned or [])))
 
     # —— 生命骰（短休花费 / 长休恢复）——
 
@@ -359,6 +381,7 @@ class DndCharacter(TrpgCharacter):
         """按建卡流程的产出一份角色卡。"""
         race_obj = get_race(race)
         sub_obj = race_obj.resolve_subrace(subrace) if subrace else None
+        class_obj = get_class(profession)
         resistances = list(damage_resistances or [])
         # 种族 / 亚种自带的抗性（矮人抗毒、提夫林抗火……）自动补上；
         # 先查（种族, 亚种）组合，再回退到（种族, 空）的种族级条目
@@ -374,12 +397,22 @@ class DndCharacter(TrpgCharacter):
             name=name,
             race=race_obj.key,
             subrace=sub_obj.key if sub_obj else "",
-            profession=get_class(profession).key,
+            profession=class_obj.key,
             background=get_background(background).key if background else "",
             base_scores=dict(base_scores or {}),
             score_method=score_method,
             score_rolls=dict(score_rolls or {}),
             skill_proficiencies=list(skills or []),
+            armor_proficiencies=list(
+                dict.fromkeys(
+                    (*class_obj.armor_proficiencies, *race_obj.armor_of(sub_obj))
+                )
+            ),
+            weapon_proficiencies=list(
+                dict.fromkeys(
+                    (*class_obj.weapon_proficiencies, *race_obj.weapons_of(sub_obj))
+                )
+            ),
             equipment=list(equipment or []),
             equipment_package=equipment_package,
             has_shield=any("盾" in str(item) for item in (equipment or [])),
@@ -415,6 +448,80 @@ class DndCharacter(TrpgCharacter):
     def proficiency(self) -> int:
         """熟练加值。"""
         return proficiency_bonus(self.level)
+
+    # —— 护甲 / 武器熟练项 ——
+
+    def _fill_default_proficiencies(self) -> None:
+        """按职业 + 种族（含亚种）填出默认熟练项（建卡与旧存档升级都用它）。"""
+        armor: list[str] = []
+        weapons: list[str] = []
+        profession = self.profession_obj
+        if profession:
+            armor.extend(profession.armor_proficiencies)
+            weapons.extend(profession.weapon_proficiencies)
+        race = self.race_obj
+        if race:
+            sub = self.subrace_obj
+            armor.extend(race.armor_of(sub))
+            weapons.extend(race.weapons_of(sub))
+        self.armor_proficiencies = list(dict.fromkeys(armor))
+        self.weapon_proficiencies = list(dict.fromkeys(weapons))
+
+    def has_weapon_proficiency(self, weapon: Weapon | str) -> bool:
+        """是否有这件武器的熟练项（没有就不能加熟练加值）。"""
+        return weapon_proficient(weapon, self.weapon_proficiencies)
+
+    def worn_body_armor(self) -> Armor | None:
+        """当前穿在身上的护甲（盾牌不算；取第一件认得出的）。"""
+        for item in self.equipment:
+            armor = get_armor(item)
+            if armor and not armor.is_shield:
+                return armor
+        return None
+
+    def armor_penalty(self) -> tuple[bool, str]:
+        """``(是否受罚, 原因)``——穿了不会的护甲 / 盾牌。
+
+        5e：着装不具有熟练项的护甲或盾牌时，属性检定、豁免检定、以力量或敏捷
+        进行的攻击检定都具有劣势，且不能在该着装下施展法术。
+
+        **空列表 = 什么都不会**（武僧 / 术士 / 法师的护甲熟练项本就是空的），
+        不是「没登记」——没登记的旧存档在 ``__post_init__`` 里已经补过了。
+        只有连种族职业都没有的卡才无从判断，那种放行。
+        """
+        if not self.armor_proficiencies and not (self.profession or self.race):
+            return False, ""
+        body = self.worn_body_armor()
+        shield = next(
+            (a for a in (get_armor(item) for item in self.equipment) if a and a.is_shield),
+            None,
+        )
+        bad_name = ""
+        if body is not None and not armor_proficient(body, self.armor_proficiencies):
+            bad_name = body.cn
+        elif shield is not None and not armor_proficient(shield, self.armor_proficiencies):
+            bad_name = shield.cn
+        if not bad_name:
+            return False, ""
+        return True, f"（未熟练：{bad_name}——检定 / 豁免 / 攻击劣势，且无法施法）"
+
+    def heavy_armor_speed_penalty(self) -> int:
+        """重甲力量不足的速度惩罚（5e：达不到「力量 13/15」要求，速度 −10 尺）。"""
+        body = self.worn_body_armor()
+        if body is None or not body.strength_required:
+            return 0
+        return 10 if self._str_score() < body.strength_required else 0
+
+    def _str_score(self) -> int:
+        """力量属性值（重甲要求按**属性值**判，不是调整值）。"""
+        return self.abilities["str"]
+
+    def can_cast(self) -> tuple[bool, str]:
+        """``(能否施法, 原因)``——不会的护甲下不能施法。"""
+        penalized, reason = self.armor_penalty()
+        if penalized:
+            return False, reason
+        return True, ""
 
     # —— 属性 ——
 
@@ -636,9 +743,9 @@ class DndCharacter(TrpgCharacter):
         unarmored: int | None = None
         if profession:
             if profession.key == "barbarian" and not self._wears_armor:
-                unarmored = 10 + self.modifier("con")
+                unarmored = 10 + self.modifier("dex") + self.modifier("con")
             elif profession.key == "monk" and not self._wears_armor:
-                unarmored = 10 + self.modifier("wis")
+                unarmored = 10 + self.modifier("dex") + self.modifier("wis")
         if unarmored is not None:
             shield_part = 2 if self.has_shield else 0
             return (
@@ -676,9 +783,14 @@ class DndCharacter(TrpgCharacter):
         return weapons
 
     def attack_bonus(self, weapon: Weapon | str) -> int:
-        """攻击检定加值：灵巧武器取力量 / 敏捷较高者，远程武器取敏捷。"""
+        """攻击检定加值：灵巧武器取力量 / 敏捷较高者，远程武器取敏捷。
+
+        **武器熟练**：不具有该武器的熟练项时**不能**加熟练加值（5e），
+        只留属性调整值——法师抡长剑就是这么个后果。
+        """
         weapon_obj = get_weapon(weapon)
         if weapon_obj is None:
+            # 徒手打击：人人都有熟练项
             return self.proficiency
         if weapon_obj.is_ranged:
             ability_mod = self.modifier("dex")
@@ -686,6 +798,8 @@ class DndCharacter(TrpgCharacter):
             ability_mod = max(self.modifier("str"), self.modifier("dex"))
         else:
             ability_mod = self.modifier("str")
+        if not self.has_weapon_proficiency(weapon_obj):
+            return ability_mod
         return self.proficiency + ability_mod
 
     def damage_bonus(self, weapon: Weapon | str) -> int:
@@ -784,6 +898,89 @@ class DndCharacter(TrpgCharacter):
         key = str(level)
         self.spell_slots_used[key] = int(self.spell_slots_used.get(key, 0)) + 1
         return True
+
+    def hunger_limit(self) -> int:
+        """连续多少天不进食才开始掉力竭（5e2014：3 + 体质调整值，至少 1 天）。"""
+        return max(1, 3 + self.modifier("con"))
+
+    # —— 同调（5e2014「同调」）——
+
+    def attune(self, name: str) -> tuple[bool, str]:
+        """与一件魔法物品同调（短休中专注完成）。
+
+        规则：需同调的物品才谈得上同调；**同时至多 3 件**；不能与多于一件
+        **相同**的物品同调（两枚防护戒指只认一枚）。
+
+        :return: ``(是否成功, 说明)``
+        """
+        item = get_item(name)
+        if item is None:
+            return False, f"「{name}」不是表里的魔法物品，谈不到同调。"
+        if not item.requires_attunement:
+            return False, f"{item.cn}不需要同调，拿着就能用。"
+        if item.key in self.attuned:
+            return False, f"已经与{item.cn}同调了。"
+        if len(self.attuned) >= 3:
+            held = "、".join(
+                (get_item(key).cn if get_item(key) else key) for key in self.attuned
+            )
+            return (
+                False,
+                f"同调已满 3 件（{held}）——先终止一个再同调{item.cn}。",
+            )
+        self.attuned = [*self.attuned, item.key]
+        return True, f"与{item.cn}完成同调（{len(self.attuned)}/3）。"
+
+    def unattune(self, name: str) -> tuple[bool, str]:
+        """终止与某件物品的同调（短休中主动放弃，或物品被拿走 / 失效）。"""
+        item = get_item(name)
+        key = item.key if item else str(name).strip()
+        if key not in self.attuned:
+            return False, f"本来就没和「{name}」同调。"
+        self.attuned = [k for k in self.attuned if k != key]
+        label = item.cn if item else key
+        return True, f"已终止与{label}的同调（剩 {len(self.attuned)}/3）。"
+
+    def attunement_text(self) -> str:
+        """同调清单文本（空则空串）。"""
+        if not self.attuned:
+            return ""
+        names = [
+            (get_item(key).cn if get_item(key) else key) for key in self.attuned
+        ]
+        return f"同调 {len(self.attuned)}/3：" + "、".join(names)
+
+    def ammo_count(self, names: tuple[str, ...] | list[str]) -> int:
+        """装备栏里符合的弹药剩余数（``箭×20`` → 20）。"""
+        total = 0
+        for item in self.equipment:
+            stack = parse_item_stack(item)
+            if stack.name in names:
+                total += max(0, stack.count)
+        return total
+
+    def spend_ammo(self, names: tuple[str, ...] | list[str]) -> tuple[bool, str, str]:
+        """花掉一枚弹药（5e：弹药武器每次攻击都要耗一枚）。
+
+        :return: ``(是否花掉了, 说明, 实际耗掉的弹药名)``——没有弹药时
+            返回 ``(False, ...)``，由调用方决定是打回 DM 还是按叙述裁决。
+        """
+        for index, item in enumerate(self.equipment):
+            stack = parse_item_stack(item)
+            if stack.name not in names or stack.count <= 0:
+                continue
+            left = stack.count - 1
+            if left > 0:
+                self.equipment[index] = f"{stack.name}×{left}"
+            else:
+                # 扣到 0 就整条删掉——留着光名字会被解析成「还剩 1」
+                self.equipment.pop(index)
+            return (
+                True,
+                f"（消耗 1 枚{stack.name}，剩 {left}）",
+                stack.name,
+            )
+        return False, f"没有{' / '.join(names)}了", ""
 
     def restore_slots(self, *, kind: str = "long") -> None:
         """恢复法术位：长休全部恢复；短休只恢复契约魔法（邪术师）。"""
@@ -930,32 +1127,52 @@ class DndCharacter(TrpgCharacter):
             "attack": effect.own_attack,
         }[kind]
         if state_adv is Advantage.NORMAL:
-            return explicit, ""
-        combined = state_adv
-        if explicit is not Advantage.NORMAL:
-            # 状态与显式指定相遇：优势劣势抵消
-            combined = state_adv if explicit is state_adv else Advantage.NORMAL
-        names = [c for c in normalize_conditions(self.conditions) if c]
-        if self.exhaustion:
-            names.append(f"力竭 {self.exhaustion} 级")
-        kind_cn = {"check": "检定", "save": "豁免", "attack": "攻击"}[kind]
-        stance = (
-            "优势"
-            if combined is Advantage.ADVANTAGE
-            else ("劣势" if combined is Advantage.DISADVANTAGE else "优劣抵消")
-        )
-        if not names:
-            return combined, ""
-        reason = f"（{'、'.join(names)}：{kind_cn}{stance}）"
+            combined, reason = explicit, ""
+        else:
+            combined = state_adv
+            if explicit is not Advantage.NORMAL:
+                # 状态与显式指定相遇：优势劣势抵消
+                combined = state_adv if explicit is state_adv else Advantage.NORMAL
+            names = [c for c in normalize_conditions(self.conditions) if c]
+            if self.exhaustion:
+                names.append(f"力竭 {self.exhaustion} 级")
+            kind_cn = {"check": "检定", "save": "豁免", "attack": "攻击"}[kind]
+            stance = (
+                "优势"
+                if combined is Advantage.ADVANTAGE
+                else ("劣势" if combined is Advantage.DISADVANTAGE else "优劣抵消")
+            )
+            reason = (
+                f"（{'、'.join(names)}：{kind_cn}{stance}）" if names else ""
+            )
+        if kind in ("check", "save"):
+            # 不会的护甲：所有属性检定与豁免检定都有劣势（5e）
+            combined, reason = self._apply_armor_penalty(combined, reason)
         return combined, reason
+
+    def _apply_armor_penalty(
+        self, advantage: Advantage, reason: str
+    ) -> tuple[Advantage, str]:
+        """把「不会的护甲 / 盾牌」带来的劣势叠上去（属性检定 / 豁免 / 物理攻击）。
+
+        5e：着装不具有熟练项的护甲或盾牌时，属性检定、豁免检定、以力量或敏捷
+        进行的攻击检定都具有劣势。
+        """
+        penalized, note = self.armor_penalty()
+        if not penalized:
+            return advantage, reason
+        combined = combine_advantage(advantage, Advantage.DISADVANTAGE)
+        return combined, _join_reason(reason, note.lstrip("（").rstrip("）"))
 
     def resolve_attack_advantage(self, explicit: Advantage) -> tuple[Advantage, str]:
         """攻击检定的最终优势姿态：把自身状态（中毒 / 力竭 / 恐慌……）与
         调用方显式指定的姿态合并（相遇抵消），并给出原因文本。
 
-        不走武器的攻击（徒手、推撞、擒抱）用这个方法拿最终姿态。
+        不走武器的攻击（徒手、推撞、擒抱）用这个方法拿最终姿态——
+        这些都以力量 / 敏捷进行，所以不会的护甲照样给劣势。
         """
-        return self._check_advantage("attack", explicit)
+        final, reason = self._check_advantage("attack", explicit)
+        return self._apply_armor_penalty(final, reason)
 
     def check_skill(
         self,
@@ -1045,15 +1262,21 @@ class DndCharacter(TrpgCharacter):
         advantage: Advantage = Advantage.NORMAL,
         rng: Random | None = None,
     ) -> CheckResult:
-        """攻击检定（对抗目标 AC；自动应用攻击方状态）。"""
+        """攻击检定（对抗目标 AC；自动应用攻击方状态与护甲惩罚）。"""
         weapon_obj = get_weapon(weapon)
         label = weapon_obj.cn if weapon_obj else str(weapon)
         final, reason = self._check_advantage("attack", advantage)
+        # 武器攻击都以力量 / 敏捷进行：不会的护甲给劣势（法术攻击不走这里）
+        final, reason = self._apply_armor_penalty(final, reason)
+        if weapon_obj is not None and not self.has_weapon_proficiency(weapon_obj):
+            reason = _join_reason(reason, f"未熟练：{weapon_obj.cn}，不加熟练加值")
         result = roll_check(
             self.attack_bonus(weapon_obj or weapon),
             target_ac,
             kind=f"{label}攻击",
             advantage=final,
+            # 攻击检定：天然 20 必中、天然 1 必失（5e2014）
+            auto_critical=True,
             rng=rng,
         )
         if reason:
@@ -1075,6 +1298,8 @@ class DndCharacter(TrpgCharacter):
             target_ac,
             kind=label,
             advantage=final,
+            # 法术攻击也是攻击检定：天然 20 必中、天然 1 必失
+            auto_critical=True,
             rng=rng,
         )
         if reason:
@@ -1166,11 +1391,12 @@ class DndCharacter(TrpgCharacter):
         return merge_effects(self.conditions, exhaustion=self.exhaustion)
 
     def speed(self) -> int:
-        """当前速度（含状态修正：力竭减半 / 归零，束缚 / 擒抱归零）。"""
+        """当前速度（含状态修正：力竭减半 / 归零，束缚 / 擒抱归零；
+        重甲力量不足 −10 尺）。"""
         race = self.race_obj
         base = race.speed if race else 30
         scale = speed_scale(self.conditions, exhaustion=self.exhaustion)
-        return max(0, int(base * scale))
+        return max(0, int(base * scale) - self.heavy_armor_speed_penalty())
 
     # —— 展示与序列化 ——
 
@@ -1220,6 +1446,9 @@ class DndCharacter(TrpgCharacter):
             lines.append(f"伤害抗性 {resist}")
         if self.concentrating_spell is not None:
             lines.append(f"专注维持中：{self.concentrating_spell.cn}")
+        attuned = self.attunement_text()
+        if attuned:
+            lines.append(attuned)
         if profession:
             dice_text = f"生命骰 {profession.hit_dice}"
             if self.hit_dice_used:
@@ -1230,6 +1459,13 @@ class DndCharacter(TrpgCharacter):
             lines.append(f"背景 {bg.cn}")
         if self.skill_lines():
             lines.append("技能 " + "、".join(self.skill_lines()))
+        prof = []
+        if self.armor_proficiencies:
+            prof.append("护甲 " + "、".join(self.armor_proficiencies))
+        if self.weapon_proficiencies:
+            prof.append("武器 " + "、".join(self.weapon_proficiencies))
+        if prof:
+            lines.append("熟练 " + "；".join(prof))
         if self.equipment:
             lines.append("装备 " + "、".join(self.equipment))
         return "\n".join(lines)
@@ -1262,6 +1498,8 @@ class DndCharacter(TrpgCharacter):
             "score_method",
             "score_rolls",
             "skill_proficiencies",
+            "armor_proficiencies",
+            "weapon_proficiencies",
             "equipment",
             "equipment_package",
             "has_shield",
@@ -1272,6 +1510,8 @@ class DndCharacter(TrpgCharacter):
             "conditions",
             "exhaustion",
             "rations",
+            "hunger_days",
+            "attuned",
             "spells",
             "spell_slots_used",
             "death_saves_success",
@@ -1280,6 +1520,7 @@ class DndCharacter(TrpgCharacter):
             "concentrating",
             "damage_resistances",
             "hit_dice_used",
+            "swim_speed",
         }
         return cls(**{k: v for k, v in data.items() if k in known})
 

@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .card import DndCharacter
-from .combat import CombatState
+from .combat import CombatState, recover_ammo
 from .memory import add_memory, current_round
 from .monsters import SCALE_SUFFIX
 from .npcs import is_npc_key, tier_from_key
@@ -191,6 +191,8 @@ class SettlementResult:
     defeated_text: str = ""
     #: 额外提示（如零头记账）
     note: str = ""
+    #: 战后弹药回收说明（5e：花一分钟搜战场，回收一半）
+    ammo_text: str = ""
 
     @property
     def xp_text(self) -> str:
@@ -287,6 +289,8 @@ class SettlementResult:
                 lines.append(share)
         for chunks in self.lines.values():
             lines.extend(chunks)
+        if self.ammo_text:
+            lines.append(self.ammo_text)
         if self.note:
             lines.append(self.note)
         hint = self.usage_hint()
@@ -436,5 +440,8 @@ def settle_combat(
             round=current_round(save),
             source="auto",
         )
+
+    # 弹药回收（5e：战后花一分钟搜战场，回收一半耗掉的弹药）
+    result.ammo_text = recover_ammo(save, state)
 
     return result

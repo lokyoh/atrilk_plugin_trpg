@@ -50,6 +50,7 @@ from .battlemap import (
     build_battlefield,
     chebyshev,
     cover_bonus,
+    distance_feet,
     has_map,
     has_position,
     plan_move,
@@ -66,7 +67,8 @@ from .conditions import (
     normalize_conditions,
     resolve_damage,
 )
-from .equipment import get_weapon
+from .equipment import get_weapon, parse_item_stack
+from .environment import underwater_disadvantage
 from .monsters import Monster
 from .monster_rules import (
     DeathBurst,
@@ -200,6 +202,9 @@ class Combatant:
     regen_suppressed: bool = False
     #: 已经用掉的**传奇抗性**次数（豁免失败改成功，每日有上限）
     legendary_resistance_used: int = 0
+    #: 体型（中型 / 小型 / 大型……）。**重型武器**对小型攻击者有劣势，
+    #: 擒抱 / 推撞的体型限制也看它。
+    size: str = "中型"
 
     @property
     def is_enemy(self) -> bool:
@@ -243,6 +248,7 @@ class Combatant:
             "exhaustion": self.exhaustion,
             "regen_suppressed": self.regen_suppressed,
             "legendary_resistance_used": self.legendary_resistance_used,
+            "size": self.size,
         }
 
     @classmethod
@@ -277,6 +283,7 @@ class Combatant:
             legendary_resistance_used=max(
                 0, _int_or(data.get("legendary_resistance_used"), 0)
             ),
+            size=str(data.get("size", "中型") or "中型"),
         )
 
 
@@ -332,6 +339,9 @@ class CombatState:
     #: 这里有没有**日光**：``True`` 有 / ``False`` 没有 / ``None`` 不知道。
     #: 只影响「日照敏感」的怪；不知道时 :func:`enemy_attack` 会提示 DM 自己判。
     daylight: bool | None = None
+    #: 本场战斗耗掉的弹药：``{"玩家cid:箭": 3}``。战后按 5e 回收一半
+    #: （花一分钟搜 battlefield），见 :func:`recover_ammo`。
+    ammo_used: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -362,6 +372,9 @@ class CombatState:
             "arena_cover_delta": self.arena_cover_delta,
             # 三态（有 / 没有 / 不知道）：不知道就不写这个键
             **({} if self.daylight is None else {"daylight": bool(self.daylight)}),
+            "ammo_used": {
+                str(k): int(v) for k, v in (self.ammo_used or {}).items() if int(v) > 0
+            },
         }
 
     @classmethod
@@ -418,6 +431,10 @@ class CombatState:
             daylight=(
                 None if data.get("daylight") is None else bool(data.get("daylight"))
             ),
+            ammo_used={
+                str(k): max(0, int(v))
+                for k, v in (data.get("ammo_used") or {}).items()
+            },
         )
 
 
@@ -1139,6 +1156,7 @@ def start_combat(
                 hp=card.hp,
                 max_hp=card.max_hp,
                 speed=_card_speed(card),
+                size=(card.race_obj.size if card.race_obj else "中型"),
             )
         )
 
@@ -1183,6 +1201,7 @@ def start_combat(
                     monster=spec.monster.key,
                     npc=npc_name,
                     speed=int(getattr(spec.monster, "speed", 30) or 30),
+                    size=str(getattr(spec.monster, "size", "中型") or "中型"),
                 )
             )
 
@@ -1837,6 +1856,8 @@ def _weapon_brief(weapon) -> str:
     parts = ["近战"]
     if "触及" in (getattr(weapon, "properties", "") or ""):
         parts.append("触及 10 尺")
+    if getattr(weapon, "is_thrown", False):
+        parts.append(f"可投掷 {weapon.thrown_normal}/{weapon.thrown_max} 尺")
     if getattr(weapon, "is_finesse", False):
         parts.append("灵巧")
     return "，".join(parts)
@@ -1850,10 +1871,26 @@ def attack(
     weapon_ref: str = "",
     *,
     advantage: Advantage = Advantage.NORMAL,
+    two_handed: bool = False,
+    off_hand: bool = False,
     rng: Any = None,
 ) -> tuple[str, bool]:
     """玩家攻击：自动掷命中、掷伤害并扣血。
 
+    武器词条都在这一层结算（对照《快速参考 (5e_2014).md》武器词条）：
+
+    - **投掷**：够不着时按投掷射程打远程（匕首 20/60、标枪 30/120……）；
+    - **弹药**：弓 / 弩 / 吹箭筒 / 投石索每次攻击耗一枚，战后回收一半；
+    - **两用**：``two_handed=True`` 时伤害取双手骰（长剑 1d10）；
+    - **重型**：小型攻击者（半身人 / 侏儒）用重型武器有劣势；
+    - **骑枪**：打 5 尺内的目标有劣势；
+    - **双武器**：``off_hand=True`` 时副手攻击不加大幅值（5e 双武器战斗）；
+    - **5 尺内远程劣势**：身边 5 尺内有敌人时远程攻击带劣势；
+    - **捕网**：不造成伤害，命中即束缚；
+    - **临时武器**：远程武器贴身肉搏、近战武器硬投，都是 1d4。
+
+    :param two_handed: 两用武器是否双手持用。
+    :param off_hand: 副手攻击（双武器战斗）：伤害不加大幅值。
     :return: ``(给 DM 的结算文案, 是否命中)``
     """
     target = find_combatant(state, target_ref)
@@ -1888,43 +1925,137 @@ def attack(
         owned = {item.key for item in card.primary_weapons()}
         if weapon.key not in owned:
             warn += f"（注意：{weapon.cn} 不在 {card.name} 的装备里）\n"
+
+    # —— 先量距离，再定攻击方式：近战 / 远程 / 投掷 / 临时武器 ——
+    reach = 10 if (weapon is not None and weapon.is_reach) else 5
+    distance = range_check(state, attacker, target, reach=reach).distance
+    beyond = distance < 0 or distance > reach  # 没棋盘时按「够不着」处理
+    ranged_attack = False
+    improvised = False
+    normal = max_range = 0
+    if weapon is not None:
+        if beyond:
+            if weapon.is_ranged:
+                ranged_attack = True
+                normal, max_range = weapon.ranged_normal, weapon.ranged_max
+            elif weapon.is_thrown:
+                ranged_attack = True
+                normal, max_range = weapon.thrown_normal, weapon.thrown_max
+                warn += f"（投掷{weapon.cn}，射程 {normal}/{max_range}）\n"
+            else:
+                # 近战武器没有投掷属性却够不着：按临时投掷武器（1d4，20/60）
+                improvised = True
+                normal, max_range = 20, 60
+                warn += f"（{weapon.cn}没有投掷属性，当临时武器扔出去：1d4）\n"
+        elif weapon.is_ranged and not weapon.is_thrown:
+            # 弹药武器贴身肉搏 = 临时武器（1d4）
+            improvised = True
+            warn += f"（{weapon.cn}当临时武器抡：1d4）\n"
+
     gate = range_check(
-        state,
-        attacker,
-        target,
-        reach=10 if (weapon is not None and "触及" in weapon.properties) else 5,
-        normal=weapon.ranged_normal if weapon is not None else 0,
-        max_range=weapon.ranged_max if weapon is not None else 0,
+        state, attacker, target, reach=reach, normal=normal, max_range=max_range
     )
     if not gate.ok:
         return f"{warn}距离不足：{gate.reason}", False
     if gate.disadvantage and advantage is not Advantage.DISADVANTAGE:
         advantage = Advantage.DISADVANTAGE
         warn += "（目标超出常规射程，本次攻击带劣势）\n"
+    distance = gate.distance
+    is_melee = not ranged_attack
+
+    # —— 5 尺内远程劣势：身边 5 尺内有敌人时，远程攻击带劣势（5e）——
+    if ranged_attack and enemy_within(state, attacker, 5):
+        advantage = combine_advantage(advantage, Advantage.DISADVANTAGE)
+        warn += "（身边 5 尺内有敌人，远程攻击带劣势）\n"
+
+    # —— 水下战斗：攻击者站在浅水（water）地形上，武器攻击受限（5e2014）——
+    if has_map(state) and has_position(attacker) and terrain_at(state, attacker.x, attacker.y).key == "water":
+        _has_swim = bool(card.swim_speed)
+        if ranged_attack:
+            if weapon is not None and distance > normal:
+                return (
+                    f"{warn}水下远程攻击：目标超出常规射程，水阻力让远射直接落空（未命中）。",
+                    False,
+                )
+            if weapon is not None and underwater_disadvantage("ranged", weapon.key, _has_swim):
+                advantage = combine_advantage(advantage, Advantage.DISADVANTAGE)
+                warn += "（水下远程攻击带劣势：除非用弩 / 捕网 / 标枪类投掷武器）\n"
+        else:  # 近战（含徒手）
+            _wkey = weapon.key if weapon is not None else ""
+            if underwater_disadvantage("melee", _wkey, _has_swim):
+                advantage = combine_advantage(advantage, Advantage.DISADVANTAGE)
+                warn += "（水下近战攻击带劣势：除非用匕首 / 标枪 / 短剑 / 矛 / 三叉戟，或有游泳速度）\n"
+
+    # —— 弹药：远程且是弹药武器就要花一枚（用完就打不出）——
+    if ranged_attack and weapon is not None and weapon.is_ammunition:
+        names = weapon.ammo_names
+        if card.ammo_count(names) <= 0:
+            return (
+                f"{warn}{card.name} 的{' / '.join(names)}用完了，没法再开火——"
+                "换近战武器，或让 DM 按叙述裁决（地上捡 / 借）",
+                False,
+            )
+        spent, ammo_note, ammo_name = card.spend_ammo(names)
+        if spent:
+            key = f"{card.user_id}:{ammo_name}"
+            state.ammo_used[key] = int(state.ammo_used.get(key, 0)) + 1
+            set_character(save, card)
+            save_combat(save, state)
+            warn += f"{ammo_note}\n"
+
+    # —— 重型：小型攻击者用重型武器有劣势 ——
+    if weapon is not None and weapon.is_heavy and _is_small(
+        card.race_obj.size if card.race_obj else "中型"
+    ):
+        advantage = combine_advantage(advantage, Advantage.DISADVANTAGE)
+        warn += f"（{weapon.cn}是重型武器，体型小驾驭不动：攻击有劣势）\n"
+
+    # —— 骑枪：打 5 尺内的目标有劣势 ——
+    if weapon is not None and weapon.key == "lance" and 0 <= distance <= 5:
+        advantage = combine_advantage(advantage, Advantage.DISADVANTAGE)
+        warn += "（骑枪打 5 尺内的目标有劣势）\n"
 
     # 目标状态带来的优势 / 劣势（倒地、隐形、目盲、束缚……）；攻击者自己的状态
-    # （中毒、力竭……）由角色卡的检定函数自动合并，两边相遇时自然抵消
-    is_melee = weapon is None or weapon.ranged_normal == 0
+    # （中毒 / 力竭……）由角色卡的检定函数自动合并，两边相遇时自然抵消
     state_adv, state_reason = attack_advantage(
-        [], combatant_conditions(save, target), melee=is_melee, distance=gate.distance
+        [], combatant_conditions(save, target), melee=is_melee, distance=distance
     )
     advantage = combine_advantage(advantage, state_adv)
     if state_reason:
         warn += f"（{state_reason}）\n"
 
+    grip = ""
+    if two_handed and weapon is not None and weapon.is_versatile:
+        grip = "（双手持握）"
+
     if weapon is not None:
         result: CheckResult = card.check_attack(
             weapon, target_ac, advantage=advantage, rng=rng
         )
-        damage_expr = weapon.damage_with_bonus(card.damage_bonus(weapon))
+        if improvised:
+            damage_expr = "1d4"  # 临时武器不吃属性加值
+        else:
+            base = (
+                weapon.two_handed_damage
+                if (two_handed and weapon.is_versatile)
+                else weapon.damage
+            )
+            if off_hand:
+                # 双武器战斗（副手攻击）：伤害不加大幅值（5e）；需轻型武器
+                damage_expr = base
+                if not weapon.is_light:
+                    warn += "（双武器战斗的副手攻击应当用轻型武器）\n"
+            else:
+                bonus = card.damage_bonus(weapon)
+                damage_expr = f"{base}{bonus:+d}" if bonus else base
         damage_type = weapon.damage_type
-        label = weapon.cn
+        label = weapon.cn + grip
     else:
         bonus = card.proficiency + card.modifier("str")
         # 徒手也走角色卡的状态合并（中毒 / 力竭的劣势不能漏）
         final_adv, state_note = card.resolve_attack_advantage(advantage)
         result = roll_check(
-            bonus, target_ac, kind="徒手攻击", advantage=final_adv, rng=rng
+            bonus, target_ac, kind="徒手攻击", advantage=final_adv, auto_critical=True, rng=rng
         )
         if state_note:
             result.kind += state_note
@@ -1934,16 +2065,26 @@ def attack(
 
     lines = [
         f"【{card.name}】{label} → {result.describe()}"
-        f"（目标 AC {target_ac}{cover_text(state, target)}；距离 {gate.distance} 尺）"
-        if gate.distance >= 0
+        f"（目标 AC {target_ac}{cover_text(state, target)}；距离 {distance} 尺）"
+        if distance >= 0
         else f"【{card.name}】{label} → {result.describe()}（目标 AC {target_ac}）"
     ]
     if not result.success:
         lines.append(f"未命中 {target.name}。")
         return warn + "\n".join(lines), False
 
+    # 捕网：不掷伤害，命中即束缚（解脱：动作 DC10 力量，或对网 5 点挥砍 [AC 10]）
+    if weapon is not None and weapon.key == "net":
+        note = _add_target_condition(save, state, target, "束缚")
+        lines.append(f"捕网罩住了 {target.name}！{note}")
+        lines.append(
+            "（束缚至解脱：用动作做 DC10 力量检定，或对网造成 5 点挥砍伤害 [AC 10]；"
+            "无形体与巨型以上体型不受影响）"
+        )
+        return warn + "\n".join(lines), True
+
     # 5e：5 尺内命中麻痹 / 昏迷的目标即暴击（伤害骰照翻倍）
-    auto_crit = _auto_crit(save, target, melee=is_melee, distance=gate.distance)
+    auto_crit = _auto_crit(save, target, melee=is_melee, distance=distance)
     crit = result.nat20 or auto_crit
     damage, detail = roll_damage(damage_expr, crit=crit, rng=rng)
     crit_text = "（暴击，伤害骰翻倍）" if crit else ""
@@ -1954,6 +2095,91 @@ def attack(
         )
     )
     return warn + "\n".join(lines), True
+
+
+def _is_small(size: str) -> bool:
+    """是不是小型或更小（重型武器对它们有劣势）。"""
+    return str(size or "中型") in ("小型", "微型")
+
+
+def enemy_within(state: Any, attacker: Any, feet: int = 5) -> bool:
+    """攻击者 ``feet`` 尺内是否还有站着的敌人（5e：远程攻击时身边有敌人则劣势）。
+
+    没铺棋盘 / 攻击者没落子 / 周围没站着的敌人，都返回 False——剧情模式（无坐标）
+    无从判断「贴身」，这种情况交给 DM 按叙述裁定。
+    """
+    if attacker is None or not has_map(state) or not has_position(attacker):
+        return False
+    for enemy in living_enemies(state):
+        if enemy.cid == getattr(attacker, "cid", None):
+            continue
+        if not has_position(enemy):
+            continue
+        d = distance_feet(attacker, enemy)
+        if d >= 0 and d <= feet:
+            return True
+    return False
+
+
+def _add_target_condition(
+    save: Save, state: CombatState, target: Combatant, name: str
+) -> str:
+    """给参战者补一条状态（玩家写角色卡，敌人写 Combatant），返回说明。"""
+    if target.kind == "player":
+        card = get_character(save, target.cid)
+        if card is None:
+            return f"（找不到 {target.name} 的角色卡，状态没写上）"
+        if name in card.conditions:
+            return f"{target.name} 已经处于{name}"
+        card.conditions = [*card.conditions, name]
+        set_character(save, card)
+        return f"{target.name} 陷入{name}"
+    if name in target.conditions:
+        return f"{target.name} 已经处于{name}"
+    target.conditions = [*target.conditions, name]
+    save_combat(save, state)
+    return f"{target.name} 陷入{name}"
+
+
+def recover_ammo(save: Save, state: CombatState) -> str:
+    """战后搜 battlefield：5e 回收一半耗掉的弹药。
+
+    :return: 给结算文本的一行说明；没耗过弹药返回空串。
+    """
+    if not state.ammo_used:
+        return ""
+    lines: list[str] = []
+    for key, spent in sorted(state.ammo_used.items()):
+        spent = int(spent or 0)
+        if spent <= 0:
+            continue
+        cid, _, ammo = key.partition(":")
+        back = spent // 2
+        card = get_character(save, cid) if cid else None
+        if card is None:
+            continue
+        if back > 0:
+            # 并进装备栏里已有的同种弹药（没有就新起一条）
+            merged = False
+            for index, item in enumerate(card.equipment):
+                stack = parse_item_stack(item)
+                if stack.name == ammo:
+                    card.equipment[index] = f"{ammo}×{stack.count + back}"
+                    merged = True
+                    break
+            if not merged:
+                card.equipment.append(f"{ammo}×{back}")
+        set_character(save, card)
+        who = card.name or cid
+        lines.append(
+            f"{who} 回收 {back} 枚{ammo}"
+            f"（耗 {spent}，剩 {card.ammo_count((ammo,))}）"
+        )
+    state.ammo_used = {}
+    save_combat(save, state)
+    if not lines:
+        return ""
+    return "战场搜索：回收了一半弹药——" + "；".join(lines) + "。"
 
 
 def enemy_attack(
@@ -2053,6 +2279,8 @@ def enemy_attack(
         target_ac,
         kind=f"{attack_obj.name}攻击",
         advantage=advantage,
+        # 敌人的攻击同样是攻击检定：天然 20 必中（且暴击）、天然 1 必失
+        auto_critical=True,
         rng=rng,
     )
     lines = [

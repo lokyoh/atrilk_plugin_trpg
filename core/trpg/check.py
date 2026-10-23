@@ -48,7 +48,10 @@ class CheckResult:
     bonus: int = 0
     advantage: Advantage = Advantage.NORMAL
     rolls: list[int] = field(default_factory=list)
-    auto_critical: bool = True
+    #: 天然 20 必成功 / 天然 1 必失败——**只对攻击检定（与死亡豁免）生效**。
+    #: 2014 规则里属性检定与豁免检定的天然 1 / 20 没有特殊含义（2024 才给
+    #: 属性检定加了「天然 20 成功」），所以默认关，攻击调用点显式打开。
+    auto_critical: bool = False
     #: 强制失败（状态导致：麻痹 / 震慑 / 昏迷 / 石化的力量与敏捷豁免）。
     #: 骰子照掷（给玩家看点数），但结果恒为失败。
     forced_failure: bool = False
@@ -137,7 +140,7 @@ def roll_check(
     *,
     kind: str = "检定",
     advantage: Advantage = Advantage.NORMAL,
-    auto_critical: bool = True,
+    auto_critical: bool = False,
     rng: Random | None = None,
 ) -> CheckResult:
     """执行一次 d20 检定。
@@ -146,7 +149,9 @@ def roll_check(
     :param dc: 难度值
     :param kind: 检定名称，仅用于展示
     :param advantage: 优势 / 劣势 / 普通
-    :param auto_critical: 是否让自然 20 必成功、自然 1 必失败
+    :param auto_critical: 是否让天然 20 必成功、天然 1 必失败。
+        **只有攻击检定该开**（5e2014：攻击检定天然 20 必中、天然 1 必失）；
+        属性检定与豁免检定不开——那里的 1 和 20 只是很糟 / 很好的一次点数。
     """
     rolls, natural = roll_d20(advantage, rng=rng)
     return CheckResult(

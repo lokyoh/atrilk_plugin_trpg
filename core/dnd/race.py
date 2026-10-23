@@ -33,6 +33,10 @@ class SubRace:
     bonus: dict[str, int] = field(default_factory=dict)
     traits: tuple[str, ...] = ()
     desc: str = ""
+    #: 亚种给的武器熟练项（具体武器键 / 中文名）
+    weapons: tuple[str, ...] = ()
+    #: 亚种给的护甲熟练项（类别名：轻甲 / 中甲 / 重甲 / 盾牌）
+    armor: tuple[str, ...] = ()
 
     @property
     def label(self) -> str:
@@ -53,6 +57,10 @@ class Race:
     languages: tuple[str, ...] = ()
     subraces: tuple[SubRace, ...] = ()
     desc: str = ""
+    #: 种族给的武器熟练项（具体武器键 / 中文名）
+    weapons: tuple[str, ...] = ()
+    #: 种族给的护甲熟练项（类别名）
+    armor: tuple[str, ...] = ()
 
     def bonus_of(self, subrace: SubRace | str | None = None) -> dict[str, int]:
         """叠加亚种后的属性加值。"""
@@ -62,6 +70,16 @@ class Race:
             for key, value in sub.bonus.items():
                 bonus[key] = bonus.get(key, 0) + value
         return bonus
+
+    def weapons_of(self, subrace: SubRace | str | None = None) -> tuple[str, ...]:
+        """种族 + 亚种的武器熟练项（去重）。"""
+        sub = self.resolve_subrace(subrace) if subrace else None
+        return tuple(dict.fromkeys((*self.weapons, *(sub.weapons if sub else ()))))
+
+    def armor_of(self, subrace: SubRace | str | None = None) -> tuple[str, ...]:
+        """种族 + 亚种的护甲熟练项（去重）。"""
+        sub = self.resolve_subrace(subrace) if subrace else None
+        return tuple(dict.fromkeys((*self.armor, *(sub.armor if sub else ()))))
 
     def resolve_subrace(self, value: SubRace | str | None) -> SubRace | None:
         """把亚种名 / 键解析为亚种对象；无亚种时返回 ``None``。"""
@@ -99,6 +117,8 @@ def _subrace(row: dict[str, Any]) -> SubRace:
         bonus={str(k): int(v) for k, v in (row.get("bonus") or {}).items()},
         traits=as_texts(row.get("traits")),
         desc=str(row.get("desc", "")),
+        weapons=as_texts(row.get("weapons")),
+        armor=as_texts(row.get("armor")),
     )
 
 
@@ -115,6 +135,8 @@ def _race(row: dict[str, Any]) -> Race:
         languages=as_texts(row.get("languages")),
         subraces=tuple(_subrace(sub) for sub in as_rows(row.get("subraces"))),
         desc=str(row.get("desc", "")),
+        weapons=as_texts(row.get("weapons")),
+        armor=as_texts(row.get("armor")),
     )
 
 

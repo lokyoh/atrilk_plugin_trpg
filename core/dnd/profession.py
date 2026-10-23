@@ -4,6 +4,7 @@
 
 - 生命骰（决定生命值）与 1 级生命值
 - 两项豁免熟练
+- 护甲 / 武器熟练项（不会的护甲穿上去有劣势，不会的武器不加熟练加值）
 - 可选技能池与可选数量（对应 ``skill_choice.md``）
 - 起始装备包（对应 ``equioment.md``）
 - 1 级职业特性
@@ -64,6 +65,10 @@ class DndClass:
     caster_kind: str = ""  # full / half / pact（"" = 非施法者）
     cantrips: int = 0  # 建卡时可选戏法数
     spells_known: int = 0  # 建卡时可选法术数（法师 = 法术书收录数）
+    #: 护甲 / 盾牌熟练项（类别名：轻甲 / 中甲 / 重甲 / 盾牌）
+    armor_proficiencies: tuple[str, ...] = ()
+    #: 武器熟练项：``简易武器`` / ``军用武器``（整个类别）或具体武器键 / 中文名
+    weapon_proficiencies: tuple[str, ...] = ()
 
     @property
     def level1_hp(self) -> int:
@@ -104,6 +109,15 @@ class DndClass:
             lines.append(f"固定：{'、'.join(self.fixed_equipment)}")
         return "\n".join(lines)
 
+    def format_proficiencies(self) -> str:
+        """护甲 / 武器熟练项的展示文本（空项省略）。"""
+        bits = []
+        if self.armor_proficiencies:
+            bits.append("护甲 " + "、".join(self.armor_proficiencies))
+        if self.weapon_proficiencies:
+            bits.append("武器 " + "、".join(self.weapon_proficiencies))
+        return "；".join(bits)
+
 
 def _package(row: dict[str, Any]) -> EquipmentChoice:
     """一个起始装备包（二选一里的那一项）。"""
@@ -135,6 +149,8 @@ def _klass(row: dict[str, Any]) -> DndClass:
         caster_kind=str(row.get("caster_kind", "")),
         cantrips=int(row.get("cantrips", 0)),
         spells_known=int(row.get("spells_known", 0)),
+        armor_proficiencies=as_texts(row.get("armor_proficiencies")),
+        weapon_proficiencies=as_texts(row.get("weapon_proficiencies")),
     )
 
 

@@ -19,6 +19,13 @@
   - perception
   - survival
   skill_count: 2
+  armor_proficiencies:
+  - 轻甲
+  - 中甲
+  - 盾牌
+  weapon_proficiencies:
+  - 简易武器
+  - 军用武器
   equipment_packages:
   - key: a
     cn: 战斧 / 任意军用近战武器
@@ -70,6 +77,14 @@
   - performance
   - persuasion
   skill_count: 3
+  armor_proficiencies:
+  - 轻甲
+  weapon_proficiencies:
+  - 简易武器
+  - 手弩
+  - 长剑
+  - 细剑
+  - 短剑
   equipment_packages:
   - key: a
     cn: 细剑 + 艺人包
@@ -109,6 +124,12 @@
   - persuasion
   - religion
   skill_count: 2
+  armor_proficiencies:
+  - 轻甲
+  - 中甲
+  - 盾牌
+  weapon_proficiencies:
+  - 简易武器
   equipment_packages:
   - key: a
     cn: 硬头锤 + 鳞甲 + 盾牌
@@ -119,10 +140,10 @@
     - 圣徽
     - 祭司包
   - key: b
-    cn: 战锤 + 链甲
+    cn: 硬头锤 + 鳞甲
     items:
-    - 战锤
-    - 链甲
+    - 硬头锤
+    - 鳞甲
     - 圣徽
     - 祭司包
   features:
@@ -152,6 +173,21 @@
   - religion
   - survival
   skill_count: 2
+  armor_proficiencies:
+  - 轻甲
+  - 中甲
+  - 盾牌
+  weapon_proficiencies:
+  - 棍棒
+  - 匕首
+  - 飞镖
+  - 弯刀
+  - 标枪
+  - 硬头槌
+  - 长棍
+  - 镰刀
+  - 投石索
+  - 矛
   equipment_packages:
   - key: a
     cn: 木盾 + 弯刀
@@ -196,6 +232,14 @@
   - perception
   - survival
   skill_count: 2
+  armor_proficiencies:
+  - 轻甲
+  - 中甲
+  - 重甲
+  - 盾牌
+  weapon_proficiencies:
+  - 简易武器
+  - 军用武器
   equipment_packages:
   - key: a
     cn: 链甲 + 军用武器 + 盾牌
@@ -233,6 +277,10 @@
   - religion
   - stealth
   skill_count: 2
+  armor_proficiencies:  []
+  weapon_proficiencies:
+  - 简易武器
+  - 短剑
   equipment_packages:
   - key: a
     cn: 短剑 + 探索者背包
@@ -267,6 +315,14 @@
   - persuasion
   - religion
   skill_count: 2
+  armor_proficiencies:
+  - 轻甲
+  - 中甲
+  - 重甲
+  - 盾牌
+  weapon_proficiencies:
+  - 简易武器
+  - 军用武器
   equipment_packages:
   - key: a
     cn: 军用武器 + 盾牌
@@ -309,6 +365,13 @@
   - stealth
   - survival
   skill_count: 3
+  armor_proficiencies:
+  - 轻甲
+  - 中甲
+  - 盾牌
+  weapon_proficiencies:
+  - 简易武器
+  - 军用武器
   equipment_packages:
   - key: a
     cn: 鳞甲 + 双短剑
@@ -351,6 +414,14 @@
   - sleight_of_hand
   - stealth
   skill_count: 4
+  armor_proficiencies:
+  - 轻甲
+  weapon_proficiencies:
+  - 简易武器
+  - 手弩
+  - 长剑
+  - 细剑
+  - 短剑
   equipment_packages:
   - key: a
     cn: 细剑 + 短弓
@@ -392,6 +463,13 @@
   - persuasion
   - religion
   skill_count: 2
+  armor_proficiencies:  []
+  weapon_proficiencies:
+  - 匕首
+  - 飞镖
+  - 投石索
+  - 长棍
+  - 轻弩
   equipment_packages:
   - key: a
     cn: 轻弩 + 材料包
@@ -433,6 +511,10 @@
   - nature
   - religion
   skill_count: 2
+  armor_proficiencies:
+  - 轻甲
+  weapon_proficiencies:
+  - 简易武器
   equipment_packages:
   - key: a
     cn: 轻弩 + 学者包
@@ -475,6 +557,13 @@
   - medicine
   - religion
   skill_count: 2
+  armor_proficiencies:  []
+  weapon_proficiencies:
+  - 匕首
+  - 飞镖
+  - 投石索
+  - 长棍
+  - 轻弩
   equipment_packages:
   - key: a
     cn: 法杖 + 学者包

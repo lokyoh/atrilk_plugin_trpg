@@ -63,9 +63,24 @@ CASTER_KINDS: dict[str, str] = {
 }
 
 #: 环阶显示名
-_LEVEL_LABELS: dict[int, str] = {0: "戏法", 1: "一环", 2: "二环", 3: "三环", 4: "四环"}
+_LEVEL_LABELS: dict[int, str] = {
+    0: "戏法",
+    1: "一环",
+    2: "二环",
+    3: "三环",
+    4: "四环",
+    5: "五环",
+    6: "六环",
+    7: "七环",
+    8: "八环",
+    9: "九环",
+}
+
+#: 戏法成长文本「5 级 2d10、11 级 3d10、17 级 4d10」→ (等级, 伤害骰)
+_SCALING_RE = re.compile(r"(\d+)\s*级\s*(\d+d\d+)")
 
 #: 法术位表：职业等级 -> {环阶: 法术位数量}
+#: 全职施法者（法师 / 牧师 / 德鲁伊 / 吟游诗人 / 术士）按 5e2014 PHB 表延伸到 20 级。
 FULL_CASTER_SLOTS: dict[int, dict[int, int]] = {
     1: {1: 2},
     2: {1: 3},
@@ -79,9 +94,17 @@ FULL_CASTER_SLOTS: dict[int, dict[int, int]] = {
     10: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2},
     11: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1},
     12: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1},
+    13: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1},
+    14: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1},
+    15: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1},
+    16: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1},
+    17: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1, 9: 1},
+    18: {1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 1, 7: 1, 8: 1, 9: 1},
+    19: {1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2, 7: 1, 8: 1, 9: 1},
+    20: {1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2, 7: 2, 8: 1, 9: 1},
 }
 
-#: 半施法者（圣武士 / 游侠）：1 级还没有法术
+#: 半施法者（圣武士 / 游侠）：1 级还没有法术；按 5e2014 PHB 表延伸到 20 级。
 HALF_CASTER_SLOTS: dict[int, dict[int, int]] = {
     1: {},
     2: {1: 2},
@@ -95,9 +118,17 @@ HALF_CASTER_SLOTS: dict[int, dict[int, int]] = {
     10: {1: 4, 2: 3, 3: 2},
     11: {1: 4, 2: 3, 3: 3},
     12: {1: 4, 2: 3, 3: 3},
+    13: {1: 4, 2: 3, 3: 3, 4: 1},
+    14: {1: 4, 2: 3, 3: 3, 4: 1},
+    15: {1: 4, 2: 3, 3: 3, 4: 2},
+    16: {1: 4, 2: 3, 3: 3, 4: 2},
+    17: {1: 4, 2: 3, 3: 3, 4: 3, 5: 1},
+    18: {1: 4, 2: 3, 3: 3, 4: 3, 5: 1},
+    19: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2},
+    20: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2},
 }
 
-#: 邪术师契约魔法：法术位少、全部同环、短休恢复
+#: 邪术师契约魔法：法术位少、全部同环、短休恢复；按 5e2014 PHB 表延伸到 20 级。
 PACT_SLOTS: dict[int, dict[int, int]] = {
     1: {1: 1},
     2: {1: 2},
@@ -111,6 +142,14 @@ PACT_SLOTS: dict[int, dict[int, int]] = {
     10: {5: 2},
     11: {5: 3},
     12: {5: 3},
+    13: {6: 3},
+    14: {6: 3},
+    15: {7: 3},
+    16: {7: 3},
+    17: {8: 3},
+    18: {8: 3},
+    19: {9: 3},
+    20: {9: 3},
 }
 
 _SLOT_TABLES: dict[str, dict[int, dict[int, int]]] = {
@@ -202,9 +241,36 @@ class Spell:
         """去掉括号备注后的伤害类型（如「（酸 / 寒冷任选）」→ 空串）。"""
         return re.sub(r"（[^）]*）", "", self.damage_type or "").strip()
 
-    def damage_expr(self, modifier: int = 0) -> str:
-        """可掷的伤害表达式：把「施法属性调整值」替换成实际加值。"""
+    @property
+    def scaling_tiers(self) -> tuple[tuple[int, str], ...]:
+        """戏法成长档位，从 ``scaling`` 文本解析：``[(5, "2d10"), (11, "3d10"), ...]``。
+
+        文本形如「5 级 2d10、11 级 3d10、17 级 4d10」——按角色等级取不超过
+        它的最高档（2014：戏法的提升看**角色等级**，不是职业等级）。
+        """
+        return tuple(
+            (int(level), dice)
+            for level, dice in _SCALING_RE.findall(self.scaling or "")
+        )
+
+    def cantrip_damage(self, level: int) -> str:
+        """按角色等级取戏法的伤害骰；没配成长档就返回原伤害。"""
+        dice = self.damage
+        for tier_level, tier_dice in self.scaling_tiers:
+            if int(level) >= tier_level:
+                dice = tier_dice
+        return dice
+
+    def damage_expr(self, modifier: int = 0, *, level: int = 0) -> str:
+        """可掷的伤害表达式：把「施法属性调整值」替换成实际加值。
+
+        :param level: 施法者的**角色等级**——戏法按它成长（17 级的火焰箭是 4d10）。
+        """
         text = re.sub(r"（[^）]*）", "", self.damage or "").strip()
+        if self.is_cantrip and int(level) > 0:
+            text = re.sub(
+                r"（[^）]*）", "", self.cantrip_damage(int(level)) or ""
+            ).strip()
         if "施法属性调整值" in text:
             text = text.replace("施法属性调整值", f"{int(modifier):+d}")
         return text
