@@ -950,6 +950,18 @@ def _partial_phase(save, state, user_id: str) -> str:
     )
 
 
+def _shadow_intent(text: str, save, combat, card, actor) -> None:
+    """把玩家的战斗描述解析成意图并落档；**任何异常都不许影响结算**。"""
+    try:
+        from ...dnd.combat_intent import parse_combat_intent, record_intent
+
+        intent = parse_combat_intent(text, combat, card)
+        record_intent(save, intent, round_no=combat.round, actor=actor.name)
+        save_save(save)
+    except Exception as e:  # 影子解析只是实验，出错就当没发生
+        log.warning(f"战斗意图影子解析失败（不影响结算）：{str_traceback(e)}")
+
+
 async def submit_action(
     *,
     save_id: str,
@@ -1055,6 +1067,10 @@ async def submit_action(
             )
         state.waiting = [actor.cid] if actor is not None else []
         state.actions = {}
+        # 影子解析：把玩家这句话解析成结构化意图、写进存档，**不参与本轮结算**。
+        # 先攒命中率——等它稳了再让解析结果接管战斗（省掉这一轮的模型往返）。
+        if actor is not None:
+            _shadow_intent(text, save, combat, card, actor)
         # 行动经济（软提示）：行动里写了移动类动作就记一次「本回合移动过」。
         if actor is not None and _MOVE_RE.search(text):
             use_resource(save, combat, actor.cid, "move")
