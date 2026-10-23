@@ -48,12 +48,14 @@ from .core.dnd import (
     combat_text,
     create_save,
     creation_prompt,
+    current_actor,
     delete_save,
     delete_session,
     format_report,
     get_binding,
     get_character,
     get_skill,
+    get_weapon,
     get_world,
     get_world_map,
     list_npcs,
@@ -77,6 +79,7 @@ from .core.dnd import (
     set_binding,
     story_files,
 )
+from .core.dnd.combat_render import combat_to_html, player_panel_html
 from .core.dnd.event_progress import event_summary
 from .core.trpg import DiceError, roll
 from .matchers import (
@@ -114,7 +117,7 @@ _DICE_SEP = re.compile(r"[,，;；、]+")
 _CARD_VIEWPORT = {"width": 540, "height": 10}
 
 
-async def _card_image(card: "DndCharacter") -> MessageSegment:
+async def _card_image(card: DndCharacter) -> MessageSegment:
     """把角色卡渲染成一张图片消息段；渲染失败时退回纯文本卡。
 
     ``html_to_pic`` 在函数内**延迟导入**：插件加载阶段就 import 它会让
@@ -135,12 +138,174 @@ async def _card_image(card: "DndCharacter") -> MessageSegment:
         return MessageSegment.text("\n\n" + card.summary())
 
 
-async def _card_result(text: str, card: "DndCharacter") -> Message:
-    """把一段说明文字与角色卡图片拼成一条消息（图片失败则拼文字卡）。"""
+async def _card_result(text: str, card: DndCharacter) -> Message:
+    """把一段说明文字与角色卡图片拼成一条消息（图片失败则拼文字卡）。
+
+    图片成功渲染时，底部附一行常用指令名词，方便玩家点按复制后发指令。
+    """
     msg = Message(text)
-    msg += await _card_image(card)
+    seg = await _card_image(card)
+    msg += seg
+    if getattr(seg, "type", "") == "image":
+        msg += Message("\n\n" + _quick_terms_footer("card"))
     return msg
 
+
+# 图片消息底部附的「常用名词」：玩家点按即可复制，粘进消息里 @ 机器人描述行动或发指令。
+# 角色卡图给常用指令（静态）；战斗图优先用 _combat_quick_footer 收集的本场真实名词
+# （敌人名 / 武器名 / 法术名），收集不到时才退回这里的静态行动动词。
+_CARD_QUICK_TERMS = ["/跑团.看卡", "/跑团.改卡", "/跑团.检定", "/跑团.骰", "/跑团.存档"]
+_COMBAT_QUICK_TERMS = ["攻击", "施法", "移动", "躲闪", "协助", "撤离", "专注", "长休"]
+
+
+def _quick_terms_footer(kind: str) -> str:
+    """图片消息底部附一行可复制的常用名词。
+
+    kind='card' 给角色卡常用指令；kind='combat' 给战斗常用行动动词。
+    """
+    if kind == "combat":
+        return "📋 常用行动：" + " · ".join(_COMBAT_QUICK_TERMS)
+    return "📋 常用指令：" + " · ".join(_CARD_QUICK_TERMS)
+
+
+def _combat_quick_footer(save_id: str) -> str:
+    """战斗图底部的常用名词：这场仗里真实可点按复制的内容——
+    敌人名、武器名、法术名，粘进 @我的消息里就能直接用
+    （如「攻击 地精1」「施法 火球术」）。收集不到时退回静态行动动词。"""
+    try:
+        save = load_save(save_id)
+        if save is None:
+            return _quick_terms_footer("combat")
+        combat = load_combat(save)
+        if combat is None:
+            return _quick_terms_footer("combat")
+
+        enemies: list[str] = []
+        weapons: list[str] = []
+        spells: list[str] = []
+        for c in combat.order:
+            if c.kind == "enemy" and not c.out and c.name not in enemies:
+                enemies.append(c.name)
+            if c.kind != "player" or c.out:
+                continue
+            card = get_character(save, c.cid)
+            if card is None:
+                continue
+            for raw in card.equipment:
+                stack = parse_item_stack(str(raw))
+                if get_weapon(stack.name) is not None and stack.name not in weapons:
+                    weapons.append(stack.name)
+            for s in card.known_spells():
+                if s.cn not in spells:
+                    spells.append(s.cn)
+
+        parts: list[str] = []
+        if enemies:
+            shown = enemies[:4]
+            if len(enemies) > 4:
+                shown.append(f"等{len(enemies)}个敌人")
+            parts.append("敌人：" + " · ".join(shown))
+        if weapons:
+            parts.append("武器：" + " · ".join(weapons[:4]))
+        if spells:
+            parts.append("法术：" + " · ".join(spells[:4]))
+        if not parts:
+            return _quick_terms_footer("combat")
+        return "📋 " + "　".join(parts)
+    except Exception as e:  # 附词是锦上添花，出错退回静态词表
+        log.warning(f"收集战斗常用名词失败，退回静态词表：{str_traceback(e)}")
+        return _quick_terms_footer("combat")
+
+
+# --------------------------------------------------------------------------- #
+# 战斗：每轮附战场图 + 当前玩家面板（装备 / 法术 / 可用动作）图片
+# --------------------------------------------------------------------------- #
+#
+# 进入战斗后，每一轮把战场现状与当前行动者的面板渲染成图片随叙述一起发出；
+# 渲染失败（浏览器未就绪等）单张退回文字，不让这一轮卡住。
+
+_COMBAT_VIEWPORT = {"width": 540, "height": 10}
+
+
+async def _render_html_image(html_text: str) -> MessageSegment | None:
+    """把一段 HTML 渲染成图片消息段；失败返回 ``None``（交给调用方退回文字）。"""
+    try:
+        from ATRI.system.htmlrender import html_to_pic
+
+        data = await html_to_pic(
+            html_text, viewport=_COMBAT_VIEWPORT, device_scale_factor=2
+        )
+        return img_msg(data)
+    except Exception as e:  # 浏览器未安装 / 渲染异常：退回文字，保证能看
+        log.warning(f"战斗图片渲染失败，退回文字版：{str_traceback(e)}")
+        return None
+
+
+async def _combat_images(save_id: str) -> list[MessageSegment]:
+    """当前若在战斗中，返回 [战场图, 当前玩家面板] 图片段；没有战斗返回空列表。"""
+    try:
+        save = load_save(save_id)
+        if save is None:
+            return []
+        combat = load_combat(save)
+        if combat is None or not combat.order:
+            return []
+
+        actor = current_actor(combat)
+        current_cid = actor.cid if actor is not None else None
+
+        # 玩家的状态以角色卡为准：逐个读出来传给战场图
+        conditions_by_cid: dict[str, str] = {}
+        for c in combat.order:
+            if c.kind == "player":
+                card = get_character(save, c.cid)
+                if card is not None:
+                    cond = card.conditions_text()
+                    if cond:
+                        conditions_by_cid[c.cid] = cond
+
+        segs: list[MessageSegment] = []
+        battlefield = await _render_html_image(
+            combat_to_html(
+                combat,
+                conditions_by_cid=conditions_by_cid,
+                current_cid=current_cid,
+            )
+        )
+        if battlefield is not None:
+            segs.append(battlefield)
+
+        # 只给「当前该行动的玩家」出面板：他把装备 / 法术 / 还剩什么动作看得最清楚
+        if actor is not None and actor.kind == "player":
+            card = get_character(save, actor.cid)
+            if card is not None:
+                panel = await _render_html_image(
+                    player_panel_html(card, combatant=actor)
+                )
+                if panel is not None:
+                    segs.append(panel)
+        return segs
+    except Exception as e:  # 附图是锦上添花，任何异常都不许影响本轮叙述
+        log.warning(f"生成战斗图片失败（叙述照常发送）：{str_traceback(e)}")
+        return []
+
+
+def _combat_actor_hint(save_id: str) -> str:
+    """战斗中补一句「现在轮到谁」——之前只在 DM 提示词与等待提示里提过，
+    玩家自己的叙述里常常看不出此刻该谁动。"""
+    try:
+        save = load_save(save_id)
+        if save is None:
+            return ""
+        combat = load_combat(save)
+        if combat is None:
+            return ""
+        actor = current_actor(combat)
+        if actor is None:
+            return ""
+        return f"🎯 当前行动者：【{actor.name}】"
+    except Exception:
+        return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -719,8 +884,7 @@ def _story_chooser(world_key: str, note: str = "") -> str:
     lines += [
         "",
         "接下来：",
-        "· 挑一件 → /跑团.开局 <序号>（"
-        f"{int(_START_PICK_TTL // 60)} 分钟内有效）",
+        f"· 挑一件 → /跑团.开局 <序号>（{int(_START_PICK_TTL // 60)} 分钟内有效）",
         "",
         "选完的那一件就是这一局的入场事件，DM 会从它写开场白。",
         "如果你们想自己另起一个故事——开局时跟 DM 说一声就行，",
@@ -835,7 +999,11 @@ def _open_save(
         from .core.dnd.openings import opening_options
 
         chosen = next(
-            (o for o in opening_options(save.world_key) if o.event_key == save.story_key),
+            (
+                o
+                for o in opening_options(save.world_key)
+                if o.event_key == save.story_key
+            ),
             None,
         )
         if chosen is not None:
@@ -941,9 +1109,7 @@ async def _start_game(
         if not options:
             # 这个世界没有开场清单（中途换过世界？）：退回直接建档
             _START_PENDING.pop(key, None)
-            world = next(
-                (w for w in worlds if w.key == pending.world_key), None
-            )
+            world = next((w for w in worlds if w.key == pending.world_key), None)
             if world is None:
                 await start_game.finish(
                     "🌍 那个世界已经不在了。发送 /跑团.开局 重新选择。"
@@ -1537,8 +1703,11 @@ async def _show_save(event: MessageEvent, args: Message = CommandArg()):
         lines.append(format_report(save.save_id))
     msg = Message("\n".join(lines))
     if card is not None:
-        # 角色卡单独渲染成图片，和文字存档报告拼在一起发
-        msg += await _card_image(card)
+        # 角色卡单独渲染成图片，和文字存档报告拼在一起发；图片底部附常用指令
+        seg = await _card_image(card)
+        msg += seg
+        if getattr(seg, "type", "") == "image":
+            msg += Message("\n\n" + _quick_terms_footer("card"))
     await show_save.finish(msg)
 
 
@@ -1673,4 +1842,17 @@ async def _dm_action(event: MessageEvent):
             "想开新的一局用 /跑团.开局；想回味这一局可以翻一下存档目录里的 story.md。\n"
             + format_report(save_id)
         )
+
+    # 战斗中：每轮附战场图 + 当前玩家面板图片，并补一句「现在轮到谁」
+    actor_hint = _combat_actor_hint(save_id)
+    if actor_hint:
+        text = f"{actor_hint}\n\n{text}"
+        images = await _combat_images(save_id)
+        if images:
+            msg: Message = Message(text)
+            for seg in images:
+                msg += seg
+            # 图片消息底部附这场仗的常用名词（敌人 / 武器 / 法术），点按即可复制去描述行动
+            msg += Message("\n\n" + _combat_quick_footer(save_id))
+            await dm_action.finish(msg)
     await dm_action.finish(text)
