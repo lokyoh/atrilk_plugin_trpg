@@ -17,12 +17,12 @@ from .datafiles import as_texts, load_mapping
 
 __all__ = [
     "ARMORS",
-    "ARMOR_MAP",
     "ARMOR_CATEGORIES",
+    "ARMOR_MAP",
     "SHIELDS",
     "WEAPONS",
-    "WEAPON_MAP",
     "WEAPON_CATEGORIES",
+    "WEAPON_MAP",
     "Armor",
     "ArmorCategory",
     "ItemStack",

@@ -36,7 +36,7 @@ Resistance`` / ``Pack Tactics``……）写成数据卡里的 ``rules`` 块。�
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from .attributes import get_ability
@@ -79,8 +79,7 @@ class DeathBurst:
     def text(self) -> str:
         head = f"{self.radius} 尺内每名生物 {self.save_cn}豁免 DC {self.dc}"
         return (
-            f"死亡时爆炸（{head}，失败 {self.damage} {self.damage_type}伤害"
-            "，成功半伤）"
+            f"死亡时爆炸（{head}，失败 {self.damage} {self.damage_type}伤害，成功半伤）"
             if self.has_damage
             else f"死亡时爆炸（{head}，失败按特性正文结算）"
         )
@@ -277,8 +276,7 @@ def rules_text(rules: MonsterRules) -> str:
     if rules.regeneration:
         blocked = "、".join(rules.regeneration_blocked_by)
         parts.append(
-            f"再生 {rules.regeneration}"
-            + (f"（被{blocked}打断）" if blocked else "")
+            f"再生 {rules.regeneration}" + (f"（被{blocked}打断）" if blocked else "")
         )
     if rules.undead_fortitude:
         parts.append("不死坚韧")

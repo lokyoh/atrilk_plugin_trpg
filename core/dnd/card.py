@@ -494,13 +494,19 @@ class DndCharacter(TrpgCharacter):
             return False, ""
         body = self.worn_body_armor()
         shield = next(
-            (a for a in (get_armor(item) for item in self.equipment) if a and a.is_shield),
+            (
+                a
+                for a in (get_armor(item) for item in self.equipment)
+                if a and a.is_shield
+            ),
             None,
         )
         bad_name = ""
         if body is not None and not armor_proficient(body, self.armor_proficiencies):
             bad_name = body.cn
-        elif shield is not None and not armor_proficient(shield, self.armor_proficiencies):
+        elif shield is not None and not armor_proficient(
+            shield, self.armor_proficiencies
+        ):
             bad_name = shield.cn
         if not bad_name:
             return False, ""
@@ -946,9 +952,7 @@ class DndCharacter(TrpgCharacter):
         """同调清单文本（空则空串）。"""
         if not self.attuned:
             return ""
-        names = [
-            (get_item(key).cn if get_item(key) else key) for key in self.attuned
-        ]
+        names = [(get_item(key).cn if get_item(key) else key) for key in self.attuned]
         return f"同调 {len(self.attuned)}/3：" + "、".join(names)
 
     def ammo_count(self, names: tuple[str, ...] | list[str]) -> int:
@@ -1046,7 +1050,9 @@ class DndCharacter(TrpgCharacter):
         # （曾经把「武器盾牌链甲圣徽印章戒指精致服装」当一件收下）。能完整拆回
         # 几件的就拆开；拆出来的泛称（「武器」）若已被更具体的名字盖住就不留，
         # 于是那条假条目自然消失。
-        flat = [piece for item in self.equipment for piece in split_glued_items(str(item))]
+        flat = [
+            piece for item in self.equipment for piece in split_glued_items(str(item))
+        ]
         self.equipment = [
             name
             for name in dict.fromkeys(flat)
@@ -1143,9 +1149,7 @@ class DndCharacter(TrpgCharacter):
                 if combined is Advantage.ADVANTAGE
                 else ("劣势" if combined is Advantage.DISADVANTAGE else "优劣抵消")
             )
-            reason = (
-                f"（{'、'.join(names)}：{kind_cn}{stance}）" if names else ""
-            )
+            reason = f"（{'、'.join(names)}：{kind_cn}{stance}）" if names else ""
         if kind in ("check", "save"):
             # 不会的护甲：所有属性检定与豁免检定都有劣势（5e）
             combined, reason = self._apply_armor_penalty(combined, reason)
@@ -1476,17 +1480,21 @@ class DndCharacter(TrpgCharacter):
         """转义 HTML 特殊字符（角色名 / 装备名可能是玩家自由输入）。"""
         return html.escape(str(text), quote=True)
 
-    def _card_section(self, title: str, items: list[str], *, as_text: bool = False) -> str:
+    def _card_section(
+        self, title: str, items: list[str], *, as_text: bool = False
+    ) -> str:
         """拼一块角色卡分区；``as_text`` 时分条用换行而非标签。"""
         if not items:
             return ""
         if as_text:
-            body = '<div class="muted">' + "<br>".join(self._esc(x) for x in items) + "</div>"
+            body = (
+                '<div class="muted">'
+                + "<br>".join(self._esc(x) for x in items)
+                + "</div>"
+            )
         else:
             body = "".join(f'<span class="tag">{self._esc(x)}</span>' for x in items)
-        return (
-            f'<div class="section"><div class="title">{self._esc(title)}</div>{body}</div>'
-        )
+        return f'<div class="section"><div class="title">{self._esc(title)}</div>{body}</div>'
 
     def equipment_display(self) -> list[str]:
         """装备展示列表：武器 / 护甲附上数值（伤害骰、AC），其余原样。"""
@@ -1655,8 +1663,8 @@ body{{width:540px;font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC"
 .tag{{display:inline-block;background:rgba(123,92,196,.25);border:1px solid rgba(123,92,196,.5);border-radius:6px;padding:2px 8px;margin:2px 5px 2px 0;font-size:12px}}
 .muted{{color:#c3bce8;font-size:13px}}
 </style></head><body><div class="card">
-<div class="header"><div class="name">{self._esc(self.name or '无名者')}</div>
-<div class="meta">{self._esc(race_text)} · {self._esc(prof_text)} · Lv.{self.level}{(' · ' + self._esc(bg_text)) if bg_text else ''}</div></div>
+<div class="header"><div class="name">{self._esc(self.name or "无名者")}</div>
+<div class="meta">{self._esc(race_text)} · {self._esc(prof_text)} · Lv.{self.level}{(" · " + self._esc(bg_text)) if bg_text else ""}</div></div>
 <div class="stats">
 <div class="stat"><div class="v">{self.hp}/{self.max_hp}</div><div class="k">生命</div>{hp_bar}</div>
 <div class="stat"><div class="v">{self.armor_class}</div><div class="k">护甲 AC</div></div>

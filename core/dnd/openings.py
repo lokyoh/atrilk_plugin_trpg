@@ -175,7 +175,9 @@ def opening_options(world_key: str) -> list[Opening]:
         option, _ok = read
         province_order.setdefault(option.province, len(province_order))
         options.append(option)
-    options.sort(key=lambda o: (province_order.get(o.province, 0), order_no[o.event_key]))
+    options.sort(
+        key=lambda o: (province_order.get(o.province, 0), order_no[o.event_key])
+    )
     for number, option in enumerate(options, start=1):
         option.index = number
     return options

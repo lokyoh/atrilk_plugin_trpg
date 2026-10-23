@@ -146,7 +146,9 @@ def _shrink_old_feedback(messages: Any, keep: int = _KEEP_FULL_FEEDBACKS) -> Non
     模型已经消费过那些结果（它的下一条输出就是照着写的），
     重发整份只是把同一批字一遍遍付费；真需要细节时它可以再查。
     """
-    users = [m for m in getattr(messages, "messages", ()) if getattr(m, "role", "") == "user"]
+    users = [
+        m for m in getattr(messages, "messages", ()) if getattr(m, "role", "") == "user"
+    ]
     if len(users) <= keep:
         return
     for msg in users[:-keep]:

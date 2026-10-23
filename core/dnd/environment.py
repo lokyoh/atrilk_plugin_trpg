@@ -25,18 +25,18 @@ from ..trpg.dice import roll
 
 __all__ = [
     "FALLING_MAX_FEET",
-    "falling_dice",
-    "falling_damage",
     "TRAVEL_PACE",
-    "travel_pace",
-    "travel_pace_text",
+    "falling_damage",
+    "falling_dice",
     "forced_march_exhaustion",
+    "hold_breath_minutes",
     "jump_distance",
     "jump_height",
-    "hold_breath_minutes",
-    "suffocation_rounds",
-    "underwater_disadvantage",
     "rule_lookup",
+    "suffocation_rounds",
+    "travel_pace",
+    "travel_pace_text",
+    "underwater_disadvantage",
 ]
 
 #: 坠落伤害上限（200 尺，超过按 20d6 算）
@@ -100,10 +100,8 @@ def travel_pace_text(mode: str) -> str:
         note.append("潜行有优势")
     elif p["stealth"] == "劣势":
         note.append("潜行劣势、被动察觉 -5")
-    tail = f"（{ '、'.join(note) }）" if note else ""
-    return (
-        f"{p['cn']}：{p['mi_per_hour']} 里/时、{p['mi_per_day']} 里/天{tail}"
-    )
+    tail = f"（{'、'.join(note)}）" if note else ""
+    return f"{p['cn']}：{p['mi_per_hour']} 里/时、{p['mi_per_day']} 里/天{tail}"
 
 
 def forced_march_exhaustion(hours: int, con_mod: int, rng: Any = None) -> int:

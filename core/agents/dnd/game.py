@@ -1244,7 +1244,9 @@ async def run_dm_round(
         try:
             from ...dnd.openings import entry_place
 
-            near = entry_place(save.world_key, str(getattr(save, "story_key", "") or ""))
+            near = entry_place(
+                save.world_key, str(getattr(save, "story_key", "") or "")
+            )
         except Exception as e:  # 裁不了就不裁，别影响开局
             log.debug(f"取入场事件的地点失败：{str_traceback(e)}")
     bible = (
@@ -1558,7 +1560,9 @@ def _has_entry_event(save) -> bool:
     try:
         from .event_flow import load_pool
 
-        return any(s.state in ("pending", "playing") for s in load_pool(save).slots.values())
+        return any(
+            s.state in ("pending", "playing") for s in load_pool(save).slots.values()
+        )
     except Exception as e:
         log.warning(f"读事件池失败：{str_traceback(e)}")
         return False

@@ -168,7 +168,9 @@ def bestiary_text(name: str = "") -> str:
             return f"CR {_cr_text(cr)} 没有登记。"
         lines = [f"CR {_cr_text(cr)} 共有 {len(hits)} 只："]
         lines.extend(f"· {entry.line()}" for entry in hits)
-        lines.append("（图鉴名录，AC/生命/动作在 monster 表里查；没有的说明还没有数据卡。）")
+        lines.append(
+            "（图鉴名录，AC/生命/动作在 monster 表里查；没有的说明还没有数据卡。）"
+        )
         return "\n".join(lines)
 
     hits = search_bestiary(text)

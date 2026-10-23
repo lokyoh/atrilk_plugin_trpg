@@ -528,7 +528,9 @@ def _query_monster(name: str) -> str:
             )
         except (ValueError, ZeroDivisionError):
             raise KeyError(f"看不懂这个挑战等级：{text}") from None
-        hits = sorted((m for m in MONSTERS if abs(m.cr - cr) < 1e-6), key=lambda m: m.cn)
+        hits = sorted(
+            (m for m in MONSTERS if abs(m.cr - cr) < 1e-6), key=lambda m: m.cn
+        )
         if not hits:
             return f"CR {raw} 没有登记。"
         lines = [f"CR {raw} 共 {len(hits)} 只："]
@@ -812,12 +814,12 @@ _DATA_ALIASES = {
     "dc": "difficulty",
     "难度": "difficulty",
     "难度表": "difficulty",
-        "rule": "rule",
-        "规则": "rule",
-        "探索规则": "rule",
-        "坠落": "rule",
-        "旅行": "rule",
-        "强行军": "rule",
+    "rule": "rule",
+    "规则": "rule",
+    "探索规则": "rule",
+    "坠落": "rule",
+    "旅行": "rule",
+    "强行军": "rule",
     # —— 全局世界库文档 ——
     "world": "world",
     "世界": "world",
@@ -992,10 +994,11 @@ class UpdateCharacterTool(AgentTool):
                     "治疗走 heal（会自动恢复意识并清空死亡豁免进度）。"
                     "想让他掉血，就让他正常挨一次攻击。"
                 )
-            if (
-                field in {"死亡豁免", "death_save", "death_saves"}
-                and text not in {"复活", "revive", "复苏"}
-            ):
+            if field in {"死亡豁免", "death_save", "death_saves"} and text not in {
+                "复活",
+                "revive",
+                "复苏",
+            }:
                 return (
                     f"战斗中不能手改死亡豁免（{card.name} 现在 "
                     f"{card.death_saves_success} 成功 / {card.death_saves_failures} 失败）："
@@ -1742,7 +1745,8 @@ class AttackTool(AgentTool):
             str(target or ""),
             str(weapon or ""),
             advantage=_parse_advantage(advantage),
-            two_handed=str(two_handed or "").strip() in {"是", "双手", "yes", "y", "true"},
+            two_handed=str(two_handed or "").strip()
+            in {"是", "双手", "yes", "y", "true"},
             off_hand=str(off_hand or "").strip() in {"是", "副手", "yes", "y", "true"},
         )
         # 行动经济（软提示）：真正掷过攻击才记一次「动作」；超支只提醒，不拦截。
@@ -2398,7 +2402,9 @@ class CastSpellTool(AgentTool):
                 continue
             # 豁免检定：自动套目标状态（束缚劣势 / 麻痹等自动失败）
             # 法术的豁免：**魔法效应**，所以魔法抗性在这里生效（龙息则不算）
-            result = _target_save(save, item, spell_obj.save, dc, state=state, magical=True)
+            result = _target_save(
+                save, item, spell_obj.save, dc, state=state, magical=True
+            )
             # 豁免失败 → 把法术附带的状态直接挂上（定身 = 麻痹、恐惧 = 恐慌……）。
             # 以前这里只写一句「请按法术效果叙述」：DM 说了算，引擎不认，
             # 于是被定住的怪下一轮照样行动、近战也不按麻痹算暴击。
@@ -2649,7 +2655,8 @@ class RestTool(AgentTool):
             holders = [c for c in cards if c.attuned]
             if holders:
                 lines.append(
-                    "同调中：" + "；".join(f"{c.name} {c.attunement_text()}" for c in holders)
+                    "同调中："
+                    + "；".join(f"{c.name} {c.attunement_text()}" for c in holders)
                 )
             lines.append(
                 "（短休里可以同调魔法物品：update_character 的 attune=物品名，"

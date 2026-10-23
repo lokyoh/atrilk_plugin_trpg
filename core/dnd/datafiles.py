@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -67,13 +67,11 @@ def _rows(name: str, data: Any) -> tuple[dict[str, Any], ...]:
         )
     for index, item in enumerate(data, 1):
         if not isinstance(item, dict):
-            raise DataFileError(
-                f"数据表 {name}.yaml 第 {index} 条不是映射：{item!r}"
-            )
+            raise DataFileError(f"数据表 {name}.yaml 第 {index} 条不是映射：{item!r}")
     return tuple(data)
 
 
-@lru_cache(maxsize=None)
+@cache
 def load_table(name: str) -> tuple[dict[str, Any], ...]:
     """读一张表（``res/dnd/<name>.yaml``），返回「一条一项」的元组。
 
@@ -82,7 +80,7 @@ def load_table(name: str) -> tuple[dict[str, Any], ...]:
     return _rows(name, _read(name))
 
 
-@lru_cache(maxsize=None)
+@cache
 def load_mapping(name: str) -> dict[str, tuple[dict[str, Any], ...]]:
     """读一张**分段的**表（顶层是映射，每个值是一组条目）。
 
@@ -107,7 +105,7 @@ def as_texts(value: object) -> tuple[str, ...]:
         return ()
     if isinstance(value, str):
         return (value,)
-    if not isinstance(value, (list, tuple)):
+    if not isinstance(value, list | tuple):
         return ()
     return tuple(str(item) for item in value if item not in (None, ""))
 
@@ -116,6 +114,6 @@ def as_rows(value: object) -> tuple[dict[str, object], ...]:
     """YAML 里的「一列映射」→ 元组；**只有一条时作者常直接写映射**，当成一条。"""
     if isinstance(value, dict):
         return (value,)
-    if not isinstance(value, (list, tuple)):
+    if not isinstance(value, list | tuple):
         return ()
     return tuple(item for item in value if isinstance(item, dict))

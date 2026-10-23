@@ -68,15 +68,15 @@ from .conditions import (
     normalize_conditions,
     resolve_damage,
 )
-from .equipment import get_weapon, parse_item_stack
 from .environment import underwater_disadvantage
-from .monsters import Monster
+from .equipment import get_weapon, parse_item_stack
 from .monster_rules import (
     DeathBurst,
     attack_advantage_of,
     blocked_conditions,
     rules_of,
 )
+from .monsters import Monster
 from .npcs import (
     build_npc,
     is_npc_key,
@@ -453,8 +453,7 @@ class CombatState:
                 None if data.get("daylight") is None else bool(data.get("daylight"))
             ),
             ammo_used={
-                str(k): max(0, int(v))
-                for k, v in (data.get("ammo_used") or {}).items()
+                str(k): max(0, int(v)) for k, v in (data.get("ammo_used") or {}).items()
             },
         )
 
@@ -634,7 +633,9 @@ def apply_condition(
     if not wanted:
         return ""
     if combatant.is_enemy:
-        blocked = blocked_conditions(rules_of(resolve_monster(combatant.monster)), wanted)
+        blocked = blocked_conditions(
+            rules_of(resolve_monster(combatant.monster)), wanted
+        )
         wanted = [name for name in wanted if name not in blocked]
         if not wanted:
             return f"{combatant.name} 免疫这些状态，没挂上。"
@@ -2108,7 +2109,11 @@ def attack(
         warn += "（身边 5 尺内有敌人，远程攻击带劣势）\n"
 
     # —— 水下战斗：攻击者站在浅水（water）地形上，武器攻击受限（5e2014）——
-    if has_map(state) and has_position(attacker) and terrain_at(state, attacker.x, attacker.y).key == "water":
+    if (
+        has_map(state)
+        and has_position(attacker)
+        and terrain_at(state, attacker.x, attacker.y).key == "water"
+    ):
         _has_swim = bool(card.swim_speed)
         if ranged_attack:
             if weapon is not None and distance > normal:
@@ -2116,7 +2121,9 @@ def attack(
                     f"{warn}水下远程攻击：目标超出常规射程，水阻力让远射直接落空（未命中）。",
                     False,
                 )
-            if weapon is not None and underwater_disadvantage("ranged", weapon.key, _has_swim):
+            if weapon is not None and underwater_disadvantage(
+                "ranged", weapon.key, _has_swim
+            ):
                 advantage = combine_advantage(advantage, Advantage.DISADVANTAGE)
                 warn += "（水下远程攻击带劣势：除非用弩 / 捕网 / 标枪类投掷武器）\n"
         else:  # 近战（含徒手）
@@ -2143,8 +2150,10 @@ def attack(
             warn += f"{ammo_note}\n"
 
     # —— 重型：小型攻击者用重型武器有劣势 ——
-    if weapon is not None and weapon.is_heavy and _is_small(
-        card.race_obj.size if card.race_obj else "中型"
+    if (
+        weapon is not None
+        and weapon.is_heavy
+        and _is_small(card.race_obj.size if card.race_obj else "中型")
     ):
         advantage = combine_advantage(advantage, Advantage.DISADVANTAGE)
         warn += f"（{weapon.cn}是重型武器，体型小驾驭不动：攻击有劣势）\n"
@@ -2194,7 +2203,12 @@ def attack(
         # 徒手也走角色卡的状态合并（中毒 / 力竭的劣势不能漏）
         final_adv, state_note = card.resolve_attack_advantage(advantage)
         result = roll_check(
-            bonus, target_ac, kind="徒手攻击", advantage=final_adv, auto_critical=True, rng=rng
+            bonus,
+            target_ac,
+            kind="徒手攻击",
+            advantage=final_adv,
+            auto_critical=True,
+            rng=rng,
         )
         if state_note:
             result.kind += state_note
@@ -2311,8 +2325,7 @@ def recover_ammo(save: Save, state: CombatState) -> str:
         set_character(save, card)
         who = card.name or cid
         lines.append(
-            f"{who} 回收 {back} 枚{ammo}"
-            f"（耗 {spent}，剩 {card.ammo_count((ammo,))}）"
+            f"{who} 回收 {back} 枚{ammo}（耗 {spent}，剩 {card.ammo_count((ammo,))}）"
         )
     state.ammo_used = {}
     save_combat(save, state)
@@ -2613,9 +2626,7 @@ def _flee_cell(state: CombatState, enemy: Combatant) -> tuple[int, int] | None:
     if not has_map(state) or not has_position(enemy):
         return None
     players = [
-        c
-        for c in state.order
-        if c.kind == "player" and has_position(c) and not c.out
+        c for c in state.order if c.kind == "player" and has_position(c) and not c.out
     ]
     if not players:
         return None
@@ -2648,7 +2659,9 @@ def _flee(save: Save, state: CombatState, enemy: Combatant) -> str:
     moved = ""
     dest = _flee_cell(state, enemy)
     if dest is not None:
-        text = move_combatant(save, state, enemy.cid, pos=f"{dest[0] + 1},{dest[1] + 1}")
+        text = move_combatant(
+            save, state, enemy.cid, pos=f"{dest[0] + 1},{dest[1] + 1}"
+        )
         moved = text.splitlines()[0]
     cornered = False
     if threat is not None and has_position(enemy) and has_position(threat):
@@ -2785,12 +2798,12 @@ def update_enemy(
         else:
             wanted = normalize_conditions(cond_text)
             # 状态免疫（骷髅免疫中毒、幽魂免疫倒地……）：挡掉，别让它白挨一个状态
-            immune = blocked_conditions(rules_of(resolve_monster(enemy.monster)), wanted)
+            immune = blocked_conditions(
+                rules_of(resolve_monster(enemy.monster)), wanted
+            )
             enemy.conditions = [name for name in wanted if name not in immune]
             if immune:
-                notes.append(
-                    f"{enemy.name} 免疫{'、'.join(immune)}，这几个没生效。"
-                )
+                notes.append(f"{enemy.name} 免疫{'、'.join(immune)}，这几个没生效。")
             if enemy.conditions:
                 notes.append(f"{enemy.name} 当前状态：{'、'.join(enemy.conditions)}。")
             elif not immune:

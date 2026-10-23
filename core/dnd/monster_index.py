@@ -399,7 +399,9 @@ def index_text(
     cond = parse_query(body)
     unknown = [str(item) for item in (cond.get("rest") or [])]
     if unknown and not wanted_random:
-        raise KeyError(f"看不懂：{' '.join(unknown)}（能写类型 / 栖息地 / 群组 / cr N）")
+        raise KeyError(
+            f"看不懂：{' '.join(unknown)}（能写类型 / 栖息地 / 群组 / cr N）"
+        )
 
     pool = select(
         kind=str(cond.get("kind", "")),
@@ -409,7 +411,9 @@ def index_text(
     )
     if wanted_random:
         if not pool:
-            return "按这个条件一只都挑不出来，放宽点再试（写类型 / 栖息地 / 群组 / cr）。"
+            return (
+                "按这个条件一只都挑不出来，放宽点再试（写类型 / 栖息地 / 群组 / cr）。"
+            )
         monster = (rng or random.Random()).choice(pool)
         scope = "／".join(
             part
