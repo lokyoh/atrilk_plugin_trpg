@@ -101,8 +101,8 @@ __all__ = [
     "EnemySpec",
     "advance_turn",
     "all_enemies_out",
-    "apply_damage",
     "apply_condition",
+    "apply_damage",
     "apply_threat_profile",
     "attack",
     "auto_crit_on_hit",
@@ -2608,6 +2608,65 @@ def _pick_enemy_attack(
     return monster.attacks[0], False
 
 
+def _flee_cell(state: CombatState, enemy: Combatant) -> tuple[int, int] | None:
+    """给要逃的敌人挑一个「离所有活人最远」的空格（0 基返回）。"""
+    if not has_map(state) or not has_position(enemy):
+        return None
+    players = [
+        c
+        for c in state.order
+        if c.kind == "player" and has_position(c) and not c.out
+    ]
+    if not players:
+        return None
+    occupied = {
+        (int(c.x), int(c.y))
+        for c in state.order
+        if has_position(c) and not c.out and c.cid != enemy.cid
+    }
+    best: tuple[int, int] | None = None
+    best_score = -1
+    for x in range(state.width):
+        for y in range(state.height):
+            if (x, y) in occupied:
+                continue
+            if terrain_at(state, x, y).key == "blocked":
+                continue
+            score = min(chebyshev(x, y, int(p.x), int(p.y)) for p in players)
+            if score > best_score:
+                best_score, best = score, (x, y)
+    return best
+
+
+def _flee(save: Save, state: CombatState, enemy: Combatant) -> str:
+    """被恐惧压垮的敌人：不攻击，往外撤；真跑不掉了就当场退出战斗。
+
+    这是 5e「恐惧 → 必须远离恐惧源」的机械落地。**逃跑不给经验**（严格 5e）：
+    退出战斗时撤销击败记录，结算时不算战果——只有真打到 0 血才算。
+    """
+    threat = enemy_target(save, state, enemy)
+    moved = ""
+    dest = _flee_cell(state, enemy)
+    if dest is not None:
+        text = move_combatant(save, state, enemy.cid, pos=f"{dest[0] + 1},{dest[1] + 1}")
+        moved = text.splitlines()[0]
+    cornered = False
+    if threat is not None and has_position(enemy) and has_position(threat):
+        cornered = chebyshev(enemy.x, enemy.y, threat.x, threat.y) <= 1
+    elif threat is None:
+        cornered = False
+    if cornered:
+        enemy.out = True
+        enemy.note = "被恐惧压垮，丢下武器逃出战场"
+        forget_defeat(state, enemy)
+        if enemy.npc:
+            update_npc(save, enemy.npc, status="逃跑")
+        return f"【{enemy.name}】惊恐至极，转身逃出战场（逃跑不给经验）。"
+    if moved:
+        return f"【{enemy.name}】被恐惧压住，不敢上前：{moved}"
+    return f"【{enemy.name}】被恐惧压住，缩在原地不敢动手。"
+
+
 def auto_enemy_turns(
     save: Save,
     state: CombatState,
@@ -2640,6 +2699,12 @@ def auto_enemy_turns(
         target = enemy_target(save, state, enemy)
         if target is None:
             break  # 没人可打了（全队倒地），剩下的敌人不用再动
+
+        # 被恐惧压住的敌人不攻击，只往外撤（5e：必须远离恐惧源）
+        if "恐慌" in combatant_conditions(save, enemy):
+            report.append(_flee(save, state, enemy))
+            enemy.acted_round = state.round
+            continue
 
         attack, reachable = _pick_enemy_attack(state, enemy, target, monster)
         if attack is None:

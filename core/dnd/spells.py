@@ -212,6 +212,10 @@ class Spell:
     conditions: tuple[str, ...] = ()
     #: 状态撑几轮（0 = 不自动到期，交给 DM / 剧情）。到期由回合推进自动清掉。
     condition_rounds: int = 0
+    #: 命中 / 豁免失败时把目标脚下变成什么地形（``困难`` / ``危险``……）。
+    #: 蛛网、纠缠这类「区域变难走」的法术靠它落到棋盘上——DM 侧已经没有改地形
+    #: 的功能，地形变化只能由系统按数据算。
+    terrain: str = ""
     upcast: str = ""  #: 升环施放的效果
     scaling: str = ""  #: 戏法随等级成长
     desc: str = ""
@@ -361,6 +365,7 @@ def _spell(row: dict[str, Any]) -> Spell:
         auto_damage=bool(row.get("auto_damage", False)),
         conditions=as_texts(row.get("conditions")),
         condition_rounds=max(0, int(row.get("condition_rounds", 0) or 0)),
+        terrain=str(row.get("terrain", "")),
         upcast=str(row.get("upcast", "")),
         scaling=str(row.get("scaling", "")),
         desc=str(row.get("desc", "")),

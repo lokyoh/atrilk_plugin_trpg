@@ -756,6 +756,7 @@
   conditions:
   - 束缚
   condition_rounds: 10
+  terrain: 困难
   desc: 地面长出藤蔓：未通过豁免者被束缚，行动区域视为困难地形。
 - key: goodberry
   cn: 好莓果
@@ -1134,6 +1135,7 @@
   conditions:
   - 束缚
   condition_rounds: 10
+  terrain: 困难
   desc: 黏稠蛛网：未通过豁免者被束缚，区域为困难地形且可燃。
 - key: hold_person
   cn: 定身人类

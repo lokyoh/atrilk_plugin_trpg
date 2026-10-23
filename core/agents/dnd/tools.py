@@ -22,13 +22,13 @@ from ...dnd.attributes import ABILITIES, get_ability
 from ...dnd.battlemap import (
     distance_feet,
     has_map,
+    has_position,
+    normalize_terrain,
     range_check,
+    set_terrain,
 )
 from ...dnd.bestiary import bestiary_text, find_bestiary
 from ...dnd.card import DndCharacter
-from ...dnd.combat import (
-    apply_damage as combat_damage,
-)
 from ...dnd.combat import (
     apply_condition,
     apply_threat_profile,
@@ -48,6 +48,9 @@ from ...dnd.combat import (
     save_combat,
     start_combat,
     use_resource,
+)
+from ...dnd.combat import (
+    apply_damage as combat_damage,
 )
 from ...dnd.combat import (
     attack as combat_attack,
@@ -2388,7 +2391,7 @@ class CastSpellTool(AgentTool):
                 spell_obj.damage_expr(casting_mod, level=card.level)
             )
             lines.append(f"伤害 {detail} {spell_obj.damage_type_text}")
-        cond_applied = False
+        state_dirty = False
         for item in targets:
             if _target_down(save, item):
                 lines.append(f"· {_target_name(item)} 已经倒下了，跳过。")
@@ -2407,7 +2410,21 @@ class CastSpellTool(AgentTool):
                     spell_obj.conditions,
                     rounds=spell_obj.condition_rounds,
                 )
-                cond_applied = cond_applied or bool(cond_note)
+                state_dirty = state_dirty or bool(cond_note)
+            # 法术把脚下地形改掉（蛛网 / 纠缠：区域变难走）。
+            # DM 侧没有改地形的功能，地形只能由系统按数据算。
+            terrain_note = ""
+            if spell_obj.terrain and not result.success:
+                key = normalize_terrain(spell_obj.terrain)
+                if (
+                    key
+                    and has_position(item)
+                    and set_terrain(state, int(item.x), int(item.y), key)
+                ):
+                    terrain_note = (
+                        f"{_target_name(item)} 脚下的地面变成{spell_obj.terrain}地形"
+                    )
+                    state_dirty = True
             if not spell_obj.damage:
                 lines.append(
                     f"· {_target_name(item)}：{result.describe()} → "
@@ -2417,8 +2434,9 @@ class CastSpellTool(AgentTool):
                         else "失败（请按法术效果叙述）"
                     )
                 )
-                if cond_note:
-                    lines.append(f"  　{cond_note}")
+                for extra in (cond_note, terrain_note):
+                    if extra:
+                        lines.append(f"  　{extra}")
                 continue
             if result.success:
                 if spell_obj.half_on_save:
@@ -2453,10 +2471,11 @@ class CastSpellTool(AgentTool):
                         damage_type=spell_obj.damage_type_text,
                     )
                 )
-            if cond_note:
-                lines.append(f"  　{cond_note}")
-        # 敌人的状态记在 combat.json 里：不落盘的话下一轮读到的还是没被控住的样子
-        if cond_applied:
+            for extra in (cond_note, terrain_note):
+                if extra:
+                    lines.append(f"  　{extra}")
+        # 状态与地形都记在 combat.json 里：不落盘的话下一轮读到的还是没被控住的样子
+        if state_dirty:
             save_combat(save, state)
         return warn + "\n".join(lines)
 

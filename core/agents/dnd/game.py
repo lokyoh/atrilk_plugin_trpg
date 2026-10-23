@@ -1416,6 +1416,18 @@ async def run_dm_round(
     state = load_round(save)
     state.actions = {}
     combat = load_combat(save)
+    # 全队阵亡：**没有能行动的人了，战斗当场结束**。
+    #
+    # 以前这里只标一个「本局收尾」，combat.json 照样挂着：之后每一轮仍在拼战斗块、
+    # 等一个永远不会出现的行动者，玩家得先结档才清得掉。战斗该结束就结束——
+    # 也不结算经验 / 战利品（没有活人拿，掷出来只是脏数据）。
+    if combat is not None and _party_wiped(save):
+        clear_combat(save)
+        combat = None
+        combat_label = ""
+        closed = "💀 队伍全部倒下，战斗结束。"
+        narration = f"{narration}\n\n{closed}"
+        log_event(save, "combat", "战斗结束：全队阵亡", actor="dm")
     if combat is not None and not all_enemies_out(combat):
         if not context.data.get("combat_started"):
             # 本回合结束，推进到下一名玩家；夹在中间的敌人交给系统结算。
