@@ -56,6 +56,7 @@ from .profession import DndClass, get_class
 from .race import Race, SubRace, get_race
 from .skills import Skill, get_skill
 from .spells import Spell, get_spell, max_slots, slot_text
+from .theme import css_vars, get_theme
 
 __all__ = [
     "DEATH_CONDITIONS",
@@ -224,6 +225,31 @@ class DeathSaveOutcome:
         return (
             f"d20={self.roll} → {label}（成功 {self.successes} / 失败 {self.failures}）"
         )
+
+
+#: 角色卡卡面样式：颜色一律取主题变量（见 :mod:`.theme`），这里只写布局。
+_CARD_CSS = """*{margin:0;padding:0;box-sizing:border-box}
+body{width:540px;font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","Heiti SC",sans-serif;background:var(--page);padding:14px}
+.card{background:linear-gradient(160deg,var(--card1),var(--card2));border:1px solid var(--border);border-radius:14px;overflow:hidden;color:var(--text);box-shadow:0 6px 20px rgba(0,0,0,.5)}
+.header{background:linear-gradient(135deg,var(--header1),var(--header2));padding:16px 20px}
+.name{font-size:23px;font-weight:700;color:var(--text)}
+.meta{font-size:13px;color:var(--text2);margin-top:5px;opacity:.92}
+.stats{display:flex;gap:10px;padding:14px 20px;background:rgba(0,0,0,.18)}
+.stat{flex:1;text-align:center;background:rgba(255,255,255,.06);border-radius:10px;padding:8px 4px}
+.stat .v{font-size:19px;font-weight:700;color:var(--accent)}
+.stat .k{font-size:11px;color:var(--text2)}
+.hpbar{height:7px;background:var(--track);border-radius:5px;overflow:hidden;margin-top:6px}
+.hpfill{height:100%;background:linear-gradient(90deg,var(--hp1),var(--hp2))}
+.abilities{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:14px 20px}
+.ab{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:8px;text-align:center}
+.ab .cn{font-size:12px;color:var(--text2)}
+.ab .sc{font-size:18px;font-weight:700}
+.ab .mo{font-size:12px;color:var(--accent)}
+.section{padding:10px 20px;border-top:1px solid rgba(255,255,255,.06);font-size:13px;line-height:1.7}
+.section .title{color:var(--accent);font-weight:700;margin-bottom:5px}
+.tag{display:inline-block;background:var(--tag-bg);border:1px solid var(--tag-border);border-radius:6px;padding:2px 8px;margin:2px 5px 2px 0;font-size:12px}
+.muted{color:var(--text2);font-size:13px}
+"""
 
 
 @dataclass
@@ -1640,29 +1666,7 @@ class DndCharacter(TrpgCharacter):
         sections_html = "".join(sections)
 
         return f"""<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="utf-8"><style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{width:540px;font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","Heiti SC",sans-serif;background:#15102b;padding:14px}}
-.card{{background:linear-gradient(160deg,#2a2348,#1d1836);border:1px solid #6b5bb5;border-radius:14px;overflow:hidden;color:#ece8ff;box-shadow:0 6px 20px rgba(0,0,0,.5)}}
-.header{{background:linear-gradient(135deg,#7b5cc4,#4b3a8a);padding:16px 20px}}
-.name{{font-size:23px;font-weight:700;color:#fff}}
-.meta{{font-size:13px;color:#e3dcff;margin-top:5px;opacity:.92}}
-.stats{{display:flex;gap:10px;padding:14px 20px;background:rgba(0,0,0,.18)}}
-.stat{{flex:1;text-align:center;background:rgba(255,255,255,.06);border-radius:10px;padding:8px 4px}}
-.stat .v{{font-size:19px;font-weight:700;color:#ffd86b}}
-.stat .k{{font-size:11px;color:#c3bce8}}
-.hpbar{{height:7px;background:#3a2f5e;border-radius:5px;overflow:hidden;margin-top:6px}}
-.hpfill{{height:100%;background:linear-gradient(90deg,#ff6b6b,#ffd86b)}}
-.abilities{{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:14px 20px}}
-.ab{{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:8px;text-align:center}}
-.ab .cn{{font-size:12px;color:#c3bce8}}
-.ab .sc{{font-size:18px;font-weight:700}}
-.ab .mo{{font-size:12px;color:#ffd86b}}
-.section{{padding:10px 20px;border-top:1px solid rgba(255,255,255,.06);font-size:13px;line-height:1.7}}
-.section .title{{color:#ffd86b;font-weight:700;margin-bottom:5px}}
-.tag{{display:inline-block;background:rgba(123,92,196,.25);border:1px solid rgba(123,92,196,.5);border-radius:6px;padding:2px 8px;margin:2px 5px 2px 0;font-size:12px}}
-.muted{{color:#c3bce8;font-size:13px}}
-</style></head><body><div class="card">
+<html lang="zh-CN"><head><meta charset="utf-8"><style>{css_vars(get_theme())}{_CARD_CSS}</style></head><body><div class="card">
 <div class="header"><div class="name">{self._esc(self.name or "无名者")}</div>
 <div class="meta">{self._esc(race_text)} · {self._esc(prof_text)} · Lv.{self.level}{(" · " + self._esc(bg_text)) if bg_text else ""}</div></div>
 <div class="stats">
