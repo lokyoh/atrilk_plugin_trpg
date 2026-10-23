@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -1433,9 +1434,7 @@ class DndCharacter(TrpgCharacter):
                 f"法术豁免 DC {self.spell_save_dc}"
             )
             lines.append(f"法术位 {self.spell_slots_text()}")
-            known = self.known_spells()
-            if known:
-                lines.append("法术 " + "、".join(s.cn for s in known))
+            lines.extend(self.spell_display_lines())
         if self.conditions or self.exhaustion:
             status = list(self.conditions)
             if self.exhaustion:
@@ -1467,8 +1466,206 @@ class DndCharacter(TrpgCharacter):
         if prof:
             lines.append("熟练 " + "；".join(prof))
         if self.equipment:
-            lines.append("装备 " + "、".join(self.equipment))
+            lines.append("装备 " + "、".join(self.equipment_display()))
         return "\n".join(lines)
+
+    # —— HTML 角色卡（喂给 html_to_pic 渲染成图片）——
+
+    @staticmethod
+    def _esc(text: object) -> str:
+        """转义 HTML 特殊字符（角色名 / 装备名可能是玩家自由输入）。"""
+        return html.escape(str(text), quote=True)
+
+    def _card_section(self, title: str, items: list[str], *, as_text: bool = False) -> str:
+        """拼一块角色卡分区；``as_text`` 时分条用换行而非标签。"""
+        if not items:
+            return ""
+        if as_text:
+            body = '<div class="muted">' + "<br>".join(self._esc(x) for x in items) + "</div>"
+        else:
+            body = "".join(f'<span class="tag">{self._esc(x)}</span>' for x in items)
+        return (
+            f'<div class="section"><div class="title">{self._esc(title)}</div>{body}</div>'
+        )
+
+    def equipment_display(self) -> list[str]:
+        """装备展示列表：武器 / 护甲附上数值（伤害骰、AC），其余原样。"""
+        out: list[str] = []
+        for raw in self.equipment:
+            stack = parse_item_stack(str(raw))
+            name = stack.name
+            count_suffix = f"×{stack.count}" if stack.count > 1 else ""
+            weapon = get_weapon(name)
+            if weapon is not None:
+                dmg = weapon.damage
+                if weapon.is_versatile:
+                    dmg += f"/{weapon.two_handed_damage}"
+                out.append(f"{name} {dmg} {weapon.damage_type}{count_suffix}")
+                continue
+            armor = get_armor(name)
+            if armor is not None:
+                if armor.is_shield:
+                    out.append(f"{name} +2 AC{count_suffix}")
+                else:
+                    out.append(f"{name} AC {armor.base_ac}{count_suffix}")
+                continue
+            out.append(f"{name}{count_suffix}")
+        return out
+
+    def spell_display_lines(self) -> list[str]:
+        """已知法术按环阶分组的展示行：先环阶名（戏法 / 一环…），再逐条 `法术名：简介`。
+
+        简介取数据卡的 ``desc``；没有简介的只写名字。
+        """
+        known = self.known_spells()
+        if not known:
+            return []
+        by_level: dict[int, list[Spell]] = {}
+        for s in known:
+            by_level.setdefault(s.level, []).append(s)
+        lines: list[str] = []
+        for lv in sorted(by_level):
+            lines.append(by_level[lv][0].level_text)
+            for s in by_level[lv]:
+                line = s.cn
+                if s.desc:
+                    line += "：" + s.desc
+                lines.append(line)
+        return lines
+
+    def to_html(self) -> str:
+        """渲染一张可直接喂给 ``html_to_pic`` 的角色卡图片 HTML。
+
+        纯展示：只读取角色卡的派生数据，不碰存档、不调模型。
+        返回完整 HTML 文档（内联样式），无外部资源依赖，方便截图。
+        """
+        race = self.race_obj
+        race_text = race.cn if race else "未知种族"
+        if self.subrace_obj:
+            race_text += f"·{self.subrace_obj.cn}"
+        profession = self.profession_obj
+        prof_text = profession.cn if profession else "无业"
+        bg = self.background_obj
+        bg_text = bg.cn if bg else ""
+
+        # 六大属性
+        ability_cells = []
+        for a in ABILITIES:
+            score = self.abilities[a]
+            mod = self.abilities.modifier(a)
+            ability_cells.append(
+                '<div class="ab">'
+                f'<div class="cn">{self._esc(a.cn)}</div>'
+                f'<div class="sc">{score}</div>'
+                f'<div class="mo">{mod:+d}</div>'
+                "</div>"
+            )
+        abilities_html = "".join(ability_cells)
+
+        # 生命条（仅在扣过血或记录了当前血量时显示，满血新卡不画空条）
+        hp_bar = ""
+        if self.current_hp is not None or self.hp < self.max_hp:
+            hp_pct = max(0, min(100, int(100 * self.hp / max(1, self.max_hp))))
+            hp_bar = (
+                '<div class="hpbar">'
+                f'<div class="hpfill" style="width:{hp_pct}%"></div>'
+                "</div>"
+            )
+        temp_hp_line = (
+            f'<div class="k">临时 {self.temp_hp}</div>' if self.temp_hp else ""
+        )
+
+        # 各分区
+        sections: list[str] = []
+
+        skills = self.skill_lines()
+        if skills:
+            sections.append(self._card_section("技能", skills))
+
+        if self.equipment:
+            sections.append(self._card_section("装备", self.equipment_display()))
+
+        status_tags: list[str] = []
+        if self.conditions or self.exhaustion:
+            status_tags.extend(normalize_conditions(self.conditions))
+            if self.exhaustion:
+                status_tags.append(f"力竭 {self.exhaustion} 级")
+        death = self.death_save_text()
+        if death:
+            status_tags.append(death)
+        if status_tags:
+            sections.append(self._card_section("状态", status_tags))
+
+        resist = self.resistances_text()
+        if resist:
+            sections.append(self._card_section("伤害抗性", resist.split("、")))
+
+        if self.is_caster:
+            spell_lines = [
+                f"施法属性 {self.casting_text}",
+                f"法术攻击 {self.spell_attack_bonus:+d}",
+                f"豁免 DC {self.spell_save_dc}",
+                f"法术位 {self.spell_slots_text() or '（无）'}",
+            ]
+            spell_lines.extend(self.spell_display_lines())
+            sections.append(self._card_section("法术", spell_lines, as_text=True))
+
+        if self.concentrating_spell is not None:
+            sections.append(
+                self._card_section(
+                    "专注",
+                    [f"维持中：{self.concentrating_spell.cn}"],
+                    as_text=True,
+                )
+            )
+
+        attune = self.attunement_text()
+        if attune:
+            sections.append(self._card_section("同调", [attune], as_text=True))
+
+        if profession:
+            hd = f"生命骰 {profession.hit_dice}"
+            if self.hit_dice_used:
+                hd += f"（已耗 {self.hit_dice_used}，剩 {self.hit_dice_left}）"
+            sections.append(self._card_section("生命骰", [hd], as_text=True))
+
+        sections_html = "".join(sections)
+
+        return f"""<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{width:540px;font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","Heiti SC",sans-serif;background:#15102b;padding:14px}}
+.card{{background:linear-gradient(160deg,#2a2348,#1d1836);border:1px solid #6b5bb5;border-radius:14px;overflow:hidden;color:#ece8ff;box-shadow:0 6px 20px rgba(0,0,0,.5)}}
+.header{{background:linear-gradient(135deg,#7b5cc4,#4b3a8a);padding:16px 20px}}
+.name{{font-size:23px;font-weight:700;color:#fff}}
+.meta{{font-size:13px;color:#e3dcff;margin-top:5px;opacity:.92}}
+.stats{{display:flex;gap:10px;padding:14px 20px;background:rgba(0,0,0,.18)}}
+.stat{{flex:1;text-align:center;background:rgba(255,255,255,.06);border-radius:10px;padding:8px 4px}}
+.stat .v{{font-size:19px;font-weight:700;color:#ffd86b}}
+.stat .k{{font-size:11px;color:#c3bce8}}
+.hpbar{{height:7px;background:#3a2f5e;border-radius:5px;overflow:hidden;margin-top:6px}}
+.hpfill{{height:100%;background:linear-gradient(90deg,#ff6b6b,#ffd86b)}}
+.abilities{{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:14px 20px}}
+.ab{{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:8px;text-align:center}}
+.ab .cn{{font-size:12px;color:#c3bce8}}
+.ab .sc{{font-size:18px;font-weight:700}}
+.ab .mo{{font-size:12px;color:#ffd86b}}
+.section{{padding:10px 20px;border-top:1px solid rgba(255,255,255,.06);font-size:13px;line-height:1.7}}
+.section .title{{color:#ffd86b;font-weight:700;margin-bottom:5px}}
+.tag{{display:inline-block;background:rgba(123,92,196,.25);border:1px solid rgba(123,92,196,.5);border-radius:6px;padding:2px 8px;margin:2px 5px 2px 0;font-size:12px}}
+.muted{{color:#c3bce8;font-size:13px}}
+</style></head><body><div class="card">
+<div class="header"><div class="name">{self._esc(self.name or '无名者')}</div>
+<div class="meta">{self._esc(race_text)} · {self._esc(prof_text)} · Lv.{self.level}{(' · ' + self._esc(bg_text)) if bg_text else ''}</div></div>
+<div class="stats">
+<div class="stat"><div class="v">{self.hp}/{self.max_hp}</div><div class="k">生命</div>{hp_bar}</div>
+<div class="stat"><div class="v">{self.armor_class}</div><div class="k">护甲 AC</div></div>
+<div class="stat"><div class="v">{self.initiative:+d}</div><div class="k">先攻</div></div>
+<div class="stat"><div class="v">{self.proficiency:+d}</div><div class="k">熟练</div>{temp_hp_line}</div>
+</div>
+<div class="abilities">{abilities_html}</div>
+{sections_html}
+</div></body></html>"""
 
     def to_dict(self) -> dict[str, Any]:
         data = super().to_dict()

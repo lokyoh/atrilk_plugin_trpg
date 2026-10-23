@@ -21,13 +21,14 @@ from dataclasses import dataclass, field
 
 from nonebot import get_bot, get_driver
 from nonebot.adapters import Event
-from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
+from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent, MessageSegment
 from nonebot.internal.matcher import Matcher
 from nonebot.params import ArgPlainText, CommandArg
 from nonebot.rule import Rule
 
 from ATRI.exceptions import str_traceback
 from ATRI.log import log
+from ATRI.message import img_msg
 from ATRI.service import is_in_service
 
 from . import plugin
@@ -101,6 +102,45 @@ _CANCEL_WORDS = {"取消", "退出", "cancel", "算了", "不建了", "不建了
 
 #: 一次骰子指令里多个表达式的分隔符
 _DICE_SEP = re.compile(r"[,，;；、]+")
+
+
+# --------------------------------------------------------------------------- #
+# 角色卡图片渲染
+# --------------------------------------------------------------------------- #
+#
+# 看卡 / 建卡完成 / 改卡完成 / 看存档 都改用 ``html_to_pic`` 把角色卡渲染成图片发送；
+# 浏览器未就绪或渲染异常时退回纯文本卡（``card.summary()``），不让展示这一步卡死。
+
+_CARD_VIEWPORT = {"width": 540, "height": 10}
+
+
+async def _card_image(card: "DndCharacter") -> MessageSegment:
+    """把角色卡渲染成一张图片消息段；渲染失败时退回纯文本卡。
+
+    ``html_to_pic`` 在函数内**延迟导入**：插件加载阶段就 import 它会让
+    ATRI 的加载器报「htmlrender is not loaded as a plugin」（模块先进了
+    ``sys.modules``），渲染时机反正远在加载完成之后，不急于这一时。
+    """
+    try:
+        from ATRI.system.htmlrender import html_to_pic
+
+        data = await html_to_pic(
+            card.to_html(),
+            viewport=_CARD_VIEWPORT,
+            device_scale_factor=2,
+        )
+        return img_msg(data)
+    except Exception as e:  # 浏览器未安装 / 渲染异常：退回文字版，保证能看
+        log.warning(f"角色卡图片渲染失败，退回文字版：{str_traceback(e)}")
+        return MessageSegment.text("\n\n" + card.summary())
+
+
+async def _card_result(text: str, card: "DndCharacter") -> Message:
+    """把一段说明文字与角色卡图片拼成一条消息（图片失败则拼文字卡）。"""
+    msg = Message(text)
+    msg += await _card_image(card)
+    return msg
+
 
 
 # --------------------------------------------------------------------------- #
@@ -208,8 +248,11 @@ async def _advance(
 
         delete_session(session.user_id)
         return (
-            f"{character.summary()}\n\n🎲 角色卡已保存！"
-            "发送 /跑团.看卡 查看，/跑团.检定 察觉 DC15 开始检定。",
+            await _card_result(
+                "🎲 角色卡已保存！\n"
+                "发送 /跑团.看卡 查看，/跑团.检定 察觉 DC15 开始检定。",
+                character,
+            ),
             character,
         )
 
@@ -257,7 +300,7 @@ async def _show_card(event: MessageEvent):
     card = load_card(event.get_user_id())
     if card is None:
         await show_card.finish("你还没有角色卡，发送 /跑团.建卡 创建一张吧。")
-    await show_card.finish(card.summary())
+    await show_card.finish(await _card_image(card))
 
 
 # --------------------------------------------------------------------------- #
@@ -495,7 +538,7 @@ async def _start_edit(
             # 不能直接结束，否则掷出来的属性组会被丢掉。
             await edit_card.reject(message)
         await _save_or_finish(new_card)
-        await edit_card.finish(f"{message}\n\n{new_card.summary()}")
+        await edit_card.finish(await _card_result(message, new_card))
 
     await edit_card.send(
         f"重做「{_STEP_LABELS.get(step, step.value)}」：\n\n{creation_prompt(step, session)}"
@@ -523,7 +566,7 @@ async def _continue_edit(
         await edit_card.reject(message)
 
     await _save_or_finish(new_card)
-    await edit_card.finish(f"{message}\n\n{new_card.summary()}")
+    await edit_card.finish(await _card_result(message, new_card))
 
 
 # --------------------------------------------------------------------------- #
@@ -1489,12 +1532,14 @@ async def _show_save(event: MessageEvent, args: Message = CommandArg()):
     card = get_character(save, event.get_user_id())
     if card is None:
         lines.append(f"（你还没加入这局，用 /跑团.加入 {save.save_id} 加入）")
-    else:
-        lines.append(card.summary())
     if report(save.save_id):
         lines.append("")
         lines.append(format_report(save.save_id))
-    await show_save.finish("\n".join(lines))
+    msg = Message("\n".join(lines))
+    if card is not None:
+        # 角色卡单独渲染成图片，和文字存档报告拼在一起发
+        msg += await _card_image(card)
+    await show_save.finish(msg)
 
 
 @finish_game.handle()
