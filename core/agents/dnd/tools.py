@@ -20,6 +20,7 @@ from ATRI.log import log
 
 from ...dnd.attributes import ABILITIES, get_ability
 from ...dnd.battlemap import (
+    cover_bonus,
     distance_feet,
     has_map,
     has_position,
@@ -112,7 +113,7 @@ from ...dnd.progression import (
     level_up,
     xp_progress_text,
 )
-from ...dnd.race import RACES, get_race
+from ...dnd.race import get_race, race_choice_lines
 from ...dnd.save_store import (
     append_scene_change,
     find_character,
@@ -170,6 +171,8 @@ __all__ = [
     "UpdateCharacterTool",
     "UpdateNpcTool",
     "UpdateSceneTool",
+    "data_card_parts",
+    "query_data_text",
 ]
 
 
@@ -389,7 +392,8 @@ class GetRuleTool(AgentTool):
 
 def _query_race(name: str) -> str:
     if not name:
-        return "种族：" + "、".join(r.cn for r in RACES)
+        # 亚种写在种族后面（与建卡选择列表同一份文案）
+        return "种族（括号内为亚种）：" + "；".join(race_choice_lines())
     race = get_race(name)
     lines = [f"{race.cn}（{race.en}）", f"属性加值：{race.format_bonus()}"]
     lines.append(f"速度：{race.speed} 尺  体型：{race.size}")
@@ -722,16 +726,18 @@ def _query_condition(name: str) -> str:
         for cond in CONDITIONS:
             lines.append(f"· {cond.cn}（{cond.en}）：{cond.desc}")
         lines.append(
-            "· 力竭（Exhaustion，1~6 级累加）：属性检定劣势 → 速度减半 → "
-            "攻击与全部豁免劣势 → 生命上限减半 → 速度归零 → 死亡"
+            "· 力竭（Exhaustion，1~6 级累加，2024 口径）：每级所有 d20 检定 -2、"
+            "速度 -5 尺；6 级死亡；长休减 1 级"
         )
         return "\n".join(lines)
     if text in {"力竭", "疲劳", "exhaustion", "exhausted"}:
         return (
-            "力竭（Exhaustion）按等级累加：\n"
-            "1 级：属性检定劣势；2 级：速度减半；3 级：攻击检定与全部豁免劣势；"
-            "4 级：生命上限减半；5 级：速度降为 0；6 级：死亡。\n"
-            "完成一次长休可降低 1 级。"
+            "力竭（Exhaustion，2024 口径）按等级累加：\n"
+            "每级：所有 d20 检定（属性 / 豁免 / 攻击）-2，速度 -5 尺；\n"
+            "6 级：死亡。\n"
+            "完成一次长休可降低 1 级（不再要求同时进食饮水）。\n"
+            "（2014 旧表是六级阶梯：检定劣势 → 速度减半 → 攻击与豁免劣势 → "
+            "生命上限减半 → 速度归零 → 死亡，本局不采用。）"
         )
     normalized = normalize_conditions(text)
     cond = None
@@ -911,33 +917,122 @@ class QueryDataTool(AgentTool):
     async def call(
         context: AgentContext, table: str = "", name: str = "", **kwargs: Any
     ) -> str:
-        key = _DATA_ALIASES.get(str(table or "").strip().lower())
-        text = str(name or "").strip()
-        if key in DOC_KINDS:
-            return _query_world_doc(context, key, text)
+        return query_data_text(table, name, context)
 
-        if key == "npc":
-            save = load_save(context.save_id) if context.save_id else None
-            if save is None:
-                return "当前没有存档，读不到 NPC 名单"
-            if not text:
-                return npcs_text(save)
-            record = find_npc(save, text)
-            if record is None:
-                return f"名单上没有「{text}」。\n" + npcs_text(save)
-            return record.brief()
 
-        handler = _DATA_TABLES.get(key or "")
-        if handler is None:
+def query_data_text(table: str, name: str, context: AgentContext | None = None) -> str:
+    """查询 DND 数据表的纯文本结果（玩家指令 / DM 工具共用）。
+
+    ``context`` 为 ``None`` 时，世界库文档与 NPC 名单这类依赖存档的内容改回
+    「提示由 DM 查询」，避免玩家侧无存档时崩；有 ``context``（DM 工具）时照常返回。
+    """
+    key = _DATA_ALIASES.get(str(table or "").strip().lower())
+    text = str(name or "").strip()
+    if key in DOC_KINDS:
+        if context is None:
             return (
-                "未知数据表，可用：race / profession / skill / weapon / armor / monster / "
-                "bestiary / item / spell / condition / difficulty / rule / npc_tier / npc，"
-                "或世界库文档：world / realm / province / city / place / dungeon / scene / event"
+                "世界库文档由 DM 在主持时查询；玩家请用 /跑团.查 查规则与数据表"
+                "（怪物 / 法术 / 种族 / 职业 / 武器 / 护甲 / 魔法物品 等）。"
             )
+        return _query_world_doc(context, key, text)
+
+    if key == "npc":
+        if context is None or not context.save_id:
+            return "NPC 名单由 DM 在主持时查询；玩家请用 /跑团.查 查规则与数据表。"
+        save = load_save(context.save_id)
+        if save is None:
+            return "当前没有存档，读不到 NPC 名单"
+        if not text:
+            return npcs_text(save)
+        record = find_npc(save, text)
+        if record is None:
+            return f"名单上没有「{text}」。\n" + npcs_text(save)
+        return record.brief()
+
+    handler = _DATA_TABLES.get(key or "")
+    if handler is None:
+        return (
+            "未知数据表，可用：race / profession / skill / weapon / armor / monster / "
+            "bestiary / item / spell / condition / difficulty / rule / npc_tier / npc，"
+            "或世界库文档：world / realm / province / city / place / dungeon / scene / event"
+        )
+    try:
+        return handler(text)
+    except KeyError as e:
+        return str(e)
+
+
+def data_card_parts(table: str, name: str) -> tuple[str, str, str] | None:
+    """给查询数据返回一个 ``(标题, 副标题, 正文)`` 三元组，供渲染成图片卡。
+
+    只覆盖能做成「卡」的静态数据表（怪物 / 法术 / 种族 / 职业 / 武器 / 护甲 /
+    魔法物品）；其余（状态 / 难度 / 规则 / 图鉴名录 / 世界文档 / NPC）返回 ``None``，
+    交由文本兜底。
+    """
+    key = _DATA_ALIASES.get(str(table or "").strip().lower())
+    text = str(name or "").strip()
+    if not key or not text:
+        return None
+
+    if key == "monster":
+        m = get_monster(text)
+        if m is None:
+            return None
+        sub = f"怪物 · CR {m.cr_text} · {m.size}{m.kind}"
+        if m.source:
+            sub += f" · 出处 {m.source}"
+        return (m.cn, sub, m.stat_block())
+
+    if key == "spell":
+        s = get_spell(text)
+        if s is None:
+            return None
+        sub = f"法术 · {s.level_text} · {s.school}"
+        if s.concentration:
+            sub += " · 专注"
+        if s.ritual:
+            sub += " · 仪式"
+        return (s.cn, sub, s.full_text())
+
+    if key == "race":
         try:
-            return handler(text)
-        except KeyError as e:
-            return str(e)
+            r = get_race(text)
+        except KeyError:
+            return None
+        return (r.cn, f"种族 · 速度 {r.speed} 尺 · {r.size}", _query_race(text))
+
+    if key == "profession":
+        try:
+            c = get_class(text)
+        except KeyError:
+            return None
+        sub = f"职业 · 生命骰 {c.hit_dice}"
+        if c.caster_text:
+            sub += f" · {c.caster_text}"
+        return (c.cn, sub, _query_profession(text))
+
+    if key == "weapon":
+        w = get_weapon(text)
+        if w is None:
+            return None
+        return (w.cn, f"武器 · {w.category.value}", _query_weapon(text))
+
+    if key == "armor":
+        a = get_armor(text)
+        if a is None:
+            return None
+        return (a.cn, f"护甲 · {a.category.value}", _query_armor(text))
+
+    if key == "item":
+        it = get_item(text)
+        if it is None:
+            return None
+        sub = f"魔法物品 · {it.kind} · {it.rarity}"
+        if it.requires_attunement:
+            sub += " · 需调谐"
+        return (it.cn, sub, it.describe())
+
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -1184,7 +1279,7 @@ class UpdateCharacterTool(AgentTool):
                 if unknown:
                     message += f"；没认出这些写法（已按原名收下）：{'、'.join(unknown)}"
         elif field in {"attune", "attunement", "同调"}:
-            # 同调（5e2014）：短休中专注一件物品完成；至多 3 件，不认重复的相同物品
+            # 同调（PHB，两版相同）：短休中专注一件物品完成；至多 3 件，不认重复的相同物品
             if text.lower() in _CONDITION_CLEAR_WORDS:
                 dropped = len(card.attuned)
                 card.attuned = []
@@ -1555,6 +1650,13 @@ class StartCombatTool(AgentTool):
             "有无日光（可选，是/否）：地牢、室内、夜间写「否」，野外白天写「是」；"
             "只影响日照敏感的怪（狗头人 / 卓尔……），留空则由你裁定",
         ),
+        ToolArg(
+            "surprised",
+            "str",
+            "谁遭突袭（可选）：2024 口径=先攻检定劣势。写名字，多个用、分隔；"
+            "集体写法「玩家」/「敌人」；留空=无人被突袭。"
+            "由你判定谁没注意到威胁（躲藏方隐匿 对 被动察觉）",
+        ),
     )
 
     @staticmethod
@@ -1564,6 +1666,7 @@ class StartCombatTool(AgentTool):
         note: Any = "",
         terrain: Any = "",
         daylight: Any = "",
+        surprised: Any = "",
         **kwargs: Any,
     ) -> str:
         save = load_save(context.save_id) if context.save_id else None
@@ -1608,6 +1711,7 @@ class StartCombatTool(AgentTool):
             current=str(context.user_id or ""),
             note=brief,
             daylight=str(daylight or ""),
+            surprised=str(surprised or ""),
         )
         context.data["combat_started"] = True
 
@@ -1629,6 +1733,11 @@ class StartCombatTool(AgentTool):
             log.warning(f"应用威胁层级失败（继续开战）：{str_traceback(e)}")
 
         lines = ["⚔️ 战斗开始，先攻已掷好。"]
+        if str(surprised or "").strip():
+            lines.append(
+                f"（突袭：{str(surprised).strip()} —— 2024 口径，"
+                "这些参战者的先攻检定已按劣势掷）"
+            )
         if calibration:
             lines.append(
                 f"（CR 校准：队伍平均等级 {level} —— " + "；".join(calibration) + "）"
@@ -1990,28 +2099,37 @@ def _target_save(
 ) -> Any:
     """目标的豁免检定：自动套用目标身上的状态**与怪物特性**。
 
-    - 束缚给敏捷豁免劣势、力竭 3 级起全部豁免劣势（中毒不影响豁免）；
+    - 束缚给敏捷豁免劣势；**力竭每级让所有 d20 检定 -2**（2024，含豁免）；
+      中毒不影响豁免；
     - 麻痹 / 震慑 / 昏迷 / 石化的力量与敏捷豁免**自动失败**；
     - **魔法抗性**：对抗法术与其他魔法效应的豁免有优势（只对 ``magical=True``
       的检定生效——火球术算，龙息不算）；
+    - **掩护**（PHB 2024）：半掩护 / 四分之三掩护给**敏捷豁免** +2 / +5，
+      只有 ``ability="dex"`` 且给了 ``state``（棋盘）才生效；
     - **传奇抗性**：豁免失败时改为成功，每日有次数（龙、恶魔、首领都有）。
 
     :param magical: 这次豁免是不是法术 / 魔法效应带来的。
     """
+    # 掩护（PHB 2024 掩护表）：半掩护 / 四分之三掩护给**敏捷豁免** +2 / +5，
+    # 目标躲在掩体后吐息 / 火球都吃得到；没有棋盘或没位置时恒为 0。
+    cover = cover_bonus(state, target) if state is not None and ability == "dex" else 0
     if isinstance(target, DndCharacter):
-        return target.check_save(ability, dc)
+        return target.check_save(ability, dc, cover=cover)
     if getattr(target, "kind", "") == "player":
         card = get_character(save, target.cid)
         if card is not None:
-            return card.check_save(ability, dc)
+            return card.check_save(ability, dc, cover=cover)
     conds = combatant_conditions(save, target)
     effect = merge_effects(conds)
     monster = resolve_monster(target.monster)
     rules = rules_of(monster)
+    kind_text = f"{get_ability(ability).cn}豁免" + (
+        f"（掩护 +{cover}）" if cover else ""
+    )
     result = roll_check(
-        _target_save_bonus(save, target, ability),
+        _target_save_bonus(save, target, ability) + cover,
         dc,
-        kind=f"{get_ability(ability).cn}豁免",
+        kind=kind_text,
         advantage=combine_advantage(
             effect.own_save, save_advantage(rules, magical=magical)
         ),
@@ -2309,7 +2427,7 @@ class CastSpellTool(AgentTool):
         # —— 法术攻击 ——
         if spell_obj.attack:
             lines.append(f"法术攻击 {card.spell_attack_bonus:+d}")
-            # 戏法按**角色等级**成长（5e2014：17 级的火焰箭是 4d10）
+            # 戏法按**角色等级**成长（PHB 两版相同：17 级的火焰箭是 4d10）
             damage_expr = spell_obj.damage_expr(casting_mod, level=card.level)
             # 触碰类法术攻击算近战（麻痹 / 昏迷的目标在 5 尺内被命中即暴击）
             melee_spell = any(
@@ -2552,17 +2670,20 @@ class RestTool(AgentTool):
                 was_down = card.is_downed
                 card.current_hp = None
                 card.temp_hp = 0
-                # 口粮：长休要吃一顿。**5e 的力竭恢复要求进食饮水**，
-                # 所以饿着睡不恢复力竭；挨饿的计时按参考文档「粮食与水」：
-                # 连续 **3 + 体质调整值** 天不进食才开始每日 +1 力竭
-                # （不是「一天不吃就过豁免」——那条是 2024 的口径，2014 没有）。
+                # ⚠️ **2024 起长休恢复力竭不再要求进食饮水**（那是 2014 口径）：
+                # 完成长休就减 1 级。
+                # 减力竭排在挨饿判定**之前**——一天结束时的饥饿检定会把刚睡回来的
+                # 那一级又吃回去，语义上也对：2024 要求「吃足一天的量」
+                # 才能解除饥饿来源的力竭，饿着睡不解决饥饿。
+                if card.exhaustion:
+                    card.exhaustion = max(0, card.exhaustion - 1)
+                    notes.append(f"力竭降至 {card.exhaustion} 级（长休减 1 级）")
+                # 口粮：长休要吃一顿。挨饿的计时按参考文档「粮食与水」：
+                # 连续 **3 + 体质调整值** 天不进食才开始每日 +1 力竭。
                 if card.rations > 0:
                     card.rations -= 1
                     card.hunger_days = 0
                     notes.append(f"吃掉 1 份口粮（剩 {card.rations} 份）")
-                    if card.exhaustion:
-                        card.exhaustion = max(0, card.exhaustion - 1)
-                        notes.append(f"力竭降至 {card.exhaustion} 级")
                 else:
                     card.hunger_days += 1
                     limit = card.hunger_limit()
@@ -2577,8 +2698,6 @@ class RestTool(AgentTool):
                             f"没有口粮，今天没吃东西"
                             f"（还能再撑 {limit - card.hunger_days} 天）"
                         )
-                    if card.exhaustion:
-                        notes.append("饿着睡不恢复力竭")
                 before = card.spell_slots_text()
                 card.restore_slots(kind="long")
                 card.clear_death_state()
@@ -2651,7 +2770,7 @@ class RestTool(AgentTool):
         except Exception as e:  # 时间推进失败不该毁掉一次休息
             log.warning(f"推进休息时间失败：{str_traceback(e)}")
         if not long_rest:
-            # 5e2014：同调在短休中专注完成——这里点给 DM，别让他忘了这条入口
+            # 同调在短休中专注完成（PHB 两版相同）——这里点给 DM，别让他忘了这条入口
             holders = [c for c in cards if c.attuned]
             if holders:
                 lines.append(

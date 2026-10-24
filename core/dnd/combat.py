@@ -113,7 +113,9 @@ __all__ = [
     "combat_path",
     "combat_text",
     "combatant_conditions",
+    "combatant_d20_bonus",
     "combatant_exhaustion",
+    "combatant_speed",
     "combatant_state_text",
     "count_legendary_use",
     "cover_text",
@@ -557,11 +559,13 @@ def cover_text(state: CombatState, combatant: Combatant) -> str:
 
 
 def is_out(save: Save, combatant: Combatant) -> bool:
-    """是否已不能行动（死亡 / 明确退场 / 生命归零）。"""
+    """是否已不能行动（死亡 / 明确退场 / 生命归零 / 力竭 6 级）。"""
     if combatant.out:
         return True
     if not combatant.is_enemy and is_dead(save, combatant):
         return True
+    if combatant.is_enemy and combatant_exhaustion(save, combatant) >= 6:
+        return True  # 2024：力竭 6 级即死亡
     hp, _max_hp = effective_hp(save, combatant)
     return hp <= 0
 
@@ -696,6 +700,23 @@ def combatant_exhaustion(save: Save, combatant: Combatant) -> int:
         card = get_character(save, combatant.cid)
         return int(card.exhaustion or 0) if card is not None else 0
     return int(combatant.exhaustion or 0)
+
+
+def combatant_d20_bonus(save: Save, combatant: Combatant) -> int:
+    """参战者的「所有 d20 检定」固定加值（2024 力竭每级 −2）。
+
+    玩家走角色卡（状态合并），敌人只有力竭一条来源，直接按等级算。
+    """
+    if combatant.kind == "player":
+        card = get_character(save, combatant.cid)
+        return card.d20_bonus() if card is not None else 0
+    return -2 * int(combatant.exhaustion or 0)
+
+
+def combatant_speed(save: Save, combatant: Combatant) -> int:
+    """参战者当前速度（尺 / 回合）：基础速度扣除 2024 力竭（每级 −5 尺）。"""
+    base = int(getattr(combatant, "speed", 30) or 30)
+    return max(0, base - 5 * combatant_exhaustion(save, combatant))
 
 
 def combatant_state_text(save: Save, combatant: Combatant) -> str:
@@ -1226,12 +1247,42 @@ def _normalize_specs(specs: list) -> list[EnemySpec]:
 
 
 def _card_speed(card: DndCharacter) -> int:
-    """角色的速度（尺 / 回合）；含状态修正（力竭减半 / 束缚归零），
+    """角色的速度（尺 / 回合）；含状态修正（2024 力竭每级 -5 尺、束缚 / 擒抱归零），
     种族数据缺失时按 30 尺。"""
     try:
         return int(card.speed())
     except Exception:  # 种族数据损坏之类：退回 30 尺，别让开战失败
         return 30
+
+
+#: 「谁遭突袭」的集体写法（2024：先攻劣势）
+_SURPRISE_ALL_PLAYERS = frozenset(
+    {"玩家", "全体玩家", "全部玩家", "所有玩家", "队伍", "party", "players"}
+)
+_SURPRISE_ALL_ENEMIES = frozenset(
+    {"敌人", "全体敌人", "全部敌人", "所有敌人", "怪物", "enemies"}
+)
+
+
+def _surprise_tokens(text: str) -> frozenset[str]:
+    """把 DM 写的「谁遭突袭」切成 token 集合。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return frozenset()
+    return frozenset(t.strip() for t in re.split(r"[,，、;；\s]+", raw) if t.strip())
+
+
+def _is_surprised(tokens: frozenset[str], *, cid: str, name: str, kind: str) -> bool:
+    """这名参战者是否在遭突袭名单里（集体写法 / 名字 / cid，含包含匹配）。"""
+    if not tokens:
+        return False
+    if kind == "player" and tokens & _SURPRISE_ALL_PLAYERS:
+        return True
+    if kind == "enemy" and tokens & _SURPRISE_ALL_ENEMIES:
+        return True
+    return any(
+        token in (cid, name) or token in name or name in token for token in tokens
+    )
 
 
 def start_combat(
@@ -1241,6 +1292,7 @@ def start_combat(
     current: str = "",
     note: str = "",
     daylight: str = "",
+    surprised: str = "",
     rng: Any = None,
 ) -> CombatState:
     """按敌人清单与存档里的玩家开战：掷先攻、排顺序并落盘。
@@ -1250,21 +1302,34 @@ def start_combat(
     :param daylight: 这里有没有**日光**（``是`` / ``否``）；留空表示不知道。
         只影响「日照敏感」那批怪（狗头人、卓尔……）：有日光时它们的攻击带劣势。
         ⚠️ 不按时钟猜——地牢深处也是白天，猜错了就是凭空给它们扣劣势。
+    :param surprised: **谁遭突袭**（2024：先攻检定劣势）。写名字 / cid，多个用、
+        分隔；集体写法「玩家」/「敌人」。留空 = 无人被突袭。
+        由 DM 判定谁没注意到威胁（躲藏方隐匿 对 被动察觉）。
     """
     level = party_level(save)
     normalized = _normalize_specs(specs)
+    surprise_set = _surprise_tokens(surprised)
 
     order: list[Combatant] = []
     for user_id in save.player_ids:
         card = get_character(save, user_id)
         if card is None:
             continue
+        player_name = card.name or str(user_id)
+        # 2024：遭突袭者先攻检定劣势
+        init_adv = (
+            Advantage.DISADVANTAGE
+            if _is_surprised(
+                surprise_set, cid=str(user_id), name=player_name, kind="player"
+            )
+            else Advantage.NORMAL
+        )
         order.append(
             Combatant(
                 cid=str(user_id),
                 kind="player",
-                name=card.name or str(user_id),
-                initiative=roll_d20(rng=rng)[1] + card.initiative,
+                name=player_name,
+                initiative=roll_d20(init_adv, rng=rng)[1] + card.initiative,
                 ac=card.armor_class,
                 hp=card.hp,
                 max_hp=card.max_hp,
@@ -1302,12 +1367,19 @@ def start_combat(
                 max_hp = max(1, roll(spec.monster.hit_dice, rng=rng).total)
                 hp = max_hp
                 npc_name = ""
+            # 2024：遭突袭者先攻检定劣势
+            enemy_cid = f"{spec.monster.key}#{index}"
+            init_adv = (
+                Advantage.DISADVANTAGE
+                if _is_surprised(surprise_set, cid=enemy_cid, name=name, kind="enemy")
+                else Advantage.NORMAL
+            )
             order.append(
                 Combatant(
-                    cid=f"{spec.monster.key}#{index}",
+                    cid=enemy_cid,
                     kind="enemy",
                     name=name,
-                    initiative=roll_d20(rng=rng)[1] + spec.monster.initiative,
+                    initiative=roll_d20(init_adv, rng=rng)[1] + spec.monster.initiative,
                     ac=spec.monster.ac,
                     hp=hp,
                     max_hp=max_hp,
@@ -1830,14 +1902,24 @@ def _death_burst(
             continue
         if other.kind == "player":
             card = get_character(save, other.cid)
-            result = card.check_save(burst.save, burst.dc, rng=rng) if card else None
+            # 掩护只给敏捷豁免加值（PHB 2024 掩护表）；自爆是敏捷豁免，掩体吃得到
+            cover = cover_bonus(state, other) if burst.save == "dex" else 0
+            result = (
+                card.check_save(burst.save, burst.dc, cover=cover, rng=rng)
+                if card
+                else None
+            )
         else:
             monster = resolve_monster(other.monster)
+            cover = cover_bonus(state, other) if burst.save == "dex" else 0
             result = (
                 roll_check(
-                    monster.save_bonus(burst.save),
+                    monster.save_bonus(burst.save)
+                    + combatant_d20_bonus(save, other)
+                    + cover,
                     burst.dc,
-                    kind=f"{other.name}的{save_cn}豁免",
+                    kind=f"{other.name}的{save_cn}豁免"
+                    + (f"（掩护 +{cover}）" if cover else ""),
                     rng=rng,
                 )
                 if monster is not None
@@ -1996,7 +2078,8 @@ def attack(
 ) -> tuple[str, bool]:
     """玩家攻击：自动掷命中、掷伤害并扣血。
 
-    武器词条都在这一层结算（对照《快速参考 (5e_2014).md》武器词条）：
+    武器词条都在这一层结算（对照 PHB 武器词条，两版相同；2024 新增的「精通」
+    特性未实现，见 res/rule.md「规则口径」节）：
 
     - **投掷**：够不着时按投掷射程打远程（匕首 20/60、标枪 30/120……）；
     - **弹药**：弓 / 弩 / 吹箭筒 / 投石索每次攻击耗一枚，战后回收一半；
@@ -2108,7 +2191,7 @@ def attack(
         advantage = combine_advantage(advantage, Advantage.DISADVANTAGE)
         warn += "（身边 5 尺内有敌人，远程攻击带劣势）\n"
 
-    # —— 水下战斗：攻击者站在浅水（water）地形上，武器攻击受限（5e2014）——
+    # —— 水下战斗：攻击者站在浅水（water）地形上，武器攻击受限（水下战斗两版相同）——
     if (
         has_map(state)
         and has_position(attacker)
@@ -2199,7 +2282,7 @@ def attack(
         damage_type = weapon.damage_type
         label = weapon.cn + grip
     else:
-        bonus = card.proficiency + card.modifier("str")
+        bonus = card.proficiency + card.modifier("str") + card.d20_bonus()
         # 徒手也走角色卡的状态合并（中毒 / 力竭的劣势不能漏）
         final_adv, state_note = card.resolve_attack_advantage(advantage)
         result = roll_check(
@@ -2445,7 +2528,7 @@ def enemy_attack(
     advantage = combine_advantage(advantage, trait_adv)
 
     target_ac = effective_ac(save, target, state)
-    bonus = monster.attack_bonus(attack_obj)
+    bonus = monster.attack_bonus(attack_obj) + combatant_d20_bonus(save, enemy)
     # 记一笔「它这一轮已经出手了」：自动结算据此不重复打同一只怪
     # （DM 手动补刀也算），同一轮里连打几次（多重攻击）不受影响。
     enemy.acted_round = state.round
@@ -2894,7 +2977,7 @@ def move_combatant(
     if not has_position(mover):
         return f"{mover.name} 还没有被放到棋盘上，无法移动"
 
-    speed = int(getattr(mover, "speed", 30) or 30)
+    speed = combatant_speed(save, mover)
     used = int(getattr(mover, "move_used", 0) or 0)
     budget = max(0, speed - used)
     if budget <= 0:

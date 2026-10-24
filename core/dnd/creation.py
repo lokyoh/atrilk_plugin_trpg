@@ -36,7 +36,7 @@ from .coins import merge_coins, parse_coin_text
 from .equipment import expand_packs, parse_item_stack, weapon_options_for
 from .names import lk_name
 from .profession import DndClass, class_choices, get_class
-from .race import Race, get_race, race_choices
+from .race import Race, get_race, race_choice_lines, race_choices
 from .skills import get_skill
 from .spells import Spell, get_spell, spells_for_class
 
@@ -262,12 +262,14 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
     if step is CreationStep.RACE:
         lines = [
             "选择种族：",
-            bullet(f"{i}. {name}" for i, name in enumerate(race_choices(), 1)),
+            bullet(f"{i}. {name}" for i, name in enumerate(race_choice_lines(), 1)),
         ]
         if session and session.base_scores:
             lines.append("")
             lines.append("当前属性：" + session.assigned_scores_text())
-        lines.append("回复序号或种族名；有亚种的种族可用「精灵 高等精灵」指定亚种。")
+        lines.append(
+            "回复序号或种族名；亚种已列在种族后面，可写「精灵 高等精灵」直接指定。"
+        )
         return "\n".join(lines)
 
     if step is CreationStep.PROFESSION:

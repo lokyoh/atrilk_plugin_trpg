@@ -39,7 +39,6 @@ from .conditions import (
     resistances_text,
     resolve_damage,
     save_auto_fail,
-    speed_scale,
     split_text,
 )
 from .equipment import (
@@ -347,10 +346,11 @@ class DndCharacter(TrpgCharacter):
     #: 吃不上就按饥饿规则计时（见 :meth:`hunger_limit`）。
     #: **刻意不做逐日口粮清单**：一个整数够回答「还剩几顿」，多一套物品记录只是负担。
     rations: int = 10
-    #: 连续未进食天数（5e2014「粮食与水」：3 + 体质调整值 天才开始挨饿，
-    #: 之后每饿一天 +1 力竭；吃上一天就归零）
+    #: 连续未进食天数（**房规**：沿用 2014「粮食与水」的 3 + 体质调整值 口径，
+    #: 之后每饿一天 +1 力竭；吃上一天就归零。2024 改成了「吃不足半量过 DC10
+    #: 体质豁免」，本局未采用——口径见 res/rule.md「规则口径」节）
     hunger_days: int = 0
-    #: 已同调的魔法物品（物品 key）。5e2014「同调」：短休中专注一件物品完成同调，
+    #: 已同调的魔法物品（物品 key）。同调（PHB，两版相同）：短休中专注一件物品完成同调，
     #: **同时至多 3 件**，且不能与多于一件**相同**的物品同调。
     attuned: list[str] = field(default_factory=list)
     #: 已知 / 可用法术（法术 key，法师为法术书收录，其他职业为已习得 / 可准备）
@@ -687,13 +687,21 @@ class DndCharacter(TrpgCharacter):
         key = get_ability(ability).key
         return sum(int(value) for who, value in pairs if who in (key, "all"))
 
+    def d20_bonus(self) -> int:
+        """所有 d20 检定（属性 / 豁免 / 攻击）的固定加值。
+
+        2024 力竭走这里：每级 −2（见 :func:`~.conditions.exhaustion_effect`）。
+        与优势 / 劣势是两套机制：那个不叠加、相遇抵消；这个按来源累加。
+        """
+        return merge_effects(self.conditions, exhaustion=self.exhaustion).d20_bonus
+
     def skill_bonus(self, skill: Skill | str) -> int:
         """技能检定加值 = 属性调整值 +（熟练则加熟练加值）+ 状态给的加值。"""
         skill_obj = get_skill(skill)
         bonus = self.abilities.modifier(skill_obj.ability)
         if skill_obj.key in self.skill_proficiencies:
             bonus += self.proficiency
-        return bonus + self.condition_bonus(skill_obj.ability)
+        return bonus + self.condition_bonus(skill_obj.ability) + self.d20_bonus()
 
     def save_bonus(self, ability: Ability | str) -> int:
         """豁免加值 = 属性调整值 +（职业豁免熟练则加熟练加值）+ 状态给的加值。"""
@@ -702,7 +710,7 @@ class DndCharacter(TrpgCharacter):
         profession = self.profession_obj
         if profession and ability_obj.key in profession.saves:
             bonus += self.proficiency
-        return bonus + self.condition_bonus(ability_obj, save=True)
+        return bonus + self.condition_bonus(ability_obj, save=True) + self.d20_bonus()
 
     def passive_score(self, skill: Skill | str) -> int:
         """被动检定值（10 + 技能加值），常用于被动察觉。"""
@@ -715,7 +723,7 @@ class DndCharacter(TrpgCharacter):
         """生命值上限。
 
         1 级取生命骰最大值 + 体质调整值；之后每级取生命骰平均值（向上取整）+ 体质调整值。
-        力竭 4 级起生命上限减半。
+        （2024 起力竭不再减半生命上限——那是对应 2014 第 4 级的效果。）
         """
         profession = self.profession_obj
         con = self.modifier("con")
@@ -744,8 +752,8 @@ class DndCharacter(TrpgCharacter):
 
     @property
     def is_dead(self) -> bool:
-        """死亡豁免累计 3 次失败（或受过致命伤）。"""
-        return self.death_saves_failures >= 3
+        """死亡豁免累计 3 次失败（或受过致命伤，或力竭 6 级——2024 口径）。"""
+        return self.death_saves_failures >= 3 or self.exhaustion >= 6
 
     @property
     def is_dying(self) -> bool:
@@ -925,11 +933,14 @@ class DndCharacter(TrpgCharacter):
 
         **武器熟练**：不具有该武器的熟练项时**不能**加熟练加值（5e），
         只留属性调整值——法师抡长剑就是这么个后果。
+
+        2024 力竭每级 −2 也在这里兑现（所有 d20 检定，含攻击检定）。
         """
         weapon_obj = get_weapon(weapon)
+        fatigue = self.d20_bonus()
         if weapon_obj is None:
             # 徒手打击：人人都有熟练项
-            return self.proficiency
+            return self.proficiency + fatigue
         if weapon_obj.is_ranged:
             ability_mod = self.modifier("dex")
         elif weapon_obj.is_finesse:
@@ -937,8 +948,8 @@ class DndCharacter(TrpgCharacter):
         else:
             ability_mod = self.modifier("str")
         if not self.has_weapon_proficiency(weapon_obj):
-            return ability_mod
-        return self.proficiency + ability_mod
+            return ability_mod + fatigue
+        return self.proficiency + ability_mod + fatigue
 
     def damage_bonus(self, weapon: Weapon | str) -> int:
         """伤害加值（与攻击加值的属性选择一致）。"""
@@ -973,10 +984,10 @@ class DndCharacter(TrpgCharacter):
 
     @property
     def spell_attack_bonus(self) -> int:
-        """法术攻击加值 = 熟练加值 + 施法属性调整值。"""
+        """法术攻击加值 = 熟练加值 + 施法属性调整值（2024 力竭每级再 −2）。"""
         if not self.casting_ability:
-            return self.proficiency
-        return self.proficiency + self.modifier(self.casting_ability)
+            return self.proficiency + self.d20_bonus()
+        return self.proficiency + self.modifier(self.casting_ability) + self.d20_bonus()
 
     @property
     def spell_save_dc(self) -> int:
@@ -1038,10 +1049,15 @@ class DndCharacter(TrpgCharacter):
         return True
 
     def hunger_limit(self) -> int:
-        """连续多少天不进食才开始掉力竭（5e2014：3 + 体质调整值，至少 1 天）。"""
+        """连续多少天不进食才开始掉力竭（**房规**：3 + 体质调整值，至少 1 天）。
+
+        2024 的挨饿规则是「吃不足半量 → DC10 体质豁免，失败 +1 力竭；
+        连续 5 天不吃 → 每天自动 +1」，本局沿用 2014 的 3+体质 计时口径，
+        属刻意保留的房规（见 res/rule.md「规则口径」节）。
+        """
         return max(1, 3 + self.modifier("con"))
 
-    # —— 同调（5e2014「同调」）——
+    # —— 同调（PHB，两版相同）——
 
     def attune(self, name: str) -> tuple[bool, str]:
         """与一件魔法物品同调（短休中专注完成）。
@@ -1348,8 +1364,14 @@ class DndCharacter(TrpgCharacter):
         if ability_obj.key in effect.check_adv_abilities:
             final = combine_advantage(final, Advantage.ADVANTAGE)
             reason = _join_reason(reason, "狂暴：此检定有优势")
+        # 加值 = 属性调整值 + 状态给该属性的加值 + 力竭等固定加减（2024 每级 -2）
+        bonus = (
+            self.modifier(ability_obj)
+            + self.condition_bonus(ability_obj)
+            + self.d20_bonus()
+        )
         result = roll_check(
-            self.modifier(ability_obj),
+            bonus,
             dc,
             kind=f"{ability_obj.cn}检定",
             advantage=final,
@@ -1365,17 +1387,25 @@ class DndCharacter(TrpgCharacter):
         dc: int,
         *,
         advantage: Advantage = Advantage.NORMAL,
+        cover: int = 0,
         rng: Random | None = None,
     ) -> CheckResult:
-        """豁免检定（自动应用状态效果；麻痹 / 震慑 / 昏迷 / 石化直接失败）。"""
+        """豁免检定（自动应用状态效果；麻痹 / 震慑 / 昏迷 / 石化直接失败）。
+
+        :param cover: 掩护加值（半掩护 +2 / 四分之三掩护 +5），加在豁免结果上。
+            PHB 2024 掩护表只给**敏捷豁免**加值——是否适用由调用方判断。
+        """
         ability_obj = get_ability(ability)
         final, reason = self._check_advantage("save", advantage)
+        cover = max(0, int(cover or 0))
+        if cover:
+            reason = _join_reason(reason, f"掩护 +{cover}")
         effect = merge_effects(self.conditions)
         if ability_obj.key in effect.save_adv_abilities:
             final = combine_advantage(final, Advantage.ADVANTAGE)
             reason = _join_reason(reason, "狂暴：此豁免有优势")
         result = roll_check(
-            self.save_bonus(ability_obj),
+            self.save_bonus(ability_obj) + cover,
             dc,
             kind=f"{ability_obj.cn}豁免",
             advantage=final,
@@ -1411,7 +1441,7 @@ class DndCharacter(TrpgCharacter):
             target_ac,
             kind=f"{label}攻击",
             advantage=final,
-            # 攻击检定：天然 20 必中、天然 1 必失（5e2014）
+            # 攻击检定：天然 20 必中、天然 1 必失（PHB，两版相同）
             auto_critical=True,
             rng=rng,
         )
@@ -1527,12 +1557,14 @@ class DndCharacter(TrpgCharacter):
         return merge_effects(self.conditions, exhaustion=self.exhaustion)
 
     def speed(self) -> int:
-        """当前速度（含状态修正：力竭减半 / 归零，束缚 / 擒抱归零；
+        """当前速度（含状态修正：力竭每级 -5 尺（2024）、束缚 / 擒抱归零；
         重甲力量不足 −10 尺）。"""
         race = self.race_obj
         base = race.speed if race else 30
-        scale = speed_scale(self.conditions, exhaustion=self.exhaustion)
-        return max(0, int(base * scale) - self.heavy_armor_speed_penalty())
+        effect = merge_effects(self.conditions, exhaustion=self.exhaustion)
+        scale = effect.speed_scale
+        delta = effect.speed_delta
+        return max(0, int(base * scale) - self.heavy_armor_speed_penalty() + delta)
 
     # —— 展示与序列化 ——
 
@@ -1593,8 +1625,6 @@ class DndCharacter(TrpgCharacter):
             lines.append(f"背景 {bg.cn}")
         if self.languages:
             lines.append("语言 " + "、".join(self.languages))
-        if self.tool_proficiencies:
-            lines.append("工具 " + "、".join(self.tool_proficiencies))
         if self.size:
             lines.append(f"体型 {self.size}")
         if self.skill_lines():
@@ -1608,16 +1638,23 @@ class DndCharacter(TrpgCharacter):
             lines.append("熟练 " + "；".join(prof))
         if self.equipment or self.money:
             slots, pack = self.equipment_layout()
+            # 工具熟练并入背包「工具」（用户要求）：与实体工具物品同处一列
+            if self.tool_proficiencies:
+                pack["工具"].extend(self.tool_proficiencies)
+            # 装备栏：所有可装备的槽都列出（空槽标「空」），方便玩家看清还能装什么
             slot_parts = [
-                f"{name} {'、'.join(items)}" for name, items in slots.items() if items
+                f"{name} {'、'.join(slots[name]) if slots[name] else '空'}"
+                for name in SLOT_ORDER
             ]
-            if slot_parts:
-                lines.append("装备 " + "；".join(slot_parts))
+            lines.append("装备 " + "；".join(slot_parts))
             pack_parts = [
                 f"{name} {'、'.join(items)}" for name, items in pack.items() if items
             ]
             if pack_parts:
                 lines.append("背包 " + "；".join(pack_parts))
+        elif self.tool_proficiencies:
+            # 没有装备但也有工具熟练：仍并入背包「工具」展示
+            lines.append("背包 工具 " + "、".join(self.tool_proficiencies))
         return "\n".join(lines)
 
     # —— HTML 角色卡（喂给 html_to_pic 渲染成图片）——
@@ -1857,11 +1894,15 @@ class DndCharacter(TrpgCharacter):
 
         if self.equipment or self.money:
             slots, pack = self.equipment_layout()
+            # 工具熟练并入背包「工具」：与实体工具物品同处一列（用户要求）
+            if self.tool_proficiencies:
+                pack["工具"].extend(self.tool_proficiencies)
+            # 装备栏：所有可装备的槽都列出（空槽标「空」）
             slot_lines = [
-                f"{name}：{'、'.join(items)}" for name, items in slots.items() if items
+                f"{name}：{'、'.join(slots[name]) if slots[name] else '空'}"
+                for name in SLOT_ORDER
             ]
-            if slot_lines:
-                sections.append(self._card_section("装备", slot_lines, as_text=True))
+            sections.append(self._card_section("装备", slot_lines, as_text=True))
             pack_lines = [
                 f"{name}：{'、'.join(items)}" for name, items in pack.items() if items
             ]
@@ -1871,8 +1912,7 @@ class DndCharacter(TrpgCharacter):
         if self.languages:
             sections.append(self._card_section("语言", self.languages))
 
-        if self.tool_proficiencies:
-            sections.append(self._card_section("工具", self.tool_proficiencies))
+        # 注意：「工具」已并入背包，这里不再单列（用户要求）
 
         status_tags: list[str] = []
         if self.conditions or self.exhaustion:

@@ -333,7 +333,8 @@ def _supplies(section: str) -> tuple[Supply, ...]:
     return tuple(_supply(row) for row in _TABLES.get(section, []))
 
 
-#: 冒险用品（5e2014「冒险用品」表）
+#: 冒险用品（数据转录自 2014 快速参考；2024 第六章有增删，尚未逐条对齐——
+#: 见 res/rule.md「规则口径」节的已知未对齐项）
 GEAR: tuple[Supply, ...] = _supplies("gear")
 #: 工具表（工匠 / 赌具 / 乐器 / 盗贼工具 …）
 TOOLS: tuple[Supply, ...] = _supplies("tools")

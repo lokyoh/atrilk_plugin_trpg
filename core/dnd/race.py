@@ -20,6 +20,8 @@ __all__ = [
     "SubRace",
     "default_subrace",
     "get_race",
+    "race_choice_label",
+    "race_choice_lines",
     "race_choices",
 ]
 
@@ -162,6 +164,23 @@ def get_race(value: Race | str) -> Race:
 def race_choices() -> tuple[str, ...]:
     """全部种族中文名，用于生成给玩家的选项列表。"""
     return tuple(r.cn for r in RACES)
+
+
+def race_choice_label(race: Race) -> str:
+    """种族选项文案：**亚种写在种族后面**（2026-10-24 用户要求）。
+
+    形如「精灵（亚种：高等精灵 / 木精灵 / 卓尔（黑暗精灵））」；没有亚种的
+    种族只写种族名。建卡选择列表与数据查询列表共用这一份，不再各写一份。
+    """
+    if not race.subraces:
+        return race.cn
+    subs = " / ".join(sub.cn for sub in race.subraces)
+    return f"{race.cn}（亚种：{subs}）"
+
+
+def race_choice_lines() -> tuple[str, ...]:
+    """全部种族的选项文案（亚种跟在种族后面），顺序同 :data:`RACES`。"""
+    return tuple(race_choice_label(r) for r in RACES)
 
 
 def default_subrace(race: Race) -> SubRace | None:

@@ -4,8 +4,8 @@
 
 - **状态注册表**：14 种状态 + 野蛮人「狂暴」+ 「擒抱」，每项带机械效果
   （攻击 / 被攻击的优势劣势、自动失败的豁免、能否行动、速度、伤害抗性……）；
-- **力竭**：按 1~6 级查表（检定劣势 → 速度减半 → 攻击与豁免劣势 →
-  生命上限减半 → 速度归零 → 死亡），等级记在角色卡 / 参战者身上；
+- **力竭**：2024 口径——每级让**所有 d20 检定**（属性 / 豁免 / 攻击）−2、
+  速度 −5 尺，6 级死亡；等级记在角色卡 / 参战者身上；
 - **抗性结算**：抗性减半、免疫归零、易伤翻倍，按伤害类型查表。
 
 状态只是**系统侧的记账与提示**：DM 用 ``update_character`` 的 conditions 字段
@@ -21,7 +21,7 @@ DM 仍然可以用显式的 advantage 参数覆盖（剧情上说得通时）。
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from ..trpg.dice import Advantage
 
@@ -119,6 +119,12 @@ class ConditionEffect:
     #: 回合开始时自动扣除的生命值（中毒的持续伤害等）。``("", 0)`` 形式保留伤害类型，
     #: 第二项是固定点数；空元组表示没有持续伤害。
     dot: tuple[str, int] = ()
+    #: **所有 d20 检定**（属性 / 豁免 / 攻击）的固定加值（负数=减值）。
+    #: 2024 力竭走这里：每级 −2。与优势劣势不同，数值加值可叠加。
+    d20_bonus: int = 0
+    #: 速度的固定修正（尺，负数=变慢）。2024 力竭走这里：每级 −5 尺。
+    #: 与 :attr:`speed_scale`（倍率）叠加，最终速度钳制在 0 以上。
+    speed_delta: int = 0
     #: 软效果说明（给 DM 看的文字，不参与数值结算）
     notes: tuple[str, ...] = ()
 
@@ -159,6 +165,10 @@ class ConditionEffect:
                 (self.dot, other.dot),
                 key=lambda pair: pair[1] if pair else -1,
             ),
+            # 数值加值按来源累加（祝福 +2 叠上元素亲和 +2 就是 +4）——
+            # 与优势劣势相反：优势不叠加，加值叠加。
+            d20_bonus=self.d20_bonus + other.d20_bonus,
+            speed_delta=self.speed_delta + other.speed_delta,
             notes=tuple(dict.fromkeys(self.notes + other.notes)),
         )
 
@@ -546,29 +556,28 @@ def merge_effects(
 
 
 def exhaustion_effect(level: int) -> ConditionEffect:
-    """力竭第 ``level`` 级（1~6）的机械效果（5e 2014 表）。"""
+    """力竭第 ``level`` 级（1~6）的机械效果（**2024 PHB** 口径）。
+
+    2024 把 2014 的六级阶梯改成一条线性规则：
+
+    - 每级 **−2** 到所有 d20 检定（属性检定 / 豁免检定 / 攻击检定）；
+    - 每级 **速度 −5 尺**；
+    - **6 级 = 死亡**（由角色卡的 :attr:`is_dead` 与参战者的退场判定兑现）。
+
+    恢复：完成一次长休减 1 级（2024 起不再要求同时进食饮水），
+    到 0 级状态结束。
+    """
     level = max(0, min(6, int(level)))
     if level <= 0:
         return ConditionEffect()
-    effect = ConditionEffect()
-    if level >= 1:
-        # 属性检定劣势
-        effect = replace(effect, own_check=Advantage.DISADVANTAGE)
-    if level >= 2:
-        effect = replace(effect, speed_scale=0.5)
-    if level >= 3:
-        effect = replace(
-            effect,
-            own_attack=Advantage.DISADVANTAGE,
-            own_save=Advantage.DISADVANTAGE,
-        )
-    if level >= 4:
-        effect = replace(effect, hp_max_scale=0.5)
-    if level >= 5:
-        effect = replace(effect, speed_zero=True, speed_scale=0.0)
-    if level >= 6:
-        effect = replace(effect, notes=("力竭 6 级：死亡",))
-    return effect
+    return ConditionEffect(
+        d20_bonus=-2 * level,
+        speed_delta=-5 * level,
+        notes=(
+            f"力竭 {level} 级：所有 d20 检定 -{2 * level}，速度 -{5 * level} 尺"
+            + ("；力竭 6 级：死亡" if level >= 6 else ""),
+        ),
+    )
 
 
 def is_incapacitated(conditions: Iterable[str] | None) -> bool:
@@ -666,6 +675,7 @@ def resolve_damage(
     entries = [str(item).strip() for item in (resistances or ()) if str(item).strip()]
     notes: list[str] = []
     factor = 1.0
+    seen_kinds: set[str] = set()
     for entry in entries:
         if ":" in entry or "：" in entry:
             target, _, level = entry.replace("：", ":").partition(":")
@@ -679,6 +689,16 @@ def resolve_damage(
         # 「非魔法武器」的抗性 / 免疫：魔法攻击直接穿过这一条
         if "非魔法" in level and magical:
             continue
+        # PHB：同类型多个抗性 / 易伤**只算一次**，不叠加——
+        # 「暗蚀抗性 + 全伤害抗性」对暗蚀仍只减半。按效果种类去重。
+        kind = (
+            "免疫"
+            if level.startswith("免疫")
+            else ("易伤" if level == "易伤" else "抗性")
+        )
+        if kind in seen_kinds:
+            continue
+        seen_kinds.add(kind)
         if level.startswith("免疫"):
             factor = 0.0
             notes.append(
