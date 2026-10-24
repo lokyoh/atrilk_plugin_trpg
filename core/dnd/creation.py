@@ -32,7 +32,8 @@ from .attributes import (
 )
 from .background import Background, background_choices, get_background
 from .card import DndCharacter
-from .equipment import parse_item_stack
+from .coins import merge_coins, parse_coin_text
+from .equipment import expand_packs, parse_item_stack, weapon_options_for
 from .names import lk_name
 from .profession import DndClass, class_choices, get_class
 from .race import Race, get_race, race_choices
@@ -119,6 +120,13 @@ _ROLL_WORDS = {
     "重来",
 }
 _ARRAY_WORDS = {"标准数组", "标准", "数组", "默认"}
+
+
+def _is_generic_weapon(item: str) -> bool:
+    """起始包里的「任意军用武器 / 任意简易武器」这类**待定武器**。"""
+    text = str(item or "")
+    return "任意" in text and "武器" in text
+
 
 #: roll 属性一次掷出的候选组数（玩家从中挑一组直接使用）
 ABILITY_SET_COUNT = 5
@@ -302,6 +310,9 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
         return "\n".join(lines)
 
     if step is CreationStep.EQUIPMENT:
+        # 起始包里还有「任意军用武器」这类待定项：先让玩家选具体武器
+        if session and session.pending_weapon:
+            return session.pending_weapon_prompt()
         profession = session.profession_obj if session else None
         if not profession:
             return "选择装备包：需要先确定职业。"
@@ -378,6 +389,8 @@ class CreationSession:
     skills: list[str] = field(default_factory=list)
     equipment_package: str = ""
     equipment: list[str] = field(default_factory=list)
+    #: 起始包里尚未确定的泛称武器（如「任意军用近战武器」），非空时要先选具体武器
+    pending_weapon: str = ""
     #: 选好的法术（法术 key，含戏法）
     spells: list[str] = field(default_factory=list)
     #: 交互日志（记录玩家每一步的选择，便于回放）
@@ -405,6 +418,7 @@ class CreationSession:
             "skills": list(self.skills),
             "equipment_package": self.equipment_package,
             "equipment": list(self.equipment),
+            "pending_weapon": self.pending_weapon,
             "spells": list(self.spells),
             "log": list(self.log),
         }
@@ -441,6 +455,7 @@ class CreationSession:
             skills=list(data.get("skills", [])),
             equipment_package=data.get("equipment_package", ""),
             equipment=list(data.get("equipment", [])),
+            pending_weapon=data.get("pending_weapon", ""),
             spells=list(data.get("spells", [])),
             log=list(data.get("log", [])),
         )
@@ -566,6 +581,8 @@ class CreationSession:
         if step is CreationStep.SKILL:
             return self.choose_skills(raw)
         if step is CreationStep.EQUIPMENT:
+            if self.pending_weapon:
+                return self.choose_package_weapon(raw)
             return self.choose_equipment(raw)
         if step is CreationStep.SPELLS:
             return self.choose_spells(raw)
@@ -793,7 +810,10 @@ class CreationSession:
         raw = text.strip()
         if raw.lower() in _SKIP_WORDS:
             self.equipment_package = ""
-            self.equipment = list(profession.fixed_equipment)
+            self.equipment = list(
+                dict.fromkeys(expand_packs(profession.fixed_equipment))
+            )
+            self.pending_weapon = ""
             self.record("装备：默认")
             self.advance()
             return f"已使用默认装备。\n\n{creation_prompt(self.step, self)}"
@@ -812,10 +832,57 @@ class CreationSession:
 
         items = list(package.items) + list(profession.fixed_equipment)
         self.equipment_package = package.key
-        self.equipment = list(dict.fromkeys(items))
+        # 先把「探索者背包 / 艺人包 / 学者包 …」展开成包 + 内容物
+        self.equipment = list(dict.fromkeys(expand_packs(items)))
         self.record(f"装备包：{package.label}")
+        # 包里若还有「任意军用武器」这类待定项，先停下来让玩家挑具体武器
+        self.pending_weapon = next(
+            (item for item in self.equipment if _is_generic_weapon(item)), ""
+        )
+        if self.pending_weapon:
+            return f"已选择装备：{package.label}。\n\n{self.pending_weapon_prompt()}"
         self.advance()
         return f"已选择装备：{package.label}。\n\n{creation_prompt(self.step, self)}"
+
+    def pending_weapon_prompt(self) -> str:
+        """「任意军用武器」需要选具体武器时的提示（带编号列表）。"""
+        options = weapon_options_for(self.pending_weapon)
+        lines = [f"起始包里的「{self.pending_weapon}」需要选一件具体武器："]
+        lines.extend(f"{i}. {name}" for i, name in enumerate(options, 1))
+        lines.append("回复序号（或直接回复武器名）。")
+        return "\n".join(lines)
+
+    def choose_package_weapon(self, text: str) -> str:
+        """把起始包里的「任意X武器」落成玩家选的具体武器。"""
+        self._require(CreationStep.EQUIPMENT)
+        placeholder = self.pending_weapon
+        if not placeholder:
+            raise CreationError("当前没有待定的武器。")
+        options = weapon_options_for(placeholder)
+        raw = text.strip()
+        tokens = _split_choices(raw)
+        index = _to_index(tokens[0]) if tokens else None
+        if index is not None:
+            if index < 0 or index >= len(options):
+                raise CreationError(f"序号超出范围，可选 1~{len(options)}。")
+            picked = options[index]
+        else:
+            exact = [name for name in options if name == raw]
+            fuzzy = [name for name in options if raw and raw in name]
+            if not (exact or fuzzy):
+                raise CreationError("请回复武器序号或武器名。")
+            picked = (exact or fuzzy)[0]
+        if placeholder in self.equipment:
+            self.equipment[self.equipment.index(placeholder)] = picked
+        self.record(f"武器：{placeholder} → {picked}")
+        # 可能还有第二个待定项（如「两把任意军用武器」）
+        self.pending_weapon = next(
+            (item for item in self.equipment if _is_generic_weapon(item)), ""
+        )
+        if self.pending_weapon:
+            return f"已选 {picked}。\n\n{self.pending_weapon_prompt()}"
+        self.advance()
+        return f"已选 {picked}。\n\n{creation_prompt(self.step, self)}"
 
     def choose_spells(self, text: str) -> str:
         """选择法术（戏法 + 一环法术）。"""
@@ -894,15 +961,27 @@ def build_character(session: CreationSession) -> DndCharacter:
 
     skills = list(session.skills)
     equipment = list(session.equipment)
+    # 背景自带的钱袋（如「15 金币」）拆出来放进钱包，不混在装备列表里。
+    # ⚠️ 这不是「把职业装备包换成金币」——职业装备包仍必须二选一，不能折钱。
+    money: dict[str, int] = {}
 
     background = session.background_obj
     if background:
         skills.extend(background.skills)
-        equipment.extend(background.equipment)
+        for item in background.equipment:
+            coin = parse_coin_text(item)
+            if coin:
+                money = merge_coins(money, coin)
+            else:
+                equipment.append(item)
 
     profession = session.profession_obj
     if not equipment and profession:
         equipment = list(profession.fixed_equipment)
+    # 兜底路径（没选包 / 旧会话）也要把容器包展开
+    equipment = list(dict.fromkeys(expand_packs(equipment)))
+    if any(_is_generic_weapon(item) for item in equipment):
+        raise CreationError("起始包里的「任意武器」还没选定，请先选具体武器。")
 
     normalized = [str(parse_item_stack(item)) for item in equipment]
 
@@ -924,4 +1003,5 @@ def build_character(session: CreationSession) -> DndCharacter:
         equipment=list(dict.fromkeys(normalized)),
         equipment_package=session.equipment_package,
         spells=list(session.spells),
+        money=money,
     )

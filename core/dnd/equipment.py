@@ -19,6 +19,7 @@ __all__ = [
     "ARMORS",
     "ARMOR_CATEGORIES",
     "ARMOR_MAP",
+    "PACKS",
     "SHIELDS",
     "WEAPONS",
     "WEAPON_CATEGORIES",
@@ -30,9 +31,12 @@ __all__ = [
     "WeaponCategory",
     "armor_proficient",
     "compute_armor_class",
+    "expand_packs",
     "get_armor",
     "get_weapon",
+    "pack_contents",
     "parse_item_stack",
+    "weapon_options_for",
     "weapon_proficient",
 ]
 
@@ -225,6 +229,63 @@ WEAPON_MAP: dict[str, Weapon] = {
     **{w.key: w for w in WEAPONS},
     **{w.cn: w for w in WEAPONS},
 }
+
+#: 起始「包」-> 内容物：数值在 ``res/dnd/equipment.yaml`` 的 ``packs`` 段。
+#: 只收录**容器包**（探索者背包 / 艺人包 / 学者包 / 祭司包 / 窃贼包）；
+#: 「材料包」「德鲁伊法器和材料包」是施法材料袋，不在此列（不展开）。
+PACKS: dict[str, tuple[str, ...]] = {}
+for _row in _TABLES.get("packs", []):
+    _items = as_texts(_row.get("items"))
+    PACKS[str(_row["cn"])] = _items
+    PACKS.setdefault(str(_row["key"]), _items)
+
+
+def pack_contents(name: str) -> tuple[str, ...] | None:
+    """某个「包」的内容物；不是可展开的容器包返回 ``None``。"""
+    return PACKS.get(str(name or "").strip())
+
+
+def expand_packs(items: Any) -> list[str]:
+    """把容器包展开成「包本身 + 内容物」。
+
+    ``材料包`` 这类不在 :data:`PACKS` 里，原样保留。展开后**仍保留包本身**
+    （包是容器，东西装在包里），重复项由调用方 ``dict.fromkeys`` 去重。
+    """
+    out: list[str] = []
+    for raw in items or []:
+        text = str(raw)
+        out.append(text)
+        contents = pack_contents(parse_item_stack(text).name)
+        if contents:
+            out.extend(contents)
+    return out
+
+
+def weapon_options_for(generic: str) -> list[str]:
+    """把「任意军用近战武器」这类泛称换成可选的**具体武器中文名**列表。"""
+    text = str(generic or "")
+    if "军用近战" in text:
+        want = "军用近战"
+    elif "军用远程" in text:
+        want = "军用远程"
+    elif "军用" in text:
+        want = "军用"
+    elif "简易" in text:
+        want = "简易"
+    else:
+        want = ""
+    options: list[str] = []
+    for weapon in WEAPONS:
+        category = weapon.category.value
+        if (
+            not want
+            or category == want
+            or (want == "军用" and category.startswith("军用"))
+            or (want == "简易" and category.startswith("简易"))
+        ):
+            options.append(weapon.cn)
+    return options
+
 
 #: 常见别名 -> 武器键（职业装备包里的写法更口语化）
 _WEAPON_ALIASES: dict[str, str] = {

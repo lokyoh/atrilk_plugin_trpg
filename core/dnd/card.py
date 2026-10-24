@@ -30,6 +30,7 @@ from .attributes import (
     proficiency_bonus,
 )
 from .background import Background, get_background
+from .coins import format_coins
 from .conditions import (
     ConditionEffect,
     combine_advantage,
@@ -105,6 +106,55 @@ _GENERIC_EQUIP_WORDS: tuple[str, ...] = (
 #: 起始包里带数量的写法：「5 支香」只留「支香」，「箭×20」只留「箭」
 _GLUE_COUNT_RE = re.compile(r"^\d+\s*")
 _GLUE_STACK_RE = re.compile(r"[×xX]\d+$")
+
+#: 装备槽位（角色卡「装备栏」按这个顺序展示）。**每个槽位至多一件**。
+SLOT_ORDER: tuple[str, ...] = (
+    "主手",
+    "副手",
+    "护甲",
+    "饰品",
+    "备用武器",
+    "奇物",
+)
+
+#: 背包分类（角色卡「背包栏」按这个顺序展示）
+BACKPACK_ORDER: tuple[str, ...] = (
+    "钱财",
+    "工具",
+    "消耗品",
+    "弹药",
+    "容器",
+    "武器",
+    "护甲",
+    "奇物",
+    "冒险用品",
+    "其他",
+)
+
+#: 背包分类关键词。**顺序有意义**：先认工具（「材料包」也算），再认消耗 / 弹药 / 容器。
+_TOOL_WORDS: tuple[str, ...] = (
+    "工具",
+    "乐器",
+    "赌具",
+    "领航",
+    "材料包",
+    "法器",
+    "圣徽",
+)
+_CONSUMABLE_WORDS: tuple[str, ...] = ("药水", "卷轴", "抗毒剂", "强酸", "炽火胶")
+#: 容器只认「包 / 箱 / 匣」——别把「水袋」「沙袋」「药瓶」也算成容器
+_CONTAINER_WORDS: tuple[str, ...] = ("背包", "包", "箱", "匣")
+_AMMO_NAMES: frozenset[str] = frozenset(
+    {"箭", "箭矢", "弩矢", "飞镖", "投石索子弹", "吹箭", "弹丸"}
+)
+
+
+def _fill_slot(slots: dict[str, list[str]], name: str, text: str) -> bool:
+    """往槽位放一件东西；槽位已有东西就返回 ``False``（**一个槽位只能装备一件**）。"""
+    if name in slots and not slots[name]:
+        slots[name].append(text)
+        return True
+    return False
 
 
 @lru_cache(maxsize=1)
@@ -322,6 +372,16 @@ class DndCharacter(TrpgCharacter):
     #: 游泳速度（尺）；水生种族（海精灵 / 崔斯特 / 蜥蜴人等）在建卡或 DM 设定后非零。
     #: 用于水下战斗——有游泳速度时水下近战武器攻击不受劣势（见 combat.attack）。
     swim_speed: int = 0
+    #: 掌握的语言（种族 + 背景 + 自选）。建卡时自动写入种族语言，
+    #: 「一门自选语言」这类占位条目不落卡，等玩家真正选定时再补。
+    languages: list[str] = field(default_factory=list)
+    #: 工具熟练项（背景 / 职业 / 自选）
+    tool_proficiencies: list[str] = field(default_factory=list)
+    #: 体型（空串 = 建卡时按种族补；种族也缺则「中型」）。
+    #: 擒抱 / 推撞的「体型不得大你超过一级」与负重判定要用。
+    size: str = ""
+    #: 钱包：币种 -> 数量（币种用 铜 / 银 / 金 / 铂，见 :mod:`.coins`）
+    money: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -357,6 +417,27 @@ class DndCharacter(TrpgCharacter):
         self.hunger_days = max(0, int(self.hunger_days or 0))
         # 同调去重（手改存档可能写重）
         self.attuned = list(dict.fromkeys(str(k) for k in (self.attuned or [])))
+        # 语言 / 工具去重、去空；旧存档没有这两项时留空（再按种族 / 背景补）
+        self.languages = list(
+            dict.fromkeys(
+                str(x).strip() for x in (self.languages or []) if str(x).strip()
+            )
+        )
+        self.tool_proficiencies = list(
+            dict.fromkeys(
+                str(x).strip()
+                for x in (self.tool_proficiencies or [])
+                if str(x).strip()
+            )
+        )
+        # 体型：没写就按种族补；种族也查不到就默认中型
+        if not str(self.size or "").strip():
+            race = self.race_obj
+            self.size = race.size if race else "中型"
+        # 钱包：数量取整、非正数丢弃
+        self.money = {
+            str(k): int(v) for k, v in (self.money or {}).items() if int(v or 0) > 0
+        }
 
     # —— 生命骰（短休花费 / 长休恢复）——
 
@@ -404,12 +485,30 @@ class DndCharacter(TrpgCharacter):
         equipment_package: str = "",
         spells: list[str] | None = None,
         damage_resistances: list[str] | None = None,
+        languages: list[str] | None = None,
+        tool_proficiencies: list[str] | None = None,
+        size: str = "",
+        money: dict[str, int] | None = None,
     ) -> DndCharacter:
         """按建卡流程的产出一份角色卡。"""
         race_obj = get_race(race)
         sub_obj = race_obj.resolve_subrace(subrace) if subrace else None
         class_obj = get_class(profession)
         resistances = list(damage_resistances or [])
+        # 语言：种族自带（跳过「一门自选语言」这类占位，等玩家真正选定再补）
+        langs = list(languages or [])
+        for item in race_obj.languages:
+            item = str(item).strip()
+            if item and "自选" not in item and "任意" not in item and item not in langs:
+                langs.append(item)
+        # 工具熟练：背景自带的（种族 / 职业的结构化工具在各自数据里补）
+        tools = list(tool_proficiencies or [])
+        bg_obj = get_background(background) if background else None
+        if bg_obj:
+            for item in bg_obj.tools:
+                item = str(item).strip()
+                if item and item not in tools:
+                    tools.append(item)
         # 种族 / 亚种自带的抗性（矮人抗毒、提夫林抗火……）自动补上；
         # 先查（种族, 亚种）组合，再回退到（种族, 空）的种族级条目
         sub_key = sub_obj.key if sub_obj else ""
@@ -445,6 +544,10 @@ class DndCharacter(TrpgCharacter):
             has_shield=any("盾" in str(item) for item in (equipment or [])),
             spells=[s.key for s in (get_spell(x) for x in (spells or [])) if s],
             damage_resistances=resistances,
+            languages=langs,
+            tool_proficiencies=tools,
+            size=str(size or "").strip() or race_obj.size,
+            money=dict(money or {}),
         )
 
     # —— 规则对象 ——
@@ -1486,6 +1589,12 @@ class DndCharacter(TrpgCharacter):
         bg = self.background_obj
         if bg:
             lines.append(f"背景 {bg.cn}")
+        if self.languages:
+            lines.append("语言 " + "、".join(self.languages))
+        if self.tool_proficiencies:
+            lines.append("工具 " + "、".join(self.tool_proficiencies))
+        if self.size:
+            lines.append(f"体型 {self.size}")
         if self.skill_lines():
             lines.append("技能 " + "、".join(self.skill_lines()))
         prof = []
@@ -1495,8 +1604,18 @@ class DndCharacter(TrpgCharacter):
             prof.append("武器 " + "、".join(self.weapon_proficiencies))
         if prof:
             lines.append("熟练 " + "；".join(prof))
-        if self.equipment:
-            lines.append("装备 " + "、".join(self.equipment_display()))
+        if self.equipment or self.money:
+            slots, pack = self.equipment_layout()
+            slot_parts = [
+                f"{name} {'、'.join(items)}" for name, items in slots.items() if items
+            ]
+            if slot_parts:
+                lines.append("装备 " + "；".join(slot_parts))
+            pack_parts = [
+                f"{name} {'、'.join(items)}" for name, items in pack.items() if items
+            ]
+            if pack_parts:
+                lines.append("背包 " + "；".join(pack_parts))
         return "\n".join(lines)
 
     # —— HTML 角色卡（喂给 html_to_pic 渲染成图片）——
@@ -1545,6 +1664,124 @@ class DndCharacter(TrpgCharacter):
                 continue
             out.append(f"{name}{count_suffix}")
         return out
+
+    def _display_one(self, raw: str) -> str:
+        """一件装备的展示文本（武器附伤害骰、护甲附 AC、魔法物品附品类）。"""
+        stack = parse_item_stack(str(raw))
+        name = stack.name
+        count_suffix = f"×{stack.count}" if stack.count > 1 else ""
+        weapon = get_weapon(name)
+        if weapon is not None:
+            dmg = weapon.damage
+            if weapon.is_versatile:
+                dmg += f"/{weapon.two_handed_damage}"
+            return f"{name} {dmg} {weapon.damage_type}{count_suffix}"
+        armor = get_armor(name)
+        if armor is not None:
+            if armor.is_shield:
+                return f"{name} +2 AC{count_suffix}"
+            return f"{name} AC {armor.base_ac}{count_suffix}"
+        item = get_item(name)
+        if item is not None:
+            return item.label
+        return f"{name}{count_suffix}"
+
+    @staticmethod
+    def _place_weapon(
+        slots: dict[str, list[str]], pack: dict[str, list[str]], text: str
+    ) -> None:
+        """武器：主手 → 副手 → 备用武器 → 背包「武器」（每槽只放一件）。"""
+        for slot in ("主手", "副手", "备用武器"):
+            if _fill_slot(slots, slot, text):
+                return
+        pack["武器"].append(text)
+
+    @staticmethod
+    def _place_armor(
+        slots: dict[str, list[str]],
+        pack: dict[str, list[str]],
+        text: str,
+        *,
+        shield: bool,
+    ) -> None:
+        """护甲进「护甲」、盾牌进「副手」；放不下直接进背包「护甲」。
+
+        ⚠️ 「备用武器」只放武器，护甲不占这个槽。
+        """
+        first = "副手" if shield else "护甲"
+        if _fill_slot(slots, first, text):
+            return
+        pack["护甲"].append(text)
+
+    def equipment_layout(
+        self,
+    ) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+        """把装备拆成「装备槽位」与「背包分类」两栏。
+
+        **数据上只有一份装备列表**，这里按物品类型推导展示位置：
+        - 槽位：主手 / 副手 / 护甲 / 饰品；
+        - 背包：钱财 / 工具 / 消耗品 / 弹药 / 容器 / 武器 / 护甲 / 奇物 / 冒险用品 / 其他。
+
+        返回 ``(槽位, 背包)`` 两个字典，键按各自顺序预置（空列表也保留）。
+        """
+        slots: dict[str, list[str]] = {name: [] for name in SLOT_ORDER}
+        pack: dict[str, list[str]] = {name: [] for name in BACKPACK_ORDER}
+        if self.money:
+            pack["钱财"].append(format_coins(self.money))
+
+        for raw in self.equipment:
+            stack = parse_item_stack(str(raw))
+            name = stack.name
+            text = self._display_one(str(raw))
+            item = get_item(name)
+
+            # 魔法物品先判（它的中文名可能和普通武器 / 护甲重名）
+            if item is not None and item.kind in ("武器", "护甲", "饰品", "奇物"):
+                if item.kind == "武器":
+                    self._place_weapon(slots, pack, text)
+                elif item.kind == "护甲":
+                    self._place_armor(slots, pack, text, shield=False)
+                elif item.kind == "饰品":
+                    # 饰品槽只放一件，多出来的进背包「奇物」
+                    if not _fill_slot(slots, "饰品", text):
+                        pack["奇物"].append(text)
+                else:  # 奇物
+                    if not _fill_slot(slots, "奇物", text):
+                        pack["奇物"].append(text)
+                continue
+
+            armor = get_armor(name)
+            if armor is not None:
+                self._place_armor(slots, pack, text, shield=armor.is_shield)
+                continue
+
+            weapon = get_weapon(name)
+            if weapon is not None:
+                self._place_weapon(slots, pack, text)
+                continue
+
+            if item is not None:  # 药水 / 卷轴 / 工具 / 奇物
+                category = {
+                    "药水": "消耗品",
+                    "卷轴": "消耗品",
+                    "工具": "工具",
+                    "奇物": "奇物",
+                }.get(item.kind, "奇物")
+                pack[category].append(text)
+                continue
+
+            # 普通杂物：按关键词归到背包分类
+            if any(word in name for word in _TOOL_WORDS):
+                pack["工具"].append(text)
+            elif name in _AMMO_NAMES:
+                pack["弹药"].append(text)
+            elif any(word in name for word in _CONSUMABLE_WORDS):
+                pack["消耗品"].append(text)
+            elif any(word in name for word in _CONTAINER_WORDS):
+                pack["容器"].append(text)
+            else:
+                pack["冒险用品"].append(text)
+        return slots, pack
 
     def spell_display_lines(self) -> list[str]:
         """已知法术按环阶分组的展示行：先环阶名（戏法 / 一环…），再逐条 `法术名：简介`。
@@ -1616,8 +1853,24 @@ class DndCharacter(TrpgCharacter):
         if skills:
             sections.append(self._card_section("技能", skills))
 
-        if self.equipment:
-            sections.append(self._card_section("装备", self.equipment_display()))
+        if self.equipment or self.money:
+            slots, pack = self.equipment_layout()
+            slot_lines = [
+                f"{name}：{'、'.join(items)}" for name, items in slots.items() if items
+            ]
+            if slot_lines:
+                sections.append(self._card_section("装备", slot_lines, as_text=True))
+            pack_lines = [
+                f"{name}：{'、'.join(items)}" for name, items in pack.items() if items
+            ]
+            if pack_lines:
+                sections.append(self._card_section("背包", pack_lines, as_text=True))
+
+        if self.languages:
+            sections.append(self._card_section("语言", self.languages))
+
+        if self.tool_proficiencies:
+            sections.append(self._card_section("工具", self.tool_proficiencies))
 
         status_tags: list[str] = []
         if self.conditions or self.exhaustion:
@@ -1668,7 +1921,7 @@ class DndCharacter(TrpgCharacter):
         return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><style>{css_vars(get_theme())}{_CARD_CSS}</style></head><body><div class="card">
 <div class="header"><div class="name">{self._esc(self.name or "无名者")}</div>
-<div class="meta">{self._esc(race_text)} · {self._esc(prof_text)} · Lv.{self.level}{(" · " + self._esc(bg_text)) if bg_text else ""}</div></div>
+<div class="meta">{self._esc(race_text)} · {self._esc(prof_text)} · Lv.{self.level} · {self._esc(self.size)}{(" · " + self._esc(bg_text)) if bg_text else ""}</div></div>
 <div class="stats">
 <div class="stat"><div class="v">{self.hp}/{self.max_hp}</div><div class="k">生命</div>{hp_bar}</div>
 <div class="stat"><div class="v">{self.armor_class}</div><div class="k">护甲 AC</div></div>
@@ -1730,6 +1983,10 @@ class DndCharacter(TrpgCharacter):
             "damage_resistances",
             "hit_dice_used",
             "swim_speed",
+            "languages",
+            "tool_proficiencies",
+            "size",
+            "money",
         }
         return cls(**{k: v for k, v in data.items() if k in known})
 
