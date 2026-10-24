@@ -20,7 +20,12 @@ from .combat import Combatant, CombatState
 from .spells import _LEVEL_LABELS
 from .theme import css_vars, get_theme
 
-__all__ = ["combat_to_html", "narration_to_html", "player_panel_html"]
+__all__ = [
+    "combat_to_html",
+    "data_card_html",
+    "narration_to_html",
+    "player_panel_html",
+]
 
 #: 地形键 -> (图例中文名, 单字标记)；底色走主题变量 ``--t-<key>``
 _TERRAIN = {
@@ -146,6 +151,43 @@ body{width:540px;font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",
 .story p:last-child{margin-bottom:0}
 
 """
+
+#: 查询数据卡（/跑团.查 优先返回的图片）
+_DATA_CARD_CSS = """
+*{margin:0;padding:0;box-sizing:border-box}
+body{width:540px;font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","Heiti SC",sans-serif;background:var(--page);padding:14px}
+.dcard{background:linear-gradient(160deg,var(--card1),var(--card2));border:1px solid var(--border);border-radius:14px;overflow:hidden;color:var(--text);box-shadow:0 6px 20px rgba(0,0,0,.5)}
+.dhead{background:linear-gradient(135deg,var(--header1),var(--header2));padding:14px 18px}
+.dtitle{font-size:20px;font-weight:700;color:var(--text)}
+.dsub{font-size:12px;color:var(--text2);margin-top:4px;opacity:.92}
+.dbody{padding:12px 18px;font-size:13px;line-height:1.7;color:var(--text)}
+.dline{white-space:pre-wrap;word-break:break-word}
+"""
+
+
+def data_card_html(table: str, name: str) -> str | None:
+    """把一项查询数据渲染成图片卡的 HTML；不支持的表或查不到时返回 ``None``。
+
+    交给 :func:`~.handlers._render_html_image` 用 ``html_to_pic`` 转成图片；
+    返回 ``None`` 时调用方退回纯文本（详见 :func:`data_card_parts` 的覆盖范围）。
+    """
+    try:
+        from ..agents.dnd.tools import data_card_parts
+    except Exception:
+        return None
+    parts = data_card_parts(table, name)
+    if parts is None:
+        return None
+    title, subtitle, body = parts
+    lines = "".join(f'<div class="dline">{_esc(ln)}</div>' for ln in body.splitlines())
+    return (
+        '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+        f"<style>{css_vars(get_theme())}{_DATA_CARD_CSS}</style></head><body>"
+        f'<div class="dcard"><div class="dhead">'
+        f'<div class="dtitle">{_esc(title)}</div>'
+        f'<div class="dsub">{_esc(subtitle)}</div></div>'
+        f'<div class="dbody">{lines}</div></div></body></html>'
+    )
 
 
 def _esc(text: object) -> str:

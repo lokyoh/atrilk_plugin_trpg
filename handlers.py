@@ -83,7 +83,12 @@ from .core.dnd import (
 from .core.dnd.clock import clock_text
 from .core.dnd.event_progress import event_summary
 from .core.dnd.events import load_pool
-from .core.dnd.image_render import combat_to_html, narration_to_html, player_panel_html
+from .core.dnd.image_render import (
+    combat_to_html,
+    data_card_html,
+    narration_to_html,
+    player_panel_html,
+)
 from .core.trpg import DiceError, roll
 from .matchers import (
     create_card,
@@ -92,6 +97,7 @@ from .matchers import (
     finish_game,
     join_save,
     make_check,
+    query_data_cmd,
     resume_game,
     roll_dice,
     show_card,
@@ -595,6 +601,48 @@ async def _make_check(event: MessageEvent, args: Message = CommandArg()):
         await make_check.finish(f"⚠️ {e}")
 
     await make_check.finish(result.describe())
+
+
+# --------------------------------------------------------------------------- #
+# 查询数据（优先返回图片，渲染失败退回文本）
+# --------------------------------------------------------------------------- #
+
+
+@query_data_cmd.handle()
+async def _query_data(event: MessageEvent, args: Message = CommandArg()):
+    raw = args.extract_plain_text().strip()
+    if not raw or " " not in raw:
+        await query_data_cmd.finish(
+            "用法：/跑团.查 <表> <名字>\n"
+            "表：怪物 / 法术 / 种族 / 职业 / 武器 / 护甲 / 魔法物品\n"
+            "例：/跑团.查 怪物 地精武者　/跑团.查 法术 火球术"
+        )
+    table, name = raw.split(" ", 1)
+    name = name.strip()
+
+    # 优先返回图片：能做成「卡」的静态数据表走图片，其余（或渲染失败）退回文本
+    try:
+        html = data_card_html(table, name)
+    except Exception as e:  # 准备图片卡失败直接退回文本
+        log.warning(f"查询数据图片准备失败，退回文本：{str_traceback(e)}")
+        html = None
+    if html:
+        seg = await _render_html_image(html)
+        if seg is not None:
+            await query_data_cmd.finish(seg)
+
+    # 文本兜底（含「查不到」的提示）
+    try:
+        from .core.agents.dnd.tools import query_data_text
+    except Exception:
+        query_data_text = None
+    text = query_data_text(table, name) if query_data_text else ""
+    if not text:
+        text = (
+            "没查到相关内容，换个表或名字试试（表：怪物 / 法术 / 种族 / 职业 / "
+            "武器 / 护甲 / 魔法物品）。"
+        )
+    await query_data_cmd.finish(text)
 
 
 # --------------------------------------------------------------------------- #

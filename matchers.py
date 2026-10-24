@@ -57,3 +57,8 @@ finish_game = plugin.cmd_as_group(
 end_game = plugin.cmd_as_group(
     "结束", "暂停本会话的冒险（存档保留，可用 /跑团.继续 接着玩）；加「删除」会删除存档"
 )
+
+#: 查：查询 DND 数据表（怪物 / 法术 / 种族 / 职业 / 武器 / 护甲 / 魔法物品），优先返回图片
+query_data_cmd = plugin.cmd_as_group(
+    "查", "查询 DND 数据表，优先返回图片：/跑团.查 怪物 地精武者"
+)
