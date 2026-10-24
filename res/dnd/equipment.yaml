@@ -483,3 +483,817 @@ packs:
   - 火绒盒
   - 水袋
   - 绳索
+
+
+# 冒险用品 / 工具 / 坐骑 / 鞍具载具 / 商业货物 / 生活开支 / 饮食住宿
+# 由《参考/快速参考 (5e_2014).md》对应表格转录生成，勿手改（要改用脚本重新生成）。
+# ⚠️ 这些表只提供**数据与查询**；采购 / 出售暂不实现，也不放进 DM 职责，
+#    留作以后单独设计的程序。
+gear:
+- key: g001
+  cn: "算盘"
+  cost: "2 gp"
+  weight: 2.0
+- key: g002
+  cn: "强酸 (小瓶)"
+  cost: "25 gp"
+  weight: 1.0
+- key: g003
+  cn: "炽火胶(扁瓶装)"
+  cost: "50 gp"
+  weight: 1.0
+- key: g004
+  cn: "箭矢 (20)"
+  cost: "1 gp"
+  weight: 1.0
+- key: g005
+  cn: "吹箭(50)"
+  cost: "1 gp"
+  weight: 1.0
+- key: g006
+  cn: "弩矢(20)"
+  cost: "1 gp"
+  weight: 1.5
+- key: g007
+  cn: "投石索子弹(20)"
+  cost: "4 cp"
+  weight: 1.5
+- key: g008
+  cn: "抗毒剂 (小瓶)"
+  cost: "50 gp"
+  weight: 0.0
+- key: g009
+  cn: "水晶"
+  cost: "10 gp"
+  weight: 1.0
+- key: g010
+  cn: "法球"
+  cost: "20 gp"
+  weight: 3.0
+- key: g011
+  cn: "权杖"
+  cost: "10 gp"
+  weight: 2.0
+- key: g012
+  cn: "法杖"
+  cost: "5 gp"
+  weight: 4.0
+- key: g013
+  cn: "魔杖"
+  cost: "10 gp"
+  weight: 1.0
+- key: g014
+  cn: "背包"
+  cost: "2 gp"
+  weight: 5.0
+- key: g015
+  cn: "滚珠 (一袋1,000粒)"
+  cost: "1 gp"
+  weight: 2.0
+- key: g016
+  cn: "木桶"
+  cost: "2 gp"
+  weight: 70.0
+- key: g017
+  cn: "篮子"
+  cost: "4 sp"
+  weight: 2.0
+- key: g018
+  cn: "铺盖"
+  cost: "1 gp"
+  weight: 7.0
+- key: g019
+  cn: "铃铛"
+  cost: "1 gp"
+  weight: 0.0
+- key: g020
+  cn: "毯子"
+  cost: "5 sp"
+  weight: 3.0
+- key: g021
+  cn: "滑轮组"
+  cost: "1 gp"
+  weight: 5.0
+- key: g022
+  cn: "书籍"
+  cost: "25 gp"
+  weight: 5.0
+- key: g023
+  cn: "玻璃瓶"
+  cost: "2 gp"
+  weight: 2.0
+- key: g024
+  cn: "吊桶"
+  cost: "5 cp"
+  weight: 2.0
+- key: g025
+  cn: "铁蒺藜(一包20个)"
+  cost: "1 gp"
+  weight: 2.0
+- key: g026
+  cn: "蜡烛"
+  cost: "1 cp"
+  weight: 0.0
+- key: g027
+  cn: "弩箭盒"
+  cost: "1 gp"
+  weight: 1.0
+- key: g028
+  cn: "箱子、地图或卷轴"
+  cost: "1 gp"
+  weight: 1.0
+- key: g029
+  cn: "链条(10尺)"
+  cost: "5 gp"
+  weight: 10.0
+- key: g030
+  cn: "粉笔(1支)"
+  cost: "1 cp"
+  weight: 0.0
+- key: g031
+  cn: "箱子"
+  cost: "5 gp"
+  weight: 25.0
+- key: g032
+  cn: "普通服装"
+  cost: "5 sp"
+  weight: 3.0
+- key: g033
+  cn: "表演服装"
+  cost: "5 gp"
+  weight: 4.0
+- key: g034
+  cn: "高档服装"
+  cost: "15 gp"
+  weight: 6.0
+- key: g035
+  cn: "旅行者服装"
+  cost: "2 gp"
+  weight: 4.0
+- key: g036
+  cn: "材料包"
+  cost: "25 gp"
+  weight: 2.0
+- key: g037
+  cn: "撬棍"
+  cost: "2 gp"
+  weight: 5.0
+- key: g038
+  cn: "槲寄生枝条"
+  cost: "1 gp"
+  weight: 0.0
+- key: g039
+  cn: "图腾"
+  cost: "1 gp"
+  weight: 0.0
+- key: g040
+  cn: "木质法杖"
+  cost: "5 gp"
+  weight: 4.0
+- key: g041
+  cn: "紫杉魔杖"
+  cost: "10 gp"
+  weight: 1.0
+- key: g042
+  cn: "渔具"
+  cost: "1 gp"
+  weight: 4.0
+- key: g043
+  cn: "扁瓶 或 大杯"
+  cost: "2 cp"
+  weight: 1.0
+- key: g044
+  cn: "爪钩"
+  cost: "2 gp"
+  weight: 4.0
+- key: g045
+  cn: "锤子"
+  cost: "1 gp"
+  weight: 3.0
+- key: g046
+  cn: "大锤"
+  cost: "2 gp"
+  weight: 10.0
+- key: g047
+  cn: "医疗包"
+  cost: "5 gp"
+  weight: 3.0
+- key: g048
+  cn: "护符"
+  cost: "5 gp"
+  weight: 1.0
+- key: g049
+  cn: "纹章"
+  cost: "5 gp"
+  weight: 0.0
+- key: g050
+  cn: "圣物匣"
+  cost: "5 gp"
+  weight: 2.0
+- key: g051
+  cn: "圣水 (扁瓶)"
+  cost: "25 gp"
+  weight: 1.0
+- key: g052
+  cn: "沙漏"
+  cost: "25 gp"
+  weight: 1.0
+- key: g053
+  cn: "捕猎陷阱"
+  cost: "5 gp"
+  weight: 25.0
+- key: g054
+  cn: "墨水(1盎司/瓶)"
+  cost: "10 gp"
+  weight: 0.0
+- key: g055
+  cn: "墨水笔"
+  cost: "2 cp"
+  weight: 0.0
+- key: g056
+  cn: "壶 或 罐"
+  cost: "2 cp"
+  weight: 4.0
+- key: g057
+  cn: "攀爬工具"
+  cost: "25 gp"
+  weight: 12.0
+- key: g058
+  cn: "易容工具"
+  cost: "25 gp"
+  weight: 3.0
+- key: g059
+  cn: "文书伪造工具"
+  cost: "15 gp"
+  weight: 5.0
+- key: g060
+  cn: "草药工具"
+  cost: "5 gp"
+  weight: 3.0
+- key: g061
+  cn: "野炊工具"
+  cost: "2 sp"
+  weight: 1.0
+- key: g062
+  cn: "毒药工具"
+  cost: "50 gp"
+  weight: 2.0
+- key: g063
+  cn: "爬梯(10尺)"
+  cost: "1 sp"
+  weight: 25.0
+- key: g064
+  cn: "油灯"
+  cost: "5 sp"
+  weight: 1.0
+- key: g065
+  cn: "牛眼提灯"
+  cost: "10 gp"
+  weight: 2.0
+- key: g066
+  cn: "附盖提灯"
+  cost: "5 gp"
+  weight: 2.0
+- key: g067
+  cn: "锁"
+  cost: "10 gp"
+  weight: 1.0
+- key: g068
+  cn: "放大镜"
+  cost: "100 gp"
+  weight: 0.0
+- key: g069
+  cn: "镣铐"
+  cost: "2 gp"
+  weight: 6.0
+- key: g070
+  cn: "钢面镜"
+  cost: "5 gp"
+  weight: 0.5
+- key: g071
+  cn: "燃油 (扁瓶)"
+  cost: "1 sp"
+  weight: 1.0
+- key: g072
+  cn: "纸(每张)"
+  cost: "2 sp"
+  weight: 0.0
+- key: g073
+  cn: "羊皮纸(每张)"
+  cost: "1 sp"
+  weight: 0.0
+- key: g074
+  cn: "香水 (小瓶)"
+  cost: "5 gp"
+  weight: 0.0
+- key: g075
+  cn: "矿工镐"
+  cost: "2 gp"
+  weight: 10.0
+- key: g076
+  cn: "岩钉"
+  cost: "5 cp"
+  weight: 0.25
+- key: g077
+  cn: "基础毒药 (小瓶)"
+  cost: "100 gp"
+  weight: 0.0
+- key: g078
+  cn: "长杆(10尺)"
+  cost: "5 cp"
+  weight: 7.0
+- key: g079
+  cn: "铁壶"
+  cost: "2 gp"
+  weight: 10.0
+- key: g080
+  cn: "治疗药水"
+  cost: "50 gp"
+  weight: 0.5
+- key: g081
+  cn: "小包"
+  cost: "5 sp"
+  weight: 1.0
+- key: g082
+  cn: "箭袋"
+  cost: "1 gp"
+  weight: 1.0
+- key: g083
+  cn: "便携式撞锤"
+  cost: "4 gp"
+  weight: 35.0
+- key: g084
+  cn: "口粮(1天份)"
+  cost: "5 sp"
+  weight: 2.0
+- key: g085
+  cn: "长袍"
+  cost: "1 gp"
+  weight: 4.0
+- key: g086
+  cn: "绳索，麻制（50尺）"
+  cost: "1 gp"
+  weight: 10.0
+- key: g087
+  cn: "绳索，丝制（50尺）"
+  cost: "10 gp"
+  weight: 5.0
+- key: g088
+  cn: "麻袋"
+  cost: "1 cp"
+  weight: 0.5
+- key: g089
+  cn: "商人秤"
+  cost: "5 gp"
+  weight: 3.0
+- key: g090
+  cn: "封蜡"
+  cost: "5 sp"
+  weight: 0.0
+- key: g091
+  cn: "铲子"
+  cost: "2 gp"
+  weight: 5.0
+- key: g092
+  cn: "信号笛"
+  cost: "5 cp"
+  weight: 0.0
+- key: g093
+  cn: "玺戒"
+  cost: "5 gp"
+  weight: 0.0
+- key: g094
+  cn: "肥皂"
+  cost: "2 cp"
+  weight: 0.0
+- key: g095
+  cn: "法术书"
+  cost: "50 gp"
+  weight: 3.0
+- key: g096
+  cn: "铁钉（10）"
+  cost: "1 gp"
+  weight: 5.0
+- key: g097
+  cn: "望远镜"
+  cost: "1,000 gp"
+  weight: 1.0
+- key: g098
+  cn: "双人帐篷"
+  cost: "2 gp"
+  weight: 20.0
+- key: g099
+  cn: "火绒盒"
+  cost: "5 sp"
+  weight: 1.0
+- key: g100
+  cn: "火把"
+  cost: "1 cp"
+  weight: 1.0
+- key: g101
+  cn: "小瓶"
+  cost: "1 gp"
+  weight: 0.0
+- key: g102
+  cn: "水袋"
+  cost: "2 sp"
+  weight: 5.0
+- key: g103
+  cn: "磨刀石"
+  cost: "1 cp"
+  weight: 1.0
+tools:
+- key: t001
+  cn: "炼金工具"
+  cost: "50 gp"
+  weight: 8.0
+- key: t002
+  cn: "酿酒工具"
+  cost: "20 gp"
+  weight: 9.0
+- key: t003
+  cn: "书法工具"
+  cost: "10 gp"
+  weight: 5.0
+- key: t004
+  cn: "木匠工具"
+  cost: "8 gp"
+  weight: 6.0
+- key: t005
+  cn: "制图工具"
+  cost: "15 gp"
+  weight: 6.0
+- key: t006
+  cn: "鞋匠工具"
+  cost: "5 gp"
+  weight: 5.0
+- key: t007
+  cn: "厨师工具"
+  cost: "1 gp"
+  weight: 8.0
+- key: t008
+  cn: "玻璃匠工具"
+  cost: "30 gp"
+  weight: 5.0
+- key: t009
+  cn: "珠宝匠工具"
+  cost: "25 gp"
+  weight: 2.0
+- key: t010
+  cn: "皮匠工具"
+  cost: "5 gp"
+  weight: 5.0
+- key: t011
+  cn: "石匠工具"
+  cost: "10 gp"
+  weight: 8.0
+- key: t012
+  cn: "画家工具"
+  cost: "10 gp"
+  weight: 5.0
+- key: t013
+  cn: "陶匠工具"
+  cost: "10 gp"
+  weight: 3.0
+- key: t014
+  cn: "铁匠工具"
+  cost: "20 gp"
+  weight: 8.0
+- key: t015
+  cn: "修补工具"
+  cost: "50 gp"
+  weight: 10.0
+- key: t016
+  cn: "织布工具"
+  cost: "1 gp"
+  weight: 5.0
+- key: t017
+  cn: "木雕工具"
+  cost: "1 gp"
+  weight: 5.0
+- key: t018
+  cn: "易容工具"
+  cost: "25 gp"
+  weight: 3.0
+- key: t019
+  cn: "文书伪造工具"
+  cost: "15 gp"
+  weight: 5.0
+- key: t020
+  cn: "骰子组"
+  cost: "1 sp"
+  weight: 0.0
+- key: t021
+  cn: "龙棋组"
+  cost: "1 gp"
+  weight: 0.5
+- key: t022
+  cn: "整副纸牌"
+  cost: "5 sp"
+  weight: 0.0
+- key: t023
+  cn: "整副三龙牌"
+  cost: "1 gp"
+  weight: 0.0
+- key: t024
+  cn: "草药工具"
+  cost: "5 gp"
+  weight: 3.0
+- key: t025
+  cn: "风笛"
+  cost: "30 gp"
+  weight: 6.0
+- key: t026
+  cn: "鼓"
+  cost: "6 gp"
+  weight: 3.0
+- key: t027
+  cn: "扬琴"
+  cost: "25 gp"
+  weight: 10.0
+- key: t028
+  cn: "长笛"
+  cost: "2 gp"
+  weight: 1.0
+- key: t029
+  cn: "鲁特琴"
+  cost: "35 gp"
+  weight: 2.0
+- key: t030
+  cn: "里拉琴"
+  cost: "30 gp"
+  weight: 2.0
+- key: t031
+  cn: "号角"
+  cost: "3 gp"
+  weight: 2.0
+- key: t032
+  cn: "排箫"
+  cost: "12 gp"
+  weight: 2.0
+- key: t033
+  cn: "芦笛"
+  cost: "2 gp"
+  weight: 1.0
+- key: t034
+  cn: "提琴"
+  cost: "30 gp"
+  weight: 1.0
+- key: t035
+  cn: "领航工具"
+  cost: "25 gp"
+  weight: 2.0
+- key: t036
+  cn: "毒药工具"
+  cost: "50 gp"
+  weight: 2.0
+- key: t037
+  cn: "盗贼工具"
+  cost: "25 gp"
+  weight: 1.0
+mounts:
+- key: m001
+  cn: "骆驼"
+  cost: "50 gp"
+  speed: "50尺"
+  carry: "480 磅"
+- key: m002
+  cn: "驴或骡子"
+  cost: "8 gp"
+  speed: "40 尺"
+  carry: "420 磅"
+- key: m003
+  cn: "大象"
+  cost: "200 gp"
+  speed: "40 尺"
+  carry: "1,320 磅"
+- key: m004
+  cn: "驮用马"
+  cost: "50 gp"
+  speed: "40 尺"
+  carry: "540 磅"
+- key: m005
+  cn: "乘用马"
+  cost: "75 gp"
+  speed: "60尺"
+  carry: "480 磅"
+- key: m006
+  cn: "獒犬"
+  cost: "25 gp"
+  speed: "40 尺"
+  carry: "195 磅"
+- key: m007
+  cn: "矮种马"
+  cost: "30 gp"
+  speed: "40 尺"
+  carry: "225 磅"
+- key: m008
+  cn: "战马"
+  cost: "400 gp"
+  speed: "60尺"
+  carry: "540 磅"
+harness:
+- key: h001
+  cn: "具装"
+  cost: "×4"
+  weight: 0.0
+- key: h002
+  cn: "辔具"
+  cost: "2 gp"
+  weight: 1.0
+- key: h003
+  cn: "四轮客车"
+  cost: "100 gp"
+  weight: 600.0
+- key: h004
+  cn: "二轮货车"
+  cost: "15 gp"
+  weight: 200.0
+- key: h005
+  cn: "战车"
+  cost: "250 gp"
+  weight: 100.0
+- key: h006
+  cn: "动物饲料（每日份）"
+  cost: "5 cp"
+  weight: 10.0
+- key: h007
+  cn: "鞍座·特制"
+  cost: "60 gp"
+  weight: 40.0
+- key: h008
+  cn: "鞍座·军用"
+  cost: "20 gp"
+  weight: 30.0
+- key: h009
+  cn: "鞍座·驮役"
+  cost: "5 gp"
+  weight: 15.0
+- key: h010
+  cn: "鞍座·骑乘"
+  cost: "10 gp"
+  weight: 25.0
+- key: h011
+  cn: "鞍囊"
+  cost: "4 gp"
+  weight: 8.0
+- key: h012
+  cn: "雪橇"
+  cost: "20 gp"
+  weight: 300.0
+- key: h013
+  cn: "马厩(每日)"
+  cost: "5 sp"
+  weight: 0.0
+- key: h014
+  cn: "四轮货车"
+  cost: "35 gp"
+  weight: 400.0
+vehicles:
+- key: v001
+  cn: "桨帆船"
+  cost: "30,000 gp"
+  speed: "4 mph"
+- key: v002
+  cn: "龙骨船"
+  cost: "3,000 gp"
+  speed: "1 mph"
+- key: v003
+  cn: "单帆长船"
+  cost: "10,000 gp"
+  speed: "3 mph"
+- key: v004
+  cn: "划艇"
+  cost: "50 gp"
+  speed: "1½ mph"
+- key: v005
+  cn: "帆船"
+  cost: "10,000 gp"
+  speed: "2 mph"
+- key: v006
+  cn: "战舰"
+  cost: "25,000 gp"
+  speed: "2½ mph"
+trade_goods:
+- key: tg001
+  cn: "1磅小麦"
+  cost: "1 cp"
+- key: tg002
+  cn: "1磅面粉或一只鸡"
+  cost: "2 cp"
+- key: tg003
+  cn: "1磅盐"
+  cost: "5 cp"
+- key: tg004
+  cn: "1磅铁或1平方码帆布"
+  cost: "1 sp"
+- key: tg005
+  cn: "1磅铜或1平方码棉布"
+  cost: "5 sp"
+- key: tg006
+  cn: "1磅姜或一只山羊"
+  cost: "1 gp"
+- key: tg007
+  cn: "1磅肉桂或胡椒，或一只棉羊"
+  cost: "2 gp"
+- key: tg008
+  cn: "1磅丁香或一头猪"
+  cost: "3 gp"
+- key: tg009
+  cn: "1磅银子或1平方码亚麻布"
+  cost: "5 gp"
+- key: tg010
+  cn: "1平方码丝绸或一头牛"
+  cost: "10 gp"
+- key: tg011
+  cn: "1磅藏红花或一头牛"
+  cost: "15 gp"
+- key: tg012
+  cn: "1磅黄金"
+  cost: "50 gp"
+- key: tg013
+  cn: "1磅铂金"
+  cost: "500 gp"
+lifestyle:
+- key: ls001
+  cn: "乞食"
+  cost: "—"
+- key: ls002
+  cn: "流浪"
+  cost: "1 sp"
+- key: ls003
+  cn: "穷困"
+  cost: "2 sp"
+- key: ls004
+  cn: "俭朴"
+  cost: "1 gp"
+- key: ls005
+  cn: "舒适"
+  cost: "2 gp"
+- key: ls006
+  cn: "富裕"
+  cost: "4 gp"
+- key: ls007
+  cn: "奢华"
+  cost: "至少10 gp"
+food_lodging:
+- key: f001
+  cn: "麦芽酒·加仑"
+  cost: "2 sp"
+- key: f002
+  cn: "麦芽酒·杯子"
+  cost: "4 cp"
+- key: f003
+  cn: "筵席（每人）"
+  cost: "10 gp"
+- key: f004
+  cn: "一条面包"
+  cost: "2 cp"
+- key: f005
+  cn: "一块奶酪"
+  cost: "1 sp"
+- key: f006
+  cn: "旅馆住宿（每天）·流浪"
+  cost: "7 cp"
+- key: f007
+  cn: "旅馆住宿（每天）·穷困"
+  cost: "1 sp"
+- key: f008
+  cn: "旅馆住宿（每天）·俭朴"
+  cost: "5 sp"
+- key: f009
+  cn: "旅馆住宿（每天）·舒适"
+  cost: "8 sp"
+- key: f010
+  cn: "旅馆住宿（每天）·富裕"
+  cost: "2 gp"
+- key: f011
+  cn: "旅馆住宿（每天）·奢华"
+  cost: "4 gp"
+- key: f012
+  cn: "餐膳（每天）·流浪"
+  cost: "3 cp"
+- key: f013
+  cn: "餐膳（每天）·穷困"
+  cost: "6 cp"
+- key: f014
+  cn: "餐膳（每天）·俭朴"
+  cost: "3 sp"
+- key: f015
+  cn: "餐膳（每天）·舒适"
+  cost: "5 sp"
+- key: f016
+  cn: "餐膳（每天）·富裕"
+  cost: "8 sp"
+- key: f017
+  cn: "餐膳（每天）·奢华"
+  cost: "2 gp"
+- key: f018
+  cn: "一块肉"
+  cost: "3 sp"
+- key: f019
+  cn: "红酒·普通（罐装）"
+  cost: "2 sp"
+- key: f020
+  cn: "红酒·优质（瓶装）"
+  cost: "10 gp"

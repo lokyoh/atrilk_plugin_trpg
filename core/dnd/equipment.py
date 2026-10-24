@@ -19,23 +19,36 @@ __all__ = [
     "ARMORS",
     "ARMOR_CATEGORIES",
     "ARMOR_MAP",
+    "FOOD_LODGING",
+    "GEAR",
+    "HARNESS",
+    "LIFESTYLES",
+    "MOUNTS",
     "PACKS",
     "SHIELDS",
+    "SUPPLY_TABLES",
+    "TOOLS",
+    "TRADE_GOODS",
+    "VEHICLES",
     "WEAPONS",
     "WEAPON_CATEGORIES",
     "WEAPON_MAP",
     "Armor",
     "ArmorCategory",
     "ItemStack",
+    "Supply",
     "Weapon",
     "WeaponCategory",
+    "all_supply_names",
     "armor_proficient",
     "compute_armor_class",
     "expand_packs",
     "get_armor",
+    "get_supply",
     "get_weapon",
     "pack_contents",
     "parse_item_stack",
+    "supply_names",
     "weapon_options_for",
     "weapon_proficient",
 ]
@@ -285,6 +298,94 @@ def weapon_options_for(generic: str) -> list[str]:
         ):
             options.append(weapon.cn)
     return options
+
+
+@dataclass(frozen=True, slots=True)
+class Supply:
+    """一件非战斗用品（冒险用品 / 工具 / 鞍具 / 坐骑 / 载具 / 货物 / 饮食住宿）。
+
+    ``cost`` 保留**原文**（如 ``"2 gp"`` / ``"1,000 gp"`` / ``"至少10 gp"``），
+    要算钱时用 :func:`coins.parse_cost` 折成铜币——采购 / 出售那套程序还没做，
+    这里只提供数据与查询。
+    """
+
+    key: str
+    cn: str
+    cost: str = ""
+    weight: float = 0.0
+    speed: str = ""  # 坐骑 / 载具的速度（如 "40 尺" / "1 mph"）
+    carry: str = ""  # 坐骑载重（如 "480 磅"）
+
+
+def _supply(row: dict[str, Any]) -> Supply:
+    """一行非战斗用品（``res/dnd/equipment.yaml`` 的 gear / tools / … 段）。"""
+    return Supply(
+        key=str(row["key"]),
+        cn=str(row["cn"]),
+        cost=str(row.get("cost", "") or ""),
+        weight=float(row.get("weight", 0.0) or 0.0),
+        speed=str(row.get("speed", "") or ""),
+        carry=str(row.get("carry", "") or ""),
+    )
+
+
+def _supplies(section: str) -> tuple[Supply, ...]:
+    return tuple(_supply(row) for row in _TABLES.get(section, []))
+
+
+#: 冒险用品（5e2014「冒险用品」表）
+GEAR: tuple[Supply, ...] = _supplies("gear")
+#: 工具表（工匠 / 赌具 / 乐器 / 盗贼工具 …）
+TOOLS: tuple[Supply, ...] = _supplies("tools")
+#: 坐骑与其他动物
+MOUNTS: tuple[Supply, ...] = _supplies("mounts")
+#: 鞍具、挽具及陆运载具
+HARNESS: tuple[Supply, ...] = _supplies("harness")
+#: 水运载具
+VEHICLES: tuple[Supply, ...] = _supplies("vehicles")
+#: 商业货物
+TRADE_GOODS: tuple[Supply, ...] = _supplies("trade_goods")
+#: 生活开支七档
+LIFESTYLES: tuple[Supply, ...] = _supplies("lifestyle")
+#: 饮食与住宿
+FOOD_LODGING: tuple[Supply, ...] = _supplies("food_lodging")
+
+#: 表名 -> 数据（查询入口）
+SUPPLY_TABLES: dict[str, tuple[Supply, ...]] = {
+    "gear": GEAR,
+    "tools": TOOLS,
+    "mounts": MOUNTS,
+    "harness": HARNESS,
+    "vehicles": VEHICLES,
+    "trade_goods": TRADE_GOODS,
+    "lifestyle": LIFESTYLES,
+    "food_lodging": FOOD_LODGING,
+}
+
+
+def get_supply(value: Supply | str, table: str = "gear") -> Supply | None:
+    """按对象 / 键 / 中文名查一件非战斗用品；查不到返回 ``None``。"""
+    rows = SUPPLY_TABLES.get(str(table), ())
+    if isinstance(value, Supply):
+        return value if value in rows else None
+    text = str(value).strip()
+    for row in rows:
+        if row.key == text or row.cn == text:
+            return row
+    return None
+
+
+def supply_names(table: str = "gear") -> tuple[str, ...]:
+    """某张表的全部中文名。"""
+    return tuple(row.cn for row in SUPPLY_TABLES.get(str(table), ()))
+
+
+def all_supply_names() -> tuple[str, ...]:
+    """所有非战斗用品的中文名（给 :func:`card.equipment_vocabulary` 用）。"""
+    names: list[str] = []
+    for rows in SUPPLY_TABLES.values():
+        names.extend(row.cn for row in rows)
+    return tuple(names)
 
 
 #: 常见别名 -> 武器键（职业装备包里的写法更口语化）

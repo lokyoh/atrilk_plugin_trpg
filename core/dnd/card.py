@@ -165,7 +165,7 @@ def equipment_vocabulary() -> frozenset[str]:
     这些散件不在装备表里，但它们是「一个东西」而不是玩家随口编的杂物。
     """
     from .background import BACKGROUNDS
-    from .equipment import ARMORS, WEAPONS
+    from .equipment import ARMORS, WEAPONS, all_supply_names
     from .items import ITEMS
     from .profession import CLASSES
 
@@ -173,6 +173,8 @@ def equipment_vocabulary() -> frozenset[str]:
     for thing in (*ARMORS, *WEAPONS, *ITEMS):
         words.add(str(thing.cn))
         words.update(str(x) for x in (getattr(thing, "aliases", ()) or ()))
+    # 冒险用品 / 工具 / 坐骑 … 也认得出（采购没做，但名字要能当一个东西切开）
+    words.update(all_supply_names())
     for job in CLASSES:
         for package in job.equipment_packages:
             words.update(str(x).strip() for x in package.items)

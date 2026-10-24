@@ -31,6 +31,7 @@ __all__ = [
     "from_cp",
     "merge_coins",
     "parse_coin_text",
+    "parse_cost",
     "roll_starting_gold",
     "spend_coins",
     "to_cp",
@@ -190,6 +191,46 @@ def _parse_gold_expr(expr: str) -> tuple[int, int, int]:
         return max(0, int(dice or 1)), max(0, int(faces)), multiplier
     except ValueError:
         return 0, 0, multiplier
+
+
+#: 价格文本里的「数量 + 币种」，如 ``2 gp`` / ``1,000 gp`` / ``4 cp`` / ``至少10 gp``
+_COST_RE = re.compile(
+    r"([\d,]+(?:\.\d+)?)\s*(铜币|银币|银金币|金币|铂金币|铂金|铜|银|银金|金|铂|cp|sp|ep|gp|pp)",
+    re.IGNORECASE,
+)
+
+#: 价格文本里认得的币种 -> 折合铜币
+_COST_UNITS: dict[str, int] = {
+    "铜币": 1,
+    "铜": 1,
+    "cp": 1,
+    "银币": 10,
+    "银": 10,
+    "sp": 10,
+    "银金币": 50,
+    "银金": 50,
+    "ep": 50,
+    "金币": 100,
+    "金": 100,
+    "gp": 100,
+    "铂金币": 1000,
+    "铂金": 1000,
+    "铂": 1000,
+    "pp": 1000,
+}
+
+
+def parse_cost(text: str) -> int:
+    """把价格文本折成铜币，如 ``2 gp`` → 200、``1,000 gp`` → 100000。
+
+    认不出（``—``、``×4`` 这类倍数 / 无价写法）返回 0。
+    """
+    match = _COST_RE.search(str(text or ""))
+    if not match:
+        return 0
+    amount = float(match.group(1).replace(",", ""))
+    unit = _COST_UNITS.get(match.group(2).lower(), 0)
+    return round(amount * unit)
 
 
 def roll_starting_gold(expr: str, rng: Any = None) -> dict[str, int]:
