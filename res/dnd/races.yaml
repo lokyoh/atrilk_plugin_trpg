@@ -1,21 +1,17 @@
-# 种族表（建卡第 2 步）
-# 一条一个种族；亚种写在 subraces 里，属性加值在种族之上叠加。
-# bonus / saves 等用的是程序内部键（str / dex / con / int / wis / cha）。
+# 种族表（建卡第 2 步：确定起源）
+# 一条一个种族；亚种写在 subraces 里。
+# 属性键（str / dex / con / int / wis / cha）用的是程序内部键。
+#
+# ⚠️ PHB 2024：**种族不提供属性值加值**（旧书的种族加值一律无视），
+# 属性提升只来自背景的三项属性（见 backgrounds.yaml 的 bonus）。
 
 - key: human
   cn: 人类
   en: Human
-  bonus:
-    str: 1
-    dex: 1
-    con: 1
-    int: 1
-    wis: 1
-    cha: 1
   speed: 30
   size: 中型
   traits:
-  - 全属性 +1，适应力极强，在任意文明地区都不易引起注意
+  - 适应力极强，在任意文明地区都不易引起注意
   languages:
   - 通用语
   - 一门自选语言
@@ -23,8 +19,6 @@
 - key: elf
   cn: 精灵
   en: Elf
-  bonus:
-    dex: 2
   speed: 30
   size: 中型
   traits:
@@ -38,8 +32,6 @@
   subraces:
   - key: high_elf
     cn: 高等精灵
-    bonus:
-      int: 1
     traits:
     - 额外习得一门自选语言
     - 戏法：任选一个法师戏法
@@ -52,8 +44,6 @@
     desc: 血脉中流淌着魔法，学识渊博。
   - key: wood_elf
     cn: 木精灵
-    bonus:
-      wis: 1
     traits:
     - 额外习得一门自选语言
     - 轻捷步伐：速度提升至 35 尺
@@ -61,8 +51,6 @@
     desc: 与森林共生，行动迅捷而隐秘。
   - key: drow
     cn: 卓尔（黑暗精灵）
-    bonus:
-      cha: 1
     traits:
     - 黑暗视觉提升至 120 尺
     - 阳光敏感：直射阳光下攻击与察觉检定有劣势
@@ -72,8 +60,6 @@
 - key: dwarf
   cn: 矮人
   en: Dwarf
-  bonus:
-    con: 2
   speed: 25
   size: 中型
   traits:
@@ -93,15 +79,11 @@
   subraces:
   - key: hill_dwarf
     cn: 丘陵矮人
-    bonus:
-      wis: 1
     traits:
     - 矮人强健：每级生命值上限 +1
     desc: 坚韧而警觉，最有耐心的一支。
   - key: mountain_dwarf
     cn: 山地矮人
-    bonus:
-      str: 2
     traits:
     - 矮人护甲训练：可穿轻甲与中甲
     armor:
@@ -112,8 +94,6 @@
 - key: halfling
   cn: 半身人
   en: Halfling
-  bonus:
-    dex: 2
   speed: 25
   size: 小型
   traits:
@@ -126,15 +106,11 @@
   subraces:
   - key: lightfoot
     cn: 轻足半身人
-    bonus:
-      cha: 1
     traits:
     - 天生善于隐藏，在仅被较大生物遮挡时也能尝试隐匿
     desc: 善于交际、行踪不定。
   - key: stout
     cn: 壮足半身人
-    bonus:
-      con: 1
     traits:
     - 对抗毒素有优势，且对毒素伤害有抗性
     desc: 比同族更结实耐劳。
@@ -142,9 +118,6 @@
 - key: dragonborn
   cn: 龙裔
   en: Dragonborn
-  bonus:
-    str: 2
-    cha: 1
   speed: 30
   size: 中型
   traits:
@@ -158,8 +131,6 @@
 - key: gnome
   cn: 侏儒
   en: Gnome
-  bonus:
-    int: 2
   speed: 25
   size: 小型
   traits:
@@ -171,16 +142,12 @@
   subraces:
   - key: forest_gnome
     cn: 森林侏儒
-    bonus:
-      dex: 1
     traits:
     - 自然幻术：任选一个幻术戏法
     - 与小型动物交谈：可传达简单概念
     desc: 与林中生灵为伴。
   - key: rock_gnome
     cn: 岩石侏儒
-    bonus:
-      con: 1
     traits:
     - 工匠知识：任选一项工匠工具熟练
     - 发条装置：可制作小型机械装置
@@ -189,8 +156,6 @@
 - key: half_elf
   cn: 半精灵
   en: Half-Elf
-  bonus:
-    cha: 2
   speed: 30
   size: 中型
   traits:
@@ -205,9 +170,6 @@
 - key: half_orc
   cn: 半兽人
   en: Half-Orc
-  bonus:
-    str: 2
-    con: 1
   speed: 30
   size: 中型
   traits:
@@ -222,9 +184,6 @@
 - key: tiefling
   cn: 提夫林
   en: Tiefling
-  bonus:
-    cha: 2
-    int: 1
   speed: 30
   size: 中型
   traits:

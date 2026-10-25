@@ -485,6 +485,8 @@ def weapon_proficient(weapon: Weapon | str, entries) -> bool:
     熟练项条目（``entries``）可以是：
 
     - **类别名**：``简易武器`` / ``军用武器``（覆盖该大类下的每一件）；
+    - **带属性的军用子集**：``轻型军用武器`` / ``灵巧军用武器``
+      （PHB 2024 武僧「具有轻型属性的军用武器」、游荡者「具有灵巧或轻型属性的军用武器」）；
     - **具体武器**：武器内部键或中文名（``长剑`` / ``longsword``）；
     - **空列表** = 什么都不熟练。
 
@@ -496,6 +498,10 @@ def weapon_proficient(weapon: Weapon | str, entries) -> bool:
         # 调用方会给 DM 提示，由 DM 裁决
         return False
     category = weapon_obj.category
+    is_martial = category in (
+        WeaponCategory.MARTIAL_MELEE,
+        WeaponCategory.MARTIAL_RANGED,
+    )
     for entry in entries or ():
         text = str(entry).strip()
         if not text:
@@ -505,10 +511,11 @@ def weapon_proficient(weapon: Weapon | str, entries) -> bool:
             WeaponCategory.SIMPLE_RANGED,
         ):
             return True
-        if text == "军用武器" and category in (
-            WeaponCategory.MARTIAL_MELEE,
-            WeaponCategory.MARTIAL_RANGED,
-        ):
+        if text == "军用武器" and is_martial:
+            return True
+        if text == "轻型军用武器" and is_martial and weapon_obj.is_light:
+            return True
+        if text == "灵巧军用武器" and is_martial and weapon_obj.is_finesse:
             return True
         if text in (weapon_obj.key, weapon_obj.cn):
             return True

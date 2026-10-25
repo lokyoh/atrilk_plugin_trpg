@@ -1,0 +1,92 @@
+# 1 级职业特性的「选择项」（PHB 2024）
+#
+# 2024 有 6 处 1 级特性要玩家挑：
+#   牧师·圣职（divine_orders）、德鲁伊·原初职能（primal_orders）、战士·战斗风格（fighting_styles）、
+#   魔契师·魔能祈唤（eldritch_invocations）、游荡者·专精（走技能表，不在这里）、
+#   以及 5 个职业的武器精通（走武器表，不在这里）。
+#
+# 每条：key / cn（手册中文名）/ desc（一句话效果）/ 可选的结算字段
+#   armor / weapons：额外受训（守护者、部分原初职能）
+#   ac_bonus：护甲等级加值（防御）
+#   ranged_attack_bonus：远程攻击加值（箭术）
+# 没有结算字段的选项由 DM 按 desc 裁定（引擎只负责把它记在卡上）。
+
+divine_orders:
+- key: protector
+  cn: 守护者
+  desc: 获得军用武器与重甲受训
+  armor:
+  - 重甲
+  weapons:
+  - 军用武器
+- key: thaumaturge
+  cn: 施法者
+  desc: 多习得一道牧师戏法；智力（奥秘/宗教）检定加感知调整值
+  extra_cantrip: 1
+
+primal_orders:
+- key: magician
+  cn: 术士
+  desc: 多习得一道德鲁伊戏法；智力（奥秘/自然）检定加感知调整值
+  extra_cantrip: 1
+- key: warden
+  cn: 守护者
+  desc: 获得军用武器与中甲受训
+  armor:
+  - 中甲
+  weapons:
+  - 军用武器
+
+# 战士 1 级·战斗风格（2024 的 10 项通用战斗风格专长；
+# 「受祝福的勇士」「德鲁伊教战士」是圣武士 / 游侠 2 级的专属选项，不在此列）
+fighting_styles:
+- key: defense
+  cn: 防御
+  desc: 着装轻甲 / 中甲 / 重甲期间，护甲等级 +1
+  ac_bonus: 1
+- key: archery
+  cn: 箭术
+  desc: 使用远程武器进行的攻击检定 +2
+  ranged_attack_bonus: 2
+- key: dueling
+  cn: 对决
+  desc: 单手持用一把近战武器且另一手无武器时，该武器伤害 +2
+- key: great_weapon_fighting
+  cn: 巨武器战斗
+  desc: 双手或两用武器（双手持用）的伤害骰掷出 1 或 2 时按 3 算
+- key: two_weapon_fighting
+  cn: 双武器战斗
+  desc: 轻型武器带来的额外攻击可以加上属性调整值
+- key: thrown_weapon_fighting
+  cn: 投掷武器战斗
+  desc: 投掷武器命中时伤害 +2
+- key: unarmed_fighting
+  cn: 徒手战斗
+  desc: 徒手打击改为 1d6 + 力量（两手都空时 d8）
+- key: blind_fighting
+  cn: 盲斗
+  desc: 获得 10 尺盲视
+- key: interception
+  cn: 拦截
+  desc: 持盾或武器时，反应使 5 尺内他人受到的伤害减 1d10 + 熟练加值
+- key: protection
+  cn: 守护
+  desc: 持盾时用反应让对 5 尺内他人的攻击有劣势，直到你的下回合开始
+
+# 魔契师 1 级·魔能祈唤（只收无先决的 5 条；有等级 / 法术先决的祈唤要满足条件才能选）
+eldritch_invocations:
+- key: armor_of_shadows
+  cn: 幽影护甲
+  desc: 可以不消耗法术位对自己施放「法师护甲」
+- key: eldritch_mind
+  cn: 魔能意志
+  desc: 为维持专注所做的体质豁免具有优势
+- key: pact_of_the_blade
+  cn: 刃之魔契
+  desc: 附赠动作召出契约武器；用它攻击可用魅力代替力量 / 敏捷，并可作法器
+- key: pact_of_the_chain
+  cn: 链之魔契
+  desc: 无需法术位施展「寻获魔宠」，魔宠可选小魔鬼 / 伪龙等特殊形态
+- key: pact_of_the_tome
+  cn: 书之魔契
+  desc: 长休后召出书册：三道自选戏法 + 两道带仪式标签的一环法术

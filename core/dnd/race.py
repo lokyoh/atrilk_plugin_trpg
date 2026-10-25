@@ -1,7 +1,11 @@
 """DND 5e 种族数据。
 
-对应流程中的 ``race.md``（建卡第 2 步）。每个种族给出属性加值、体型 / 速度、
-特性描述与可选的语言、亚种；亚种的属性加值在种族加值之上再叠加。
+对应流程中的 ``race.md``（建卡第 2 步）。每个种族给出体型 / 速度、特性描述与可选的
+语言、亚种。
+
+⚠️ **PHB 2024：种族不再提供属性值加值** —— 属性提升只来自背景的三项属性
+（见 :mod:`.background` 与 :mod:`.creation` 的「背景属性提升」步骤）。
+``bonus`` 字段仅为兼容旧数据文件保留，正式数据里是空的。
 
 **数值在 ``res/dnd/races.yaml``**，这里只留类型与查询函数。
 """
@@ -52,6 +56,8 @@ class Race:
     key: str
     cn: str
     en: str
+    #: ⚠️ PHB 2024 起种族**不提供**属性加值（旧数据兼容用，正式数据为空）。
+    #: 属性提升由背景给（见 :class:`~.background.Background` 的 ``bonus``）。
     bonus: dict[str, int]
     speed: int
     size: str
@@ -65,7 +71,11 @@ class Race:
     armor: tuple[str, ...] = ()
 
     def bonus_of(self, subrace: SubRace | str | None = None) -> dict[str, int]:
-        """叠加亚种后的属性加值。"""
+        """叠加亚种后的属性加值。
+
+        ⚠️ PHB 2024 起正式数据里这个结果恒为空（属性提升来自背景）；
+        只为「旧数据文件 / 老存档迁移」保留。
+        """
         bonus = dict(self.bonus)
         sub = self.resolve_subrace(subrace) if subrace else None
         if sub:
@@ -100,15 +110,6 @@ class Race:
         if sub:
             traits.extend(sub.traits)
         return tuple(traits)
-
-    def format_bonus(self, subrace: SubRace | str | None = None) -> str:
-        """属性加值的展示文本。"""
-        from .attributes import get_ability
-
-        bonus = self.bonus_of(subrace)
-        if not bonus:
-            return "无属性加值"
-        return "、".join(f"{get_ability(k).cn}{v:+d}" for k, v in bonus.items() if v)
 
 
 def _subrace(row: dict[str, Any]) -> SubRace:

@@ -363,7 +363,7 @@ def player_panel_html(
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><style>{css_vars(get_theme())}{_PAGE_CSS}</style></head><body><div class="card">
 <div class="header"><div class="name">{_esc(card.name or "无名者")}</div>
-<div class="meta">{_esc(race_text)} · {_esc(prof_text)} · Lv.{card.level}　HP {card.hp}/{card.max_hp}　AC {card.armor_class}</div></div>
+<div class="meta">{_esc(race_text)} · {_esc(prof_text)} · Lv.{card.level}　HP {card.hp}/{card.max_hp}　AC {card.armor_class_with_effects}</div></div>
 <div class="section"><div class="title">装备</div>{equip_body}</div>
 {spell_section}
 {action_section}

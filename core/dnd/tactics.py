@@ -6,8 +6,11 @@
 - **数值类**（上下坐骑耗速、强制移动豁免）：给出可直接用的数字 / 布尔；
 - **判定类**（突袭的先攻姿态、光照遮蔽）：给出可判定的布尔或文字。
 
-**刻意不新增 DM 工具**——工具提示词预算已经顶满（见 ``tests/test_trpg_prompt_size``），
-这些规则由 DM 用 ``query_data(table=rule)`` 查，对抗结果写进叙述，条件用现有手段落地。
+**工具侧**：纯判定（擒抱 / 推撞对抗、上下坐骑耗速、强制移动豁免）没有独立工具，
+DM 用 ``query_data(table=rule)`` 查规则、用 ``check`` 掷骰；而**回避 / 躲藏 /
+预备 / 借机攻击 / 上下坐骑**这五条要掷骰、挂状态、记行动资源，交给
+``tactic`` 工具一次性结算（分派在 :func:`~.combat.do_tactic`）——它们不是「查一下
+文字就能照做」的规则，让 DM 手算等于把已经自动化的东西退回去。
 
 规则口径（2024 PHB；擒抱 / 推撞 / 视野光照两版相同，突袭按 2024）：
 
@@ -20,6 +23,13 @@
   DC10 敏捷豁免，失败在坐骑 5 尺内失足倒地。
 - **视野光照**：明亮 / 微光 / 黑暗；微光 = 轻度遮蔽（视觉察觉劣势），
   黑暗 = 重度遮蔽（等同目盲）；黑暗视觉把黑暗当微光、微光当明亮。
+- **躲藏**：敏捷（隐匿）**DC 15**（2024 给了固定 DC，不再对抗被动察觉）；
+  前提是处于重度遮蔽或四分之三 / 全掩护之后，且不在任何敌人的视线内。
+  成功即获得**隐形**状态，出手（无论中不中）后位置暴露。
+- **回避**：到下个回合开始前，打你有劣势、你的敏捷豁免有优势；
+  失能或速度归零时失效。
+- **预备**：花一个动作定好触发条件，触发时用**反应**执行那个动作；预备法术要专注。
+- **借机攻击**：看得见的生物离开你的触及范围时，用**反应**对它做一次近战攻击。
 """
 
 from __future__ import annotations
@@ -29,13 +39,20 @@ from typing import Any
 from ..trpg.dice import Advantage, roll
 
 __all__ = [
+    "HIDE_DC",
     "LIGHT_LEVELS",
     "MOUNT_SAVE_DC",
+    "TACTIC_ALIASES",
     "contest",
+    "dodge_expires",
     "grapple_contest",
+    "hide_check",
+    "hide_requirement_note",
     "light_obscurement",
     "mount_cost",
     "mount_stays_mounted",
+    "normalize_tactic",
+    "ready_note",
     "rule_lookup",
     "shove_contest",
     "surprise_initiative",
@@ -44,6 +61,9 @@ __all__ = [
 
 #: 骑乘被强制移动 / 坐骑倒地时的敏捷豁免 DC
 MOUNT_SAVE_DC = 10
+
+#: 躲藏（Hide 动作）的敏捷（隐匿）检定 DC（PHB 2024 给的是固定 15）
+HIDE_DC = 15
 
 #: 光照三级的可读名
 LIGHT_LEVELS: dict[str, str] = {
@@ -139,6 +159,69 @@ def surprise_initiative(surprised: bool) -> Advantage:
     return Advantage.DISADVANTAGE if surprised else Advantage.NORMAL
 
 
+#: 战术动作的写法 -> 规范名。规范名就是 :func:`~.combat.do_tactic` 认得的那几个。
+TACTIC_ALIASES: dict[str, str] = {
+    "回避": "回避",
+    "闪避": "回避",
+    "躲避": "回避",
+    "dodge": "回避",
+    "躲藏": "躲藏",
+    "隐藏": "躲藏",
+    "潜行": "躲藏",
+    "hide": "躲藏",
+    "预备": "预备",
+    "准备": "预备",
+    "ready": "预备",
+    "借机攻击": "借机攻击",
+    "借机": "借机攻击",
+    "机会攻击": "借机攻击",
+    "opportunity": "借机攻击",
+    "上马": "上马",
+    "骑乘": "上马",
+    "mount": "上马",
+    "下马": "下马",
+    "unmount": "下马",
+}
+
+
+def normalize_tactic(action: str) -> str:
+    """把 DM 的写法归一到规范战术动作名；认不出返回空串（交给上层报错）。"""
+    return TACTIC_ALIASES.get(str(action or "").strip().lower(), "")
+
+
+def hide_check(total: int, dc: int = HIDE_DC) -> bool:
+    """躲藏是否成功：敏捷（隐匿）``total >= DC``（2024 固定 DC 15）。
+
+    2024 把 2014 的「对抗每个敌人的被动察觉」换成一个固定 DC，
+    但**前提没变**：得有地方藏，而且不在人家视线里——那是 DM 判的，
+    见 :func:`hide_requirement_note`。
+    """
+    return int(total or 0) >= int(dc)
+
+
+def hide_requirement_note() -> str:
+    """躲藏的环境前提（给 DM 的提示原文，成功 / 失败都要带一句）。"""
+    return (
+        "前提：处于重度遮蔽（黑暗 / 浓雾 / 密林）或四分之三、全掩护之后，"
+        "且不在任何敌人的视线内——不满足就没得藏（这一步由你判定）"
+    )
+
+
+def ready_note(trigger: str) -> str:
+    """预备动作的说明：触发时用反应执行，未触发则在自己下回合开始时作废。"""
+    text = str(trigger or "").strip()
+    when = f"「{text}」" if text else "（没写触发条件）"
+    return (
+        f"预备：花一个动作盯住{when}，条件达成时用**反应**执行那个动作"
+        "（没触发就到自己下个回合开始时作废；预备的是法术则要专注）"
+    )
+
+
+def dodge_expires(speed: int, incapacitated: bool) -> bool:
+    """回避是否已经失效：速度归零或陷入失能（PHB 2024 明写这两种情况失去增益）。"""
+    return bool(incapacitated) or int(speed or 0) <= 0
+
+
 def mount_cost(speed: int) -> int:
     """上下坐骑花费的移动力 = 一半速度（向下取整）。速度不足一半则上不了 / 下不来。"""
     return max(0, int(speed or 0)) // 2
@@ -206,6 +289,33 @@ def rule_lookup(name: str) -> str:
             "坐骑倒地时你可用反应安全下马，否则骑乘强行结束并在坐骑 5 尺内倒地。"
             "受训坐骑受你控制（先攻与你同值，只能疾走/撤离/回避）；智能坐骑自主行动。"
             "坐骑触发借机攻击时，攻击者可选择以你或坐骑为目标。"
+        )
+    if key in ("躲藏", "隐藏", "潜行", "躲藏动作"):
+        return (
+            "躲藏（PHB 2024）：用动作做一次**敏捷（隐匿）检定，DC 15**。"
+            "前提是你处于重度遮蔽（黑暗 / 浓雾 / 密林）或四分之三、全掩护之后，"
+            "且不在任何敌人的视线内——不满足就不能尝试。成功即获得**隐形**状态"
+            "（对它攻击有劣势、它对看不见它的生物攻击有优势）；"
+            "**出手后位置一律暴露**，不论中没中。"
+        )
+    if key in ("回避", "闪避", "躲避", "回避动作"):
+        return (
+            "回避（PHB 2024，旧称闪避）：用动作，直到你**下个回合开始**为止，"
+            "对你进行的攻击检定有劣势、你进行的**敏捷豁免**有优势。"
+            "你一旦失能或速度归零，立刻失去这两个增益。系统会挂「回避」状态并按轮摘掉。"
+        )
+    if key in ("预备", "准备", "准备动作", "预备动作"):
+        return (
+            "预备（PHB 2024，旧称准备）：用动作定好「什么情况下做什么动作」，"
+            "条件达成时你用**反应**执行它。触发没发生的话，到你下个回合开始时作废。"
+            "预备的是法术则要花法术位并**保持专注**。"
+        )
+    if key in ("借机攻击", "机会攻击", "借机"):
+        return (
+            "借机攻击（PHB 2024）：一个你能看见的生物**离开你的触及范围**时，"
+            "你可以用**反应**对它做一次近战攻击（只能用近战，法术不行）。"
+            "用「撤离」动作或传送离开不触发。骑乘时由坐骑触发的话，"
+            "攻击者可以选择以你或坐骑为目标。"
         )
     if key in (
         "视野",

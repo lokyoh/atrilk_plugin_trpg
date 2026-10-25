@@ -246,7 +246,7 @@ def _card_brief(card) -> str:
     line = (
         f"【{card.name}】{race.cn if race else '未知种族'} "
         f"{profession.cn if profession else '无业'} Lv.{card.level}"
-        f"　HP {card.hp}/{card.max_hp}　AC {card.armor_class}"
+        f"　HP {card.hp}/{card.max_hp}　AC {card.armor_class_with_effects}"
     )
     if weapons:
         line += f"　武器 {weapons}"
@@ -258,6 +258,9 @@ def _card_brief(card) -> str:
         status.append(f"力竭 {card.exhaustion} 级")
     if status:
         line += "　状态 " + "、".join(status)
+    if card.inspiration:
+        # DM 得看得见谁握着激励：授予与「用掉了没」都靠这一行对账
+        line += "　✨英雄激励"
     return line
 
 
@@ -1041,6 +1044,10 @@ async def submit_action(
     downed_note = _downed_note(card) if (card.is_dead or card.is_downed) else ""
 
     judged = await dnd_judge.judge_action(text, card)
+    if judged.inspiration_spent:
+        # 英雄激励已经用掉了：立刻落盘。判断器只改内存里的角色卡，
+        # 不存回去的话存档上还写着「有激励」，下次又能白重掷一次。
+        set_character(save, card)
     if not judged.judge.accepted:
         return TurnResult(judged.judge.verdict, message=judged.judge.message())
 

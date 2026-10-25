@@ -161,7 +161,7 @@ AGENTS = {
 
 #: 只在内部使用的 agent（不进 :data:`AGENTS`，也不由 DM 直接调用）。
 #: 称号生成走 :func:`~.epoch_flow.settle_epoch`，不在 DM 的工具清单里——
-#: DM 工具清单有 4300 字符硬上限，而称号是每几章才发生一次的编排动作。
+#: DM 工具清单有 5000 字符硬上限，而称号是每几章才发生一次的编排动作。
 _INTERNAL_AGENTS = {
     epithet_agent.name: epithet_agent,
 }

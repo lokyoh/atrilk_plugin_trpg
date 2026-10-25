@@ -15,6 +15,7 @@ __all__ = [
     "DC_LEVELS",
     "CheckResult",
     "dc_level",
+    "reroll_check",
     "roll_check",
 ]
 
@@ -60,6 +61,9 @@ class CheckResult:
     #: 与 :attr:`forced_failure` 同时成立时**成功优先**——传奇抗性的意义就是
     #: 不让首领被一次豁免摁死。
     forced_success: bool = False
+    #: 这次检定被「重掷」替换掉的原始点数（英雄激励这类效应）；``None`` = 没重掷过。
+    #: 重掷**必须采用新结果**，所以旧点数只留作展示，不参与成败判定。
+    rerolled_from: int | None = None
 
     @property
     def nat20(self) -> bool:
@@ -105,6 +109,8 @@ class CheckResult:
         if self.bonus:
             text += f"{self.bonus:+d}"
         text += f" = {self.total}"
+        if self.rerolled_from is not None:
+            text += f"（重掷 {self.rerolled_from}→{self.natural}，用新结果）"
         if self.forced_success:
             return f"{text}（传奇抗性：改为豁免成功）"
         if self.forced_failure:
@@ -164,4 +170,40 @@ def roll_check(
         advantage=advantage,
         rolls=rolls,
         auto_critical=auto_critical,
+    )
+
+
+def reroll_check(result: CheckResult, *, rng: Random | None = None) -> CheckResult:
+    """把一次检定里的**一颗 d20** 重掷掉，返回新结果。
+
+    PHB 2024「英雄激励」：掷完骰子后可以消耗它重掷一次，**必须采用新结果**；
+    有优势 / 劣势时只能重掷其中一颗（由玩家选哪颗）。这里默认重掷**算数那一颗**
+    ——优势时就是高的那颗、劣势时就是低的那颗，也就是玩家最想换掉的那颗。
+
+    新结果可能比原来更差：那是规则的一部分，不该偷偷保留旧值。
+    """
+    rolls = list(result.rolls) or [result.natural]
+    # 重掷「算数那颗」：它的点数就是参与比较的那个（平手时取第一颗）
+    index = rolls.index(result.natural) if result.natural in rolls else 0
+    generator = rng or Random()
+    old = rolls[index]
+    rolls[index] = generator.randint(1, 20)
+    if result.advantage.is_advantage:
+        natural = max(rolls)
+    elif result.advantage.is_disadvantage:
+        natural = min(rolls)
+    else:
+        natural = rolls[index]
+    return CheckResult(
+        kind=result.kind,
+        dc=result.dc,
+        natural=natural,
+        total=natural + result.bonus,
+        bonus=result.bonus,
+        advantage=result.advantage,
+        rolls=rolls,
+        auto_critical=result.auto_critical,
+        forced_failure=result.forced_failure,
+        forced_success=result.forced_success,
+        rerolled_from=old,
     )

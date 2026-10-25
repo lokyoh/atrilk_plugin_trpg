@@ -79,6 +79,8 @@ from .core.dnd import (
     save_session,
     set_binding,
     story_files,
+    strip_reroll,
+    wants_reroll,
 )
 from .core.dnd.clock import clock_text
 from .core.dnd.event_progress import event_summary
@@ -89,7 +91,7 @@ from .core.dnd.image_render import (
     narration_to_html,
     player_panel_html,
 )
-from .core.trpg import DiceError, roll
+from .core.trpg import DiceError, reroll_check, roll
 from .matchers import (
     create_card,
     edit_card,
@@ -583,10 +585,14 @@ async def _make_check(event: MessageEvent, args: Message = CommandArg()):
             "可写技能（察觉 / 运动）、属性（力量）或豁免（力量豁免 DC20）。"
         )
 
-    parsed = parse_skill_request(raw)
+    # 写了「重骰 / 重投」就消耗英雄激励重掷一次——与行动判定同一套口径：
+    # 只有玩家自己写明才消耗，且**必须采用新结果**。
+    wants = wants_reroll(raw)
+    parsed = parse_skill_request(strip_reroll(raw) if wants else raw)
     if parsed is None:
         await make_check.finish(
-            "没看懂这个检定。示例：「察觉」「力量检定」「力量豁免 DC15」「隐匿 劣势」。"
+            "没看懂这个检定。示例：「察觉」「力量检定」「力量豁免 DC15」「隐匿 劣势」；"
+            "手上有英雄激励时可加「重骰」。"
         )
 
     key, dc, advantage = parsed
@@ -600,7 +606,14 @@ async def _make_check(event: MessageEvent, args: Message = CommandArg()):
     except KeyError as e:  # 理论上不会发生
         await make_check.finish(f"⚠️ {e}")
 
-    await make_check.finish(result.describe())
+    note = ""
+    if wants:
+        if card.spend_inspiration():
+            result = reroll_check(result)
+            save_card(card)
+        else:
+            note = "\n（想重骰，但身上没有英雄激励：这次结果照旧）"
+    await make_check.finish(result.describe() + note)
 
 
 # --------------------------------------------------------------------------- #
@@ -655,7 +668,9 @@ _REDO_STEPS: tuple[tuple[CreationStep, tuple[str, ...]], ...] = (
     (CreationStep.RACE, ("种族", "race")),
     (CreationStep.PROFESSION, ("职业", "profession", "class")),
     (CreationStep.BACKGROUND, ("背景", "background")),
+    (CreationStep.BOOST, ("属性提升", "背景属性提升", "boost")),
     (CreationStep.SKILL, ("技能", "skill")),
+    (CreationStep.FEATURES, ("特性", "职业特性", "feature")),
     (CreationStep.EQUIPMENT, ("装备", "装备包", "equipment")),
     (CreationStep.SPELLS, ("法术", "法术表", "spell", "spells")),
 )
@@ -692,11 +707,15 @@ def _session_from_card(card: DndCharacter) -> CreationSession:
     session.system = "DND 5e"
     session.name = card.name
     session.base_scores = dict(card.base_scores)
+    session.boost = dict(card.ability_boost)
     session.ability_pool = sorted(card.base_scores.values(), reverse=True)
     session.race = card.race
     session.subrace = card.subrace
     session.profession = card.profession
     session.background = card.background
+    session.feature_choices = dict(card.feature_choices)
+    session.expertise = list(card.expertise)
+    session.weapon_masteries = list(card.weapon_masteries)
 
     background = card.background_obj
     bg_skills = set(background.skills) if background else set()
@@ -745,6 +764,13 @@ def _reset_dependents(session: CreationSession, step: CreationStep) -> list[str]
     elif session.spells:
         session.spells = []
         notes.append(f"{profession.cn} 没有施法能力，法术已清空")
+
+    # 1 级特性的选择按职业区分（圣职 / 原初职能 / 战斗风格 / 祈唤 / 专精 / 武器精通）
+    if session.feature_choices or session.expertise or session.weapon_masteries:
+        session.feature_choices = {}
+        session.expertise = []
+        session.weapon_masteries = []
+        notes.append("1 级特性选择已清空，可用 /跑团.改卡 特性 重新选")
     return notes
 
 
@@ -764,6 +790,11 @@ def _apply_edit_step(
     if session.step is step:
         # 这一步还没走完（例如回复「roll」只是掷出候选属性组，还要玩家挑一组）。
         # 此时 session 里的属性仍是旧值，直接 build 会把刚掷出来的结果丢掉。
+        return None, creation_prompt(session.step, session).strip()
+
+    if session.step is CreationStep.BOOST:
+        # 换背景后必须重选「属性提升」：此时 session.boost 已被清空，
+        # 直接 build 会把规则给的三点丢掉，所以把这一步先交给玩家。
         return None, creation_prompt(session.step, session).strip()
 
     notes = _reset_dependents(session, step)

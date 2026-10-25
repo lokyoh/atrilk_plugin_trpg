@@ -69,6 +69,9 @@ class DndClass:
     armor_proficiencies: tuple[str, ...] = ()
     #: 武器熟练项：``简易武器`` / ``军用武器``（整个类别）或具体武器键 / 中文名
     weapon_proficiencies: tuple[str, ...] = ()
+    #: **武器精通**可选几件武器（PHB 2024：野蛮人 2 / 战士 3 / 圣武士 2 / 游侠 2 / 游荡者 2；
+    #: 0 = 这个职业 1 级没有武器精通）
+    mastery_count: int = 0
 
     @property
     def level1_hp(self) -> int:
@@ -151,6 +154,7 @@ def _klass(row: dict[str, Any]) -> DndClass:
         spells_known=int(row.get("spells_known", 0)),
         armor_proficiencies=as_texts(row.get("armor_proficiencies")),
         weapon_proficiencies=as_texts(row.get("weapon_proficiencies")),
+        mastery_count=int(row.get("mastery_count", 0) or 0),
     )
 
 

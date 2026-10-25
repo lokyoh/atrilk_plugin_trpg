@@ -1,13 +1,15 @@
 """建卡流程。
 
-对应 ``.agents/new_plusin_lktrpg.md`` 的「建卡」一节：
-
 .. code-block:: text
 
-    选择模式 → roll 属性 → 种族 → 职业 → 技能 → 装备包 → 选法术 → 开启故事
+    选择模式 → roll 属性 → 背景 → 背景属性提升 → 种族 → 职业 → 技能 → 装备包 → 选法术
 
-「选法术」只对施法职业出现（野蛮人 / 战士 / 武僧 / 游荡者会自动跳过；
-圣武士 / 游侠 1 级没有法术位，也会跳过）。
+**背景属性提升**（PHB 2024）：属性加值只来自背景 —— 背景给出三项属性，玩家在其中
+选「一项 +2、另一项 +1」或「三项各 +1」（合计 +3，单项不超过 20）。种族**不**提供
+属性加值，所以这一步必须紧跟在选背景之后（属性表要知道是哪三项）。
+
+「选法术」只对施法职业出现（野蛮人 / 战士 / 武僧 / 游荡者会自动跳过）。
+PHB 2024 起**圣武士 / 游侠 1 级就有施法**：只有 2 个一环法术、没有戏法。
 
 流程以 :class:`CreationSession` 承载状态，每一步都由 :func:`creation_prompt`
 给出指引、由 :meth:`CreationSession.handle` 解析玩家回复。会话对象可序列化成
@@ -33,8 +35,21 @@ from .attributes import (
 from .background import Background, background_choices, get_background
 from .card import DndCharacter
 from .coins import merge_coins, parse_coin_text
-from .equipment import expand_packs, parse_item_stack, weapon_options_for
+from .equipment import (
+    WEAPONS,
+    expand_packs,
+    parse_item_stack,
+    weapon_options_for,
+    weapon_proficient,
+)
 from .names import lk_name
+from .options import (
+    DIVINE_ORDERS,
+    ELDRITCH_INVOCATIONS,
+    FIGHTING_STYLES,
+    PRIMAL_ORDERS,
+    FeatureOption,
+)
 from .profession import DndClass, class_choices, get_class
 from .race import Race, get_race, race_choice_lines, race_choices
 from .skills import get_skill
@@ -64,23 +79,29 @@ class CreationStep(Enum):
 
     MODE = "选择模式"
     ABILITY = "roll属性"
+    BACKGROUND = "选择背景"
+    BOOST = "背景属性提升"
     RACE = "选择种族"
     PROFESSION = "选择职业"
-    BACKGROUND = "选择背景"
     SKILL = "选择技能"
+    FEATURES = "选择职业特性"
     EQUIPMENT = "选择装备包"
     SPELLS = "选择法术"
     DONE = "完成"
 
 
-#: 建卡步骤顺序（与需求文档一致：属性 → 种族 → 职业 → 技能 → 装备包 → 法术）
+#: 建卡步骤顺序：属性 → 背景 → 属性提升 → 种族 → 职业 → 技能 → 特性 → 装备包 → 法术。
+#: 背景紧跟在属性后面，是因为 2024 的属性提升要落在背景给的三项上（D4/A1）；
+#: 「特性」放在技能之后，是因为游荡者的专精要从**已熟练的技能**里挑。
 CREATION_STEPS: tuple[CreationStep, ...] = (
     CreationStep.MODE,
     CreationStep.ABILITY,
+    CreationStep.BACKGROUND,
+    CreationStep.BOOST,
     CreationStep.RACE,
     CreationStep.PROFESSION,
-    CreationStep.BACKGROUND,
     CreationStep.SKILL,
+    CreationStep.FEATURES,
     CreationStep.EQUIPMENT,
     CreationStep.SPELLS,
     CreationStep.DONE,
@@ -121,11 +142,44 @@ _ROLL_WORDS = {
 }
 _ARRAY_WORDS = {"标准数组", "标准", "数组", "默认"}
 
+#: 1 级特性里「从固定菜单挑一个」的四种（问题键 -> 标题 + 选项）
+_FEATURE_MENUS: dict[str, tuple[str, tuple[FeatureOption, ...]]] = {
+    "divine_order": ("圣职", DIVINE_ORDERS),
+    "primal_order": ("原初职能", PRIMAL_ORDERS),
+    "fighting_style": ("战斗风格", FIGHTING_STYLES),
+    "invocation": ("魔能祈唤", ELDRITCH_INVOCATIONS),
+}
+
 
 def _is_generic_weapon(item: str) -> bool:
     """起始包里的「任意军用武器 / 任意简易武器」这类**待定武器**。"""
     text = str(item or "")
     return "任意" in text and "武器" in text
+
+
+def _match_ability(token: str, options: tuple[str, ...] | list[str]) -> str | None:
+    """把玩家写的属性词匹配到 ``options`` 里的某一项（认中文名 / 键 / 英文 / 缩写）。"""
+    text = token.strip().lower()
+    for key in options:
+        ability = get_ability(key)
+        if text in (ability.key, ability.cn, ability.en.lower(), ability.abbr.lower()):
+            return key
+    for key in options:
+        ability = get_ability(key)
+        if ability.cn in text or ability.key in text:
+            return key
+    return None
+
+
+def _pick_option(
+    text: str, options: tuple[FeatureOption, ...], what: str
+) -> FeatureOption:
+    """从一组特性选项里按序号 / 名称挑一个。"""
+    picked = _pick_one(text, [option.cn for option in options], what)
+    for option in options:
+        if option.cn == picked:
+            return option
+    raise CreationError(f"没有「{picked}」这个{what}。")
 
 
 #: roll 属性一次掷出的候选组数（玩家从中挑一组直接使用）
@@ -266,10 +320,11 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
         ]
         if session and session.base_scores:
             lines.append("")
-            lines.append("当前属性：" + session.assigned_scores_text())
+            lines.append("当前属性：" + session.final_scores_text())
         lines.append(
             "回复序号或种族名；亚种已列在种族后面，可写「精灵 高等精灵」直接指定。"
         )
+        lines.append("（PHB 2024：种族不提供属性加值，属性提升已在上一步由背景给出。）")
         return "\n".join(lines)
 
     if step is CreationStep.PROFESSION:
@@ -284,11 +339,36 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
     if step is CreationStep.BACKGROUND:
         return "\n".join(
             [
-                "选择背景（可回复「跳过」）：",
+                "确定你的起源：选择背景（可回复「跳过」）：",
                 bullet(
                     f"{i}. {name}" for i, name in enumerate(background_choices(), 1)
                 ),
-                "背景会额外提供技能熟练与起始物品，与职业技能不重复。",
+                "背景会给你：三项属性提升（下一步选 +2/+1 或三项各 +1）、"
+                "两项技能熟练、工具熟练、起始物品（与职业技能不重复）。",
+            ]
+        )
+
+    if step is CreationStep.BOOST:
+        background = session.background_obj if session else None
+        options = session.boost_options() if session else ()
+        if not background or not options:
+            return "背景属性提升：当前背景没有可提升的属性。"
+        current = (
+            session.assigned_scores_text() if session and session.base_scores else "未分配"
+        )
+        return "\n".join(
+            [
+                f"背景属性提升（{background.cn}）：",
+                f"PHB 2024：属性加值只来自背景 —— 你这项背景给了这三项："
+                f"{background.bonus_text}",
+                f"当前（未提升）：{current}",
+                "",
+                "选一种：",
+                "1. 一项 +2、另一项 +1 —— 回复「1 智力 感知」"
+                "（前一项 +2、后一项 +1）",
+                "2. 三项各 +1 —— 回复「2」",
+                f"（合计 +3，单项不超过 {ABILITY_SCORE_MAX}；"
+                "回复「跳过」不加，但会弱于规则角色）",
             ]
         )
 
@@ -309,6 +389,17 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
                 lines.append(
                     f"背景「{session.background_obj.cn}」已提供：" + "、".join(provided)
                 )
+        return "\n".join(lines)
+
+    if step is CreationStep.FEATURES:
+        if not session:
+            return "选择职业特性：需要先确定职业。"
+        pending = session.pending_features()
+        if not pending:
+            return "1 级特性都选好了。"
+        lines = [session.feature_prompt(pending[0])]
+        if len(pending) > 1:
+            lines.append(f"（这一步还有 {len(pending) - 1} 个选择在后面）")
         return "\n".join(lines)
 
     if step is CreationStep.EQUIPMENT:
@@ -336,8 +427,12 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
             else (profession.cantrips, profession.spells_known)
         )
         options = session.spell_options() if session else []
+        if cantrips:
+            head = f"戏法 {cantrips} 个 + 一环法术 {known} 个"
+        else:
+            head = f"一环法术 {known} 个（本职业没有戏法）"
         lines = [
-            f"选择法术（{profession.cn}：戏法 {cantrips} 个 + 一环法术 {known} 个，"
+            f"选择法术（{profession.cn}：{head}，"
             f"施法属性 {profession.casting_text}）："
         ]
         numbers = {id(spell): index for index, spell in enumerate(options, 1)}
@@ -382,8 +477,10 @@ class CreationSession:
     ability_candidates: list[list[int]] = field(default_factory=list)
     #: 候选属性组对应的 4d6 原始点数，与 ``ability_candidates`` 一一对应
     ability_set_groups: list[list[list[int]]] = field(default_factory=list)
-    #: 已分配属性：属性键 -> 值
+    #: 已分配属性：属性键 -> 值（**未含**背景提升）
     base_scores: dict[str, int] = field(default_factory=dict)
+    #: 背景属性提升：属性键 -> 加点（PHB 2024 的 +2/+1 或 +1/+1/+1）
+    boost: dict[str, int] = field(default_factory=dict)
     race: str = ""
     subrace: str = ""
     profession: str = ""
@@ -395,6 +492,13 @@ class CreationSession:
     pending_weapon: str = ""
     #: 选好的法术（法术 key，含戏法）
     spells: list[str] = field(default_factory=list)
+    #: 1 级特性的**选择**：``divine_order`` / ``primal_order`` / ``fighting_style`` /
+    #: ``invocation`` -> 选项键（见 :mod:`.options`）
+    feature_choices: dict[str, str] = field(default_factory=dict)
+    #: 专精（游荡者）：技能内部键
+    expertise: list[str] = field(default_factory=list)
+    #: 武器精通：武器中文名
+    weapon_masteries: list[str] = field(default_factory=list)
     #: 交互日志（记录玩家每一步的选择，便于回放）
     log: list[str] = field(default_factory=list)
 
@@ -413,6 +517,7 @@ class CreationSession:
                 [list(g) for g in groups] for groups in self.ability_set_groups
             ],
             "base_scores": dict(self.base_scores),
+            "boost": dict(self.boost),
             "race": self.race,
             "subrace": self.subrace,
             "profession": self.profession,
@@ -422,6 +527,9 @@ class CreationSession:
             "equipment": list(self.equipment),
             "pending_weapon": self.pending_weapon,
             "spells": list(self.spells),
+            "feature_choices": dict(self.feature_choices),
+            "expertise": list(self.expertise),
+            "weapon_masteries": list(self.weapon_masteries),
             "log": list(self.log),
         }
 
@@ -450,6 +558,7 @@ class CreationSession:
                 for groups in data.get("ability_set_groups", [])
             ],
             base_scores={k: int(v) for k, v in data.get("base_scores", {}).items()},
+            boost={k: int(v) for k, v in data.get("boost", {}).items()},
             race=data.get("race", ""),
             subrace=data.get("subrace", ""),
             profession=data.get("profession", ""),
@@ -459,6 +568,11 @@ class CreationSession:
             equipment=list(data.get("equipment", [])),
             pending_weapon=data.get("pending_weapon", ""),
             spells=list(data.get("spells", [])),
+            feature_choices={
+                str(k): str(v) for k, v in data.get("feature_choices", {}).items()
+            },
+            expertise=list(data.get("expertise", [])),
+            weapon_masteries=list(data.get("weapon_masteries", [])),
             log=list(data.get("log", [])),
         )
 
@@ -500,7 +614,116 @@ class CreationSession:
             return "未分配"
         return "  ".join(f"{a.cn}{self.base_scores.get(a.key, '?')}" for a in ABILITIES)
 
+    def final_scores_text(self) -> str:
+        """含背景提升的属性展示（背景提升选完之后才有区别）。"""
+        if not self.base_scores:
+            return "未分配"
+        return "  ".join(
+            f"{a.cn}{int(self.base_scores.get(a.key, 0)) + int(self.boost.get(a.key, 0))}"
+            for a in ABILITIES
+        )
+
     # —— 流程推进 ——
+
+    def boost_options(self) -> tuple[str, ...]:
+        """背景提供的三项可提升属性（无背景 / 无此项返回空元组 → 跳过该步）。"""
+        background = self.background_obj
+        if not background:
+            return ()
+        return background.bonus_abilities()
+
+    # —— 1 级特性的选择（PHB 2024）——
+
+    def mastery_count(self) -> int:
+        """本职业 1 级能选几件武器精通（0 = 没有这项特性）。"""
+        profession = self.profession_obj
+        return int(profession.mastery_count) if profession else 0
+
+    def feature_plan(self) -> list[str]:
+        """本职业建卡时要做的特性选择（固定顺序）。"""
+        plan: list[str] = []
+        if self.profession == "cleric":
+            plan.append("divine_order")
+        elif self.profession == "druid":
+            plan.append("primal_order")
+        elif self.profession == "fighter":
+            plan.append("fighting_style")
+        elif self.profession == "warlock":
+            plan.append("invocation")
+        elif self.profession == "rogue":
+            plan.append("expertise")
+        if self.mastery_count():
+            plan.append("weapon_mastery")
+        return plan
+
+    def _feature_done(self, item: str) -> bool:
+        if item == "expertise":
+            return len(self.expertise) >= 2
+        if item == "weapon_mastery":
+            return len(self.weapon_masteries) >= self.mastery_count()
+        return item in self.feature_choices
+
+    def pending_features(self) -> list[str]:
+        """还没答的特性问题（空 = 这一步可以整步跳过）。"""
+        return [item for item in self.feature_plan() if not self._feature_done(item)]
+
+    def expertise_pool(self) -> list[tuple[str, str]]:
+        """专精候选：已熟练的技能 ``(键, 中文名)``。"""
+        background = self.background_obj
+        keys = list(
+            dict.fromkeys(
+                [*self.skills, *(background.skills if background else ())]
+            )
+        )
+        return [(key, get_skill(key).cn) for key in keys]
+
+    def mastery_pool(self) -> list[str]:
+        """武器精通候选：本职业受训范围内的全部具体武器。"""
+        profession = self.profession_obj
+        if not profession:
+            return []
+        return [
+            weapon.cn
+            for weapon in WEAPONS
+            if weapon_proficient(weapon, profession.weapon_proficiencies)
+        ]
+
+    def feature_prompt(self, item: str) -> str:
+        """某一问的提示文本。"""
+        if item in _FEATURE_MENUS:
+            title, options = _FEATURE_MENUS[item]
+            lines = [f"{title}（选 1 项）："]
+            lines.extend(
+                f"{index}. {option.cn}——{option.desc}"
+                for index, option in enumerate(options, 1)
+            )
+            lines.append("回复序号或名称。")
+            return "\n".join(lines)
+        if item == "expertise":
+            pool = self.expertise_pool()
+            lines = ["专精：从你**已熟练**的技能里选 2 项，其熟练加值翻倍："]
+            lines.extend(
+                f"{index}. {cn}" for index, (_, cn) in enumerate(pool, 1)
+            )
+            lines.append("回复两个序号或技能名（例如「1 3」）。")
+            return "\n".join(lines)
+        if item == "weapon_mastery":
+            pool = self.mastery_pool()
+            count = self.mastery_count()
+            lines = [f"武器精通：从熟练武器里选 {count} 种（获得其精通词条）："]
+            lines.extend(
+                "  ".join(
+                    f"{index}.{name}"
+                    for index, name in chunk
+                )
+                for chunk in (
+                    list(enumerate(pool, 1))[start : start + 6]
+                    for start in range(0, len(pool), 6)
+                )
+            )
+            lines.append(f"回复 {count} 个序号或武器名（例如「1 5」）。")
+            return "\n".join(lines)
+        return "1 级特性都选好了。"
 
     def spell_picks(self) -> tuple[int, int]:
         """本职业建卡要选的 ``(戏法数, 一环法术数)``；``(0, 0)`` 表示不用选法术。"""
@@ -520,12 +743,18 @@ class CreationSession:
         return [*cantrips, *first]
 
     def advance(self) -> CreationStep:
-        """进入下一步（施法职业才会经过「选择法术」）。"""
+        """进入下一步（没有可选项的步骤自动跳过）。"""
         index = CREATION_STEPS.index(self.step)
         while True:
             index = min(index + 1, len(CREATION_STEPS) - 1)
             self.step = CREATION_STEPS[index]
             if self.step is CreationStep.SPELLS and self.spell_picks() == (0, 0):
+                continue
+            # 跳过背景 / 背景没有三项属性时，这一步无事可做
+            if self.step is CreationStep.BOOST and not self.boost_options():
+                continue
+            # 本职业的 1 级特性都不带选择（或都已经选完）→ 跳过
+            if self.step is CreationStep.FEATURES and not self.pending_features():
                 continue
             break
         return self.step
@@ -580,8 +809,12 @@ class CreationSession:
             return self.choose_profession(raw)
         if step is CreationStep.BACKGROUND:
             return self.choose_background(raw)
+        if step is CreationStep.BOOST:
+            return self.choose_boost(raw)
         if step is CreationStep.SKILL:
             return self.choose_skills(raw)
+        if step is CreationStep.FEATURES:
+            return self.choose_feature(raw)
         if step is CreationStep.EQUIPMENT:
             if self.pending_weapon:
                 return self.choose_package_weapon(raw)
@@ -740,7 +973,7 @@ class CreationSession:
         label = f"{race.cn}·{sub_obj.cn}" if sub_obj else race.cn
         self.record(f"种族：{label}")
         self.advance()
-        detail = f"{race.format_bonus(sub_obj)}，速度 {race.speed} 尺，{race.size}"
+        detail = f"速度 {race.speed} 尺，{race.size}"
         return f"已选择「{label}」（{detail}）。\n\n{creation_prompt(self.step, self)}"
 
     def choose_profession(self, text: str) -> str:
@@ -763,15 +996,100 @@ class CreationSession:
         raw = text.strip()
         if raw.lower() in _SKIP_WORDS:
             self.background = ""
+            self.boost = {}
             self.record("背景：跳过")
             self.advance()
-            return f"已跳过背景。\n\n{creation_prompt(self.step, self)}"
+            return (
+                "已跳过背景（没有背景就没有三项属性提升，属性会弱于规则角色）。"
+                f"\n\n{creation_prompt(self.step, self)}"
+            )
         name = _pick_one(raw, list(background_choices()), "背景")
         background = get_background(name)
         self.background = background.key
+        # 换背景后旧的提升可能落在新背景的三项之外，统一清空重选
+        self.boost = {}
         self.record(f"背景：{background.cn}")
         self.advance()
-        return f"已选择「{background.cn}」（{background.desc}）\n\n{creation_prompt(self.step, self)}"
+        return (
+            f"已选择「{background.cn}」——{background.desc}\n"
+            f"它给你的三项属性提升：{background.bonus_text}"
+            f"\n\n{creation_prompt(self.step, self)}"
+        )
+
+    def choose_boost(self, text: str) -> str:
+        """背景属性提升：一项 +2 另一项 +1，或三项各 +1（PHB 2024）。"""
+        self._require(CreationStep.BOOST)
+        options = self.boost_options()
+        if not options:
+            raise CreationError("当前背景没有可提升的属性，这一步可以跳过。")
+
+        raw = text.strip()
+        if raw.lower() in _SKIP_WORDS:
+            self.boost = {}
+            self.record("背景属性提升：跳过")
+            self.advance()
+            return (
+                "已跳过属性提升（规则给的 +3 点没有用上，属性会弱于同级角色）。"
+                f"\n\n{creation_prompt(self.step, self)}"
+            )
+
+        tokens = _split_choices(raw)
+        if not tokens:
+            raise CreationError("请回复「1 智力 感知」或「2」（三项各 +1）。")
+
+        plan = 0
+        if tokens[0].isdigit():
+            plan = int(tokens[0])
+            tokens = tokens[1:]
+            if plan not in (1, 2):
+                raise CreationError("只有两种方案：回复「1 属性 属性」或「2」。")
+
+        picked: list[str] = []
+        for token in tokens:
+            if token.isdigit():
+                continue
+            key = _match_ability(token, options)
+            if key is None:
+                raise CreationError(
+                    f"「{token}」不在本背景的三项里，只能选："
+                    + "、".join(get_ability(k).cn for k in options)
+                )
+            if key in picked:
+                raise CreationError(f"「{token}」重复了：+2 和 +1 要落在两项不同的属性上。")
+            picked.append(key)
+
+        # 方案 2 / 只说了「三项 / 平均」→ 三项各 +1
+        average_words = ("三项", "各", "平均", "均分")
+        if plan == 2 or (
+            not picked and any(word in raw for word in average_words)
+        ):
+            boost = dict.fromkeys(options, 1)
+            label = "三项各 +1"
+        else:
+            if len(picked) != 2:
+                raise CreationError(
+                    "方案 1 要指定两项属性：前一项 +2、后一项 +1，"
+                    "例如「1 智力 感知」。三项各 +1 请回复「2」。"
+                )
+            boost = {picked[0]: 2, picked[1]: 1}
+            label = (
+                f"{get_ability(picked[0]).cn} +2、{get_ability(picked[1]).cn} +1"
+            )
+
+        for key, delta in boost.items():
+            if int(self.base_scores.get(key, 10)) + delta > ABILITY_SCORE_MAX:
+                raise CreationError(
+                    f"{get_ability(key).cn} 再加 {delta} 会超过 {ABILITY_SCORE_MAX}，"
+                    "换一项属性吧。"
+                )
+
+        self.boost = boost
+        self.record(f"背景属性提升：{label}")
+        self.advance()
+        return (
+            f"已应用背景属性提升：{label}。\n属性（含提升）：{self.final_scores_text()}"
+            f"\n\n{creation_prompt(self.step, self)}"
+        )
 
     def background_skill_names(self) -> list[str]:
         """背景提供的技能中文名。"""
@@ -800,6 +1118,42 @@ class CreationSession:
             else ""
         )
         return f"已选择技能：{'、'.join(picked)}。{note}\n\n{creation_prompt(self.step, self)}"
+
+    def choose_feature(self, text: str) -> str:
+        """处理「1 级特性选择」这一步的当前问题。"""
+        self._require(CreationStep.FEATURES)
+        pending = self.pending_features()
+        if not pending:
+            raise CreationError("1 级特性已经选完了。")
+        item = pending[0]
+        raw = (text or "").strip()
+
+        if item in _FEATURE_MENUS:
+            title, options = _FEATURE_MENUS[item]
+            option = _pick_option(raw, options, title)
+            self.feature_choices[item] = option.key
+            label = f"{title}：{option.cn}"
+        elif item == "expertise":
+            pool = self.expertise_pool()
+            if len(pool) < 2:
+                raise CreationError("已熟练的技能不足两项，无法选择专精。")
+            picked = parse_multi_choice(raw, [cn for _, cn in pool], 2)
+            self.expertise = [key for key, cn in pool if cn in picked]
+            label = "专精：" + "、".join(picked)
+        elif item == "weapon_mastery":
+            pool = self.mastery_pool()
+            count = self.mastery_count()
+            picked = parse_multi_choice(raw, pool, count)
+            self.weapon_masteries = picked
+            label = f"武器精通（{count} 种）：" + "、".join(picked)
+        else:  # pragma: no cover - feature_plan 与这里必须同步
+            raise CreationError(f"未知的特性选择「{item}」。")
+
+        self.record(label)
+        if self.pending_features():
+            return f"已选 {label}。\n\n{creation_prompt(CreationStep.FEATURES, self)}"
+        self.advance()
+        return f"已选 {label}。\n\n{creation_prompt(self.step, self)}"
 
     def choose_equipment(self, text: str) -> str:
         """选择起始装备包。"""
@@ -999,6 +1353,10 @@ def build_character(session: CreationSession) -> DndCharacter:
         profession=session.profession,
         background=session.background or None,
         base_scores=session.base_scores,
+        ability_boost=dict(session.boost),
+        feature_choices=dict(session.feature_choices),
+        expertise=list(session.expertise),
+        weapon_masteries=list(session.weapon_masteries),
         score_method="4d6" if session.ability_groups else "standard",
         score_rolls=_align_score_rolls(session),
         skills=list(dict.fromkeys(skills)),

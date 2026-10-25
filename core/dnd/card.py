@@ -20,7 +20,7 @@ from typing import Any
 
 from ..trpg.character import TrpgCharacter
 from ..trpg.check import CheckResult, roll_check
-from ..trpg.dice import Advantage, roll_d20
+from ..trpg.dice import Advantage, roll, roll_d20
 from .attributes import (
     ABILITIES,
     Ability,
@@ -52,6 +52,7 @@ from .equipment import (
     weapon_proficient,
 )
 from .items import get_item
+from .options import feature_option
 from .profession import DndClass, get_class
 from .race import Race, SubRace, get_race
 from .skills import Skill, get_skill
@@ -312,8 +313,14 @@ class DndCharacter(TrpgCharacter):
     subrace: str = ""  # 亚种键（无则空）
     profession: str = ""  # 职业内部键
     background: str = ""  # 背景内部键
-    #: 掷出的属性值（未加种族加值），六项按属性键存放
+    #: 掷出的属性值（未加**起源提升**），六项按属性键存放
     base_scores: dict[str, int] = field(default_factory=dict)
+    #: 起源属性提升（PHB 2024：来自**背景**的三项属性，+2/+1 或 +1/+1/+1）。
+    #: 种族不提供属性加值 —— 属性 = ``base_scores`` + 本字段。
+    ability_boost: dict[str, int] = field(default_factory=dict)
+    #: 属性提升是否已按 2024 口径结算过。旧存档（2024 之前建的卡）没有这个标记，
+    #: 读档时把当年并入的种族加值固化成 :attr:`ability_boost`（见 ``__post_init__``）。
+    boost_applied: bool = False
     #: 属性值生成方式：``4d6`` / ``standard`` / ``pointbuy``
     score_method: str = "4d6"
     #: 属性值生成时的原始点数，仅用于回放展示
@@ -332,6 +339,15 @@ class DndCharacter(TrpgCharacter):
     has_shield: bool = False
     #: 已选职业特性 / 专长等自由文本
     features: list[str] = field(default_factory=list)
+    #: 1 级特性的**选择**（PHB 2024）：键 -> 选项键。
+    #: 目前有 ``divine_order``（牧师·圣职）/ ``primal_order``（德鲁伊·原初职能）/
+    #: ``fighting_style``（战士·战斗风格）/ ``invocation``（魔契师·魔能祈唤）。
+    feature_choices: dict[str, str] = field(default_factory=dict)
+    #: **专精**（游荡者 1 级）：这些技能的熟练加值翻倍。
+    expertise: list[str] = field(default_factory=list)
+    #: **武器精通**（野蛮人 / 战士 / 圣武士 / 游侠 / 游荡者 1 级）：武器键。
+    #: 引擎目前只记录不退算（精通词条的效果由 DM 按 `equipment.yaml` 的 `武器精通` 裁定）。
+    weapon_masteries: list[str] = field(default_factory=list)
     #: 经验值
     exp: int = 0
     #: 当前生命值；``None`` 表示未记录（视为满血）
@@ -384,6 +400,18 @@ class DndCharacter(TrpgCharacter):
     size: str = ""
     #: 钱包：币种 -> 数量（币种用 铜 / 银 / 金 / 铂，见 :mod:`.coins`）
     money: dict[str, int] = field(default_factory=dict)
+    #: 英雄激励（PHB 2024 边栏）：**至多持有 1 个**，掷骰后消耗可重掷一次骰子，
+    #: 且必须采用新结果。消耗与否由**玩家说了算**——他在行动里写「重骰 / 重投」
+    #: 才消耗（见 :func:`~.judge.wants_reroll`），系统不替他决定。
+    #: 人类每次长休后拿到 1 个（「人类每日一个」），其余由 DM 授予。
+    inspiration: bool = False
+    #: **被击晕**（PHB 2024：近战攻击把人打到 0 血时改为留 1 血 + 昏迷）。
+    #: 与法术造成的昏迷区分开：击晕的昏迷会在**短休结束时**自动解除，
+    #: 法术的昏迷不该被休息抹掉。
+    knocked_out: bool = False
+    #: 伤势稳定后**还有几小时**自然恢复 1 点生命（稳定时掷 1d4）。
+    #: 0 = 还没稳定 / 已经恢复过了。见 :meth:`stabilize` 与 :meth:`tick_recovery`。
+    stable_recovery_hours: int = 0
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -397,6 +425,8 @@ class DndCharacter(TrpgCharacter):
         self.death_saves_success = max(0, min(3, int(self.death_saves_success or 0)))
         self.death_saves_failures = max(0, min(3, int(self.death_saves_failures or 0)))
         self.stable = bool(self.stable)
+        self.knocked_out = bool(self.knocked_out)
+        self.stable_recovery_hours = max(0, int(self.stable_recovery_hours or 0))
         # 法术统一存成法术 key（旧存档里可能是中文名 / 英文名）
         self.spells = list(
             dict.fromkeys(
@@ -440,6 +470,28 @@ class DndCharacter(TrpgCharacter):
         self.money = {
             str(k): int(v) for k, v in (self.money or {}).items() if int(v or 0) > 0
         }
+        self.inspiration = bool(self.inspiration)
+        # 1 级特性的选择：去空、键名规范化
+        self.feature_choices = {
+            str(k): str(v)
+            for k, v in (self.feature_choices or {}).items()
+            if str(k).strip() and str(v).strip()
+        }
+        self.expertise = list(
+            dict.fromkeys(str(x).strip() for x in (self.expertise or []) if str(x).strip())
+        )
+        self.weapon_masteries = list(
+            dict.fromkeys(
+                str(x).strip() for x in (self.weapon_masteries or []) if str(x).strip()
+            )
+        )
+        # 起源属性提升：只留非零项、键规范化（旧存档见 from_dict 的迁移）
+        self.ability_boost = {
+            get_ability(k).key: int(v)
+            for k, v in (self.ability_boost or {}).items()
+            if int(v or 0)
+        }
+        self.boost_applied = bool(self.boost_applied)
 
     # —— 生命骰（短休花费 / 长休恢复）——
 
@@ -467,6 +519,30 @@ class DndCharacter(TrpgCharacter):
         self.hit_dice_used -= back
         return back
 
+    # —— 英雄激励（PHB 2024 边栏）——
+
+    def grant_inspiration(self) -> bool:
+        """给 1 个英雄激励；**已经持有就不再叠加**（一次只有一个）。
+
+        :return: 是否真的拿到（已有则返回 ``False``）。
+        """
+        if self.inspiration:
+            return False
+        self.inspiration = True
+        return True
+
+    def spend_inspiration(self) -> bool:
+        """消耗英雄激励去重掷一次骰子；没有则返回 ``False``（本次不重掷）。"""
+        if not self.inspiration:
+            return False
+        self.inspiration = False
+        return True
+
+    @property
+    def inspiration_text(self) -> str:
+        """角色卡上的激励一行（没有则空串）。"""
+        return "英雄激励 ×1（行动里写「重骰」即可消耗）" if self.inspiration else ""
+
     # —— 构造 ——
 
     @classmethod
@@ -480,6 +556,7 @@ class DndCharacter(TrpgCharacter):
         background: Background | str | None = None,
         subrace: SubRace | str | None = None,
         base_scores: dict[str, int] | None = None,
+        ability_boost: dict[str, int] | None = None,
         score_method: str = "4d6",
         score_rolls: dict[str, list[int]] | None = None,
         skills: list[str] | None = None,
@@ -491,6 +568,9 @@ class DndCharacter(TrpgCharacter):
         tool_proficiencies: list[str] | None = None,
         size: str = "",
         money: dict[str, int] | None = None,
+        feature_choices: dict[str, str] | None = None,
+        expertise: list[str] | None = None,
+        weapon_masteries: list[str] | None = None,
     ) -> DndCharacter:
         """按建卡流程的产出一份角色卡。"""
         race_obj = get_race(race)
@@ -520,6 +600,19 @@ class DndCharacter(TrpgCharacter):
         ):
             if item not in resistances:
                 resistances.append(item)
+        # 圣职（牧师）/ 原初职能（德鲁伊）的「守护者」选项会给额外受训
+        choices = dict(feature_choices or {})
+        armor_extra: list[str] = []
+        weapon_extra: list[str] = []
+        for group, choice_key in (
+            ("divine_orders", "divine_order"),
+            ("primal_orders", "primal_order"),
+        ):
+            option = feature_option(group, choices.get(choice_key))
+            if option is None:
+                continue
+            armor_extra.extend(option.armor)
+            weapon_extra.extend(option.weapons)
         return cls(
             user_id=str(user_id),
             name=name,
@@ -528,17 +621,27 @@ class DndCharacter(TrpgCharacter):
             profession=class_obj.key,
             background=get_background(background).key if background else "",
             base_scores=dict(base_scores or {}),
+            ability_boost=dict(ability_boost or {}),
+            boost_applied=True,
             score_method=score_method,
             score_rolls=dict(score_rolls or {}),
             skill_proficiencies=list(skills or []),
             armor_proficiencies=list(
                 dict.fromkeys(
-                    (*class_obj.armor_proficiencies, *race_obj.armor_of(sub_obj))
+                    (
+                        *class_obj.armor_proficiencies,
+                        *race_obj.armor_of(sub_obj),
+                        *armor_extra,
+                    )
                 )
             ),
             weapon_proficiencies=list(
                 dict.fromkeys(
-                    (*class_obj.weapon_proficiencies, *race_obj.weapons_of(sub_obj))
+                    (
+                        *class_obj.weapon_proficiencies,
+                        *race_obj.weapons_of(sub_obj),
+                        *weapon_extra,
+                    )
                 )
             ),
             equipment=list(equipment or []),
@@ -550,6 +653,9 @@ class DndCharacter(TrpgCharacter):
             tool_proficiencies=tools,
             size=str(size or "").strip() or race_obj.size,
             money=dict(money or {}),
+            feature_choices=choices,
+            expertise=list(expertise or []),
+            weapon_masteries=list(weapon_masteries or []),
         )
 
     # —— 规则对象 ——
@@ -665,11 +771,14 @@ class DndCharacter(TrpgCharacter):
 
     @property
     def abilities(self) -> AbilitySet:
-        """结算种族 / 亚种加值后的属性。"""
+        """结算**起源属性提升**后的属性。
+
+        PHB 2024：属性提升来自**背景**（三项属性 +2/+1 或 +1/+1/+1，上限 20），
+        种族不提供属性加值。提升值存在 :attr:`ability_boost`。
+        """
         scores = AbilitySet(self.base_scores or {a.key: 10 for a in ABILITIES})
-        race = self.race_obj
-        if race:
-            scores.apply_bonus(race.bonus_of(self.subrace_obj))
+        if self.ability_boost:
+            scores.apply_bonus(self.ability_boost)
         return scores
 
     def modifier(self, ability: Ability | str) -> int:
@@ -696,11 +805,14 @@ class DndCharacter(TrpgCharacter):
         return merge_effects(self.conditions, exhaustion=self.exhaustion).d20_bonus
 
     def skill_bonus(self, skill: Skill | str) -> int:
-        """技能检定加值 = 属性调整值 +（熟练则加熟练加值）+ 状态给的加值。"""
+        """技能检定加值 = 属性调整值 +（熟练则加熟练加值，专精翻倍）+ 状态给的加值。"""
         skill_obj = get_skill(skill)
         bonus = self.abilities.modifier(skill_obj.ability)
         if skill_obj.key in self.skill_proficiencies:
             bonus += self.proficiency
+            # 专精（游荡者 1 级）：再叠一次熟练加值
+            if skill_obj.key in self.expertise:
+                bonus += self.proficiency
         return bonus + self.condition_bonus(skill_obj.ability) + self.d20_bonus()
 
     def save_bonus(self, ability: Ability | str) -> int:
@@ -804,11 +916,72 @@ class DndCharacter(TrpgCharacter):
     def clear_death_state(self) -> None:
         """清空死亡豁免进度与倒地 / 稳定 / 死亡状态（受治疗、复活、DM 裁决用）。"""
         self.stable = False
+        self.knocked_out = False
+        self.stable_recovery_hours = 0
         self.death_saves_success = 0
         self.death_saves_failures = 0
         self.conditions = [
             c for c in self.conditions if c not in DEATH_CONDITIONS and c != "昏迷"
         ]
+
+    def knock_out(self) -> str:
+        """**击晕**（PHB 2024）：近战把人打到 0 血时改为留 1 血 + 昏迷。
+
+        与倒地濒死的区别：人还有 1 点血、不算濒死、不掷死亡豁免，
+        并且**立刻开始短休**——短休结束时自己醒（见 :meth:`wake_from_knockout`）。
+        被治疗、或被急救（DC10 感知（医药））成功也会提前醒。
+        """
+        self.current_hp = 1
+        self.stable = False
+        self.knocked_out = True
+        self.death_saves_success = 0
+        self.death_saves_failures = 0
+        self.conditions = [c for c in self.conditions if c not in DEATH_CONDITIONS]
+        self._set_unconscious(True)
+        self.concentrating = ""
+        return "被击晕：留 1 点生命并陷入昏迷（立即开始短休，短休结束时苏醒）"
+
+    def wake_from_knockout(self) -> str:
+        """短休结束 / 被治疗 / 急救成功——从**击晕**的昏迷里醒来。
+
+        只对 :attr:`knocked_out` 生效：法术造成的昏迷不归它管，
+        否则一次短休就能抹掉「睡眠术」。
+        """
+        if not self.knocked_out:
+            return ""
+        self.knocked_out = False
+        if self.hp > 0:
+            self._set_unconscious(False)
+        return "从击晕中苏醒"
+
+    def stabilize(self, *, rng: Random | None = None) -> str:
+        """**稳定伤势**（协助动作，DC 10 感知（医药）成功后调用）。
+
+        稳定后仍是 0 血昏迷，但不再掷死亡豁免；未被治疗者
+        **1d4 小时后**恢复 1 点生命并清醒（小时数记在
+        :attr:`stable_recovery_hours`，由 :meth:`tick_recovery` 推进）。
+        """
+        self.mark_stable()
+        hours = max(1, min(4, roll("1d4", label="稳定后恢复计时", rng=rng).total))
+        self.stable_recovery_hours = hours
+        return f"伤势已稳定（仍 0 血昏迷，不再掷死亡豁免）；{hours} 小时后恢复 1 点生命"
+
+    def tick_recovery(self, hours: int) -> str:
+        """推进 ``hours`` 小时：稳定的伤者到期就恢复 1 点生命并清醒。
+
+        只有**伤势稳定且仍是 0 血**的人吃这条（PHB：稳定未治疗者 1d4 小时后
+        恢复 1 点）。挨了打会重新倒地，计时自然作废——那时它不再是稳定状态。
+        """
+        if not self.is_stable_down or self.stable_recovery_hours <= 0:
+            return ""
+        self.stable_recovery_hours = max(
+            0, self.stable_recovery_hours - max(0, int(hours))
+        )
+        if self.stable_recovery_hours > 0:
+            return f"（还要 {self.stable_recovery_hours} 小时恢复 1 点生命）"
+        self.current_hp = 1
+        self.clear_death_state()
+        return "稳定后自然恢复：恢复 1 点生命并恢复意识"
 
     def add_death_failure(self, count: int = 1) -> str:
         """倒地状态下再受伤：累计失败（暴击算 2 次）；返回说明文本。"""
@@ -883,6 +1056,16 @@ class DndCharacter(TrpgCharacter):
         return self.armor_class_detail[0]
 
     @property
+    def armor_class_with_effects(self) -> int:
+        """当前实际 AC：装备底值 **+ 增益状态的加值**（护盾 +5、防护之灵 +2……）。
+
+        :attr:`armor_class` 只是按装备算的底值，不含状态——战斗里由
+        ``combat.effective_ac`` 自己加状态与掩体；展示层与法术攻击判定用这个
+        属性，护盾才不会显示不出来。
+        """
+        return self.armor_class + merge_effects(self.conditions).ac_bonus
+
+    @property
     def armor_class_detail(self) -> tuple[int, str]:
         """``(AC, 说明)``。"""
         profession = self.profession_obj
@@ -898,11 +1081,19 @@ class DndCharacter(TrpgCharacter):
                 unarmored + shield_part,
                 f"无甲防御 {unarmored - self.modifier('dex')} {self.modifier('dex'):+d}",
             )
-        return compute_armor_class(
+        ac, detail = compute_armor_class(
             self.modifier("dex"),
             armors=tuple(self.equipment),
             has_shield=self.has_shield,
         )
+        # 战斗风格「防御」：着装护甲时 AC +1
+        style = feature_option(
+            "fighting_styles", self.feature_choices.get("fighting_style")
+        )
+        if style is not None and style.ac_bonus and self._wears_armor:
+            ac += style.ac_bonus
+            detail += f"（防御 +{style.ac_bonus}）"
+        return ac, detail
 
     @property
     def _wears_armor(self) -> bool:
@@ -947,9 +1138,20 @@ class DndCharacter(TrpgCharacter):
             ability_mod = max(self.modifier("str"), self.modifier("dex"))
         else:
             ability_mod = self.modifier("str")
+        # 战斗风格「箭术」：远程武器攻击检定 +2（不要求熟练）
+        style_bonus = self._ranged_style_bonus(weapon_obj)
         if not self.has_weapon_proficiency(weapon_obj):
-            return ability_mod + fatigue
-        return self.proficiency + ability_mod + fatigue
+            return ability_mod + fatigue + style_bonus
+        return self.proficiency + ability_mod + fatigue + style_bonus
+
+    def _ranged_style_bonus(self, weapon: Weapon) -> int:
+        """战斗风格给远程攻击的固定加值（目前只有「箭术 +2」）。"""
+        if not weapon.is_ranged:
+            return 0
+        style = feature_option(
+            "fighting_styles", self.feature_choices.get("fighting_style")
+        )
+        return int(style.ranged_attack_bonus) if style is not None else 0
 
     def damage_bonus(self, weapon: Weapon | str) -> int:
         """伤害加值（与攻击加值的属性选择一致）。"""
@@ -1589,7 +1791,7 @@ class DndCharacter(TrpgCharacter):
         lines = [
             f"【{self.name or '无名者'}】{race_text} {profession.cn if profession else '无业'} Lv.{self.level}",
             format_ability_block(self.abilities),
-            f"HP {self.hp}/{self.max_hp}  AC {self.armor_class}  先攻 {self.initiative:+d}  熟练 {self.proficiency:+d}",
+            f"HP {self.hp}/{self.max_hp}  AC {self.armor_class_with_effects}  先攻 {self.initiative:+d}  熟练 {self.proficiency:+d}",
         ]
         if self.temp_hp:
             lines.append(f"临时 HP {self.temp_hp}")
@@ -1607,6 +1809,8 @@ class DndCharacter(TrpgCharacter):
             if self.exhaustion:
                 status.append(f"力竭 {self.exhaustion} 级")
             lines.append("状态 " + "、".join(status))
+        if self.inspiration:
+            lines.append("激励 " + self.inspiration_text)
         resist = self.resistances_text()
         if resist:
             lines.append(f"伤害抗性 {resist}")
@@ -1966,7 +2170,7 @@ class DndCharacter(TrpgCharacter):
 <div class="meta">{self._esc(race_text)} · {self._esc(prof_text)} · Lv.{self.level} · {self._esc(self.size)}{(" · " + self._esc(bg_text)) if bg_text else ""}</div></div>
 <div class="stats">
 <div class="stat"><div class="v">{self.hp}/{self.max_hp}</div><div class="k">生命</div>{hp_bar}</div>
-<div class="stat"><div class="v">{self.armor_class}</div><div class="k">护甲 AC</div></div>
+<div class="stat"><div class="v">{self.armor_class_with_effects}</div><div class="k">护甲 AC</div></div>
 <div class="stat"><div class="v">{self.initiative:+d}</div><div class="k">先攻</div></div>
 <div class="stat"><div class="v">{self.proficiency:+d}</div><div class="k">熟练</div>{temp_hp_line}</div>
 </div>
@@ -1984,7 +2188,11 @@ class DndCharacter(TrpgCharacter):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DndCharacter:
-        """从字典恢复；兼容 ``to_dict`` 写出的派生字段（自动忽略）。"""
+        """从字典恢复。
+
+        自动忽略 ``to_dict`` 写出的派生字段；但派生快照 ``abilities`` 会被用来
+        迁移旧存档的「起源属性提升」（见下方注释）。
+        """
         known = {
             "user_id",
             "name",
@@ -1999,6 +2207,8 @@ class DndCharacter(TrpgCharacter):
             "profession",
             "background",
             "base_scores",
+            "ability_boost",
+            "boost_applied",
             "score_method",
             "score_rolls",
             "skill_proficiencies",
@@ -2008,6 +2218,9 @@ class DndCharacter(TrpgCharacter):
             "equipment_package",
             "has_shield",
             "features",
+            "feature_choices",
+            "expertise",
+            "weapon_masteries",
             "exp",
             "current_hp",
             "temp_hp",
@@ -2029,8 +2242,24 @@ class DndCharacter(TrpgCharacter):
             "tool_proficiencies",
             "size",
             "money",
+            "inspiration",
+            "knocked_out",
+            "stable_recovery_hours",
         }
-        return cls(**{k: v for k, v in data.items() if k in known})
+        restored = cls(**{k: v for k, v in data.items() if k in known})
+        # ⚠️ 口径迁移（2026-10-25）：PHB 2024 起属性提升来自背景、种族不给加值。
+        # 2024 之前建的卡当年把种族加值即时并进了属性，存档里又带着当时的派生快照
+        # ``abilities``——用它反推出「起源提升」，换口径后这些卡的属性一点不变。
+        snapshot = data.get("abilities")
+        if isinstance(snapshot, dict) and not data.get("boost_applied"):
+            base = restored.base_scores or {}
+            restored.ability_boost = {
+                key: int(value) - int(base[key])
+                for key, value in snapshot.items()
+                if key in base and int(value) != int(base[key])
+            }
+            restored.boost_applied = True
+        return restored
 
 
 def ability_roll_pool(

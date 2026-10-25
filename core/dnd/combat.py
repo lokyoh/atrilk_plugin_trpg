@@ -31,7 +31,6 @@
 from __future__ import annotations
 
 import json
-import random
 import re
 import time
 from collections import Counter
@@ -90,11 +89,24 @@ from .npcs import (
 )
 from .progression import xp_for_cr
 from .save_store import Save, get_character, read_scene, save_dir, set_character
+from .tactics import (
+    HIDE_DC,
+    LIGHT_LEVELS,
+    dodge_expires,
+    hide_check,
+    hide_requirement_note,
+    light_obscurement,
+    mount_cost,
+    normalize_tactic,
+    ready_note,
+)
 from .threat import apply_arena_terrain, pick_boss, target_focus
 
 __all__ = [
     "COMBAT_FILENAME",
     "MAX_ENEMIES",
+    "SPECIAL_SENSES",
+    "STABILIZE_DC",
     "TURN_RESOURCES",
     "CombatState",
     "Combatant",
@@ -115,11 +127,13 @@ __all__ = [
     "combatant_conditions",
     "combatant_d20_bonus",
     "combatant_exhaustion",
+    "combatant_senses",
     "combatant_speed",
     "combatant_state_text",
     "count_legendary_use",
     "cover_text",
     "current_actor",
+    "do_tactic",
     "effective_ac",
     "effective_hp",
     "enemy_attack",
@@ -131,8 +145,12 @@ __all__ = [
     "is_dead",
     "is_dying",
     "is_out",
+    "knock_out_enemy",
     "legendary_available",
+    "light_attack_advantage",
+    "light_text",
     "load_combat",
+    "medicine_check",
     "move_combatant",
     "parse_enemy_list",
     "party_level",
@@ -140,18 +158,21 @@ __all__ = [
     "player_status",
     "record_defeat",
     "reinforcement_pending",
+    "remove_conditions",
     "resource_of",
     "resources_text",
     "roll_damage",
     "save_combat",
+    "stabilize_combatant",
     "start_combat",
     "summon_reinforcements",
     "threat_focus_name",
     "threat_text",
-    "tick_dot",
     "tick_regeneration",
     "update_enemy",
     "use_resource",
+    "vision_obscurement",
+    "wake_knocked_out",
 ]
 
 
@@ -220,6 +241,13 @@ class Combatant:
     #: 只记**会自动到期**的那些（法术数据里的 ``condition_rounds``）；
     #: 没有记的状态不会自动消失（魅惑这类以小时计，交给剧情）。
     condition_rounds: dict[str, int] = field(default_factory=dict)
+    #: **被击晕**（PHB 2024：近战打到 0 血时改为留 1 血 + 昏迷）。
+    #: 与「昏迷」状态区分开：击晕的昏迷会在短休结束时自动解除（见
+    #: :func:`wake_knocked_out`），法术的昏迷不该被休息抹掉。
+    knocked_out: bool = False
+    #: **预备动作**的触发条件（空 = 没预备）。花一个动作定下，触发时用反应执行；
+    #: 没触发就在自己下个回合开始时作废（:meth:`reset_turn` 清空）。
+    readied: str = ""
 
     @property
     def is_enemy(self) -> bool:
@@ -231,12 +259,16 @@ class Combatant:
         return bool(self.npc)
 
     def reset_turn(self) -> None:
-        """新一轮自己的回合开始：清空行动经济记账与已经走过的距离。"""
+        """新一轮自己的回合开始：清空行动经济记账与已经走过的距离。
+
+        预备动作也在这里作废——PHB 2024 明写「没触发就到下个回合开始时失效」。
+        """
         self.action_used = False
         self.bonus_used = False
         self.reaction_used = False
         self.moved = False
         self.move_used = 0
+        self.readied = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -266,6 +298,8 @@ class Combatant:
             "size": self.size,
             "acted_round": self.acted_round,
             "condition_rounds": dict(self.condition_rounds),
+            "knocked_out": self.knocked_out,
+            "readied": self.readied,
         }
 
     @classmethod
@@ -288,7 +322,8 @@ class Combatant:
             moved=bool(data.get("moved", False)),
             x=_int_or(data.get("x"), -1),
             y=_int_or(data.get("y"), -1),
-            speed=_int_or(data.get("speed"), 30) or 30,
+            # 0 是合法速度（被定住 / 速度被吸干），只有缺失才兜底 30
+            speed=_int_or(data.get("speed"), 30),
             move_used=_int_or(data.get("move_used"), 0),
             conditions=[
                 str(item)
@@ -307,6 +342,8 @@ class Combatant:
                 for name, rounds in (data.get("condition_rounds") or {}).items()
                 if str(name).strip()
             },
+            knocked_out=bool(data.get("knocked_out", False)),
+            readied=str(data.get("readied", "") or ""),
         )
 
 
@@ -362,6 +399,10 @@ class CombatState:
     #: 这里有没有**日光**：``True`` 有 / ``False`` 没有 / ``None`` 不知道。
     #: 只影响「日照敏感」的怪；不知道时 :func:`enemy_attack` 会提示 DM 自己判。
     daylight: bool | None = None
+    #: 战场光照（``bright`` / ``dim`` / ``dark``，PHB 2024「光线」）：
+    #: 微光 = 轻度遮蔽（视觉察觉劣势），黑暗 = 重度遮蔽（看不见里面的东西）。
+    #: 黑暗视觉 / 盲视 / 震颤感知 / 真实视觉按各自规则降级或无视。
+    light: str = "bright"
     #: 本场战斗耗掉的弹药：``{"玩家cid:箭": 3}``。战后按 5e 回收一半
     #: （花一分钟搜 battlefield），见 :func:`recover_ammo`。
     ammo_used: dict[str, int] = field(default_factory=dict)
@@ -395,6 +436,7 @@ class CombatState:
             "arena_cover_delta": self.arena_cover_delta,
             # 三态（有 / 没有 / 不知道）：不知道就不写这个键
             **({} if self.daylight is None else {"daylight": bool(self.daylight)}),
+            "light": self.light,
             "ammo_used": {
                 str(k): int(v) for k, v in (self.ammo_used or {}).items() if int(v) > 0
             },
@@ -454,6 +496,7 @@ class CombatState:
             daylight=(
                 None if data.get("daylight") is None else bool(data.get("daylight"))
             ),
+            light=str(data.get("light", "bright") or "bright"),
             ammo_used={
                 str(k): max(0, int(v)) for k, v in (data.get("ammo_used") or {}).items()
             },
@@ -713,9 +756,114 @@ def combatant_d20_bonus(save: Save, combatant: Combatant) -> int:
     return -2 * int(combatant.exhaustion or 0)
 
 
+#: 2024 术语汇编里的四种特殊感官
+SPECIAL_SENSES: tuple[str, ...] = ("黑暗视觉", "盲视", "震颤感知", "真实视觉")
+
+#: 「盲视 30 尺」/「30 尺盲视」这类带距离的感官（图鉴里两种语序都有）
+_SENSE_RANGE_RE = re.compile(r"(盲视|震颤感知)\s*(\d+)\s*尺")
+_SENSE_RANGE_PREFIX_RE = re.compile(r"(\d+)\s*尺\s*(盲视|震颤感知)")
+
+
+def _senses_blob(save: Save, combatant: Combatant) -> str:
+    """这名参战者的感官文本（种族特性 / 亚种特性 / 怪物 senses），拼成一段。"""
+    if combatant.kind == "player":
+        card = get_character(save, combatant.cid)
+        if card is None:
+            return ""
+        texts: list[str] = []
+        race = card.race_obj
+        if race is not None:
+            texts.extend(race.traits)
+        sub = card.subrace_obj
+        if sub is not None:
+            texts.extend(sub.traits)
+        return "；".join(texts)
+    monster = resolve_monster(combatant.monster)
+    return monster.senses if monster is not None else ""
+
+
+def combatant_senses(save: Save, combatant: Combatant) -> set[str]:
+    """它有哪些特殊感官（黑暗视觉 / 盲视 / 震颤感知 / 真实视觉）。"""
+    blob = _senses_blob(save, combatant)
+    return {name for name in SPECIAL_SENSES if name in blob}
+
+
+def _sense_range(blob: str, name: str) -> int:
+    """带距离的感官（盲视 / 震颤感知）的射程；没写距离返回 0。"""
+    for match in _SENSE_RANGE_RE.finditer(blob):
+        if match.group(1) == name:
+            return int(match.group(2))
+    for match in _SENSE_RANGE_PREFIX_RE.finditer(blob):
+        if match.group(2) == name:
+            return int(match.group(1))
+    return 0
+
+
+def vision_obscurement(
+    save: Save, state: CombatState | None, combatant: Combatant, *, distance: int = -1
+) -> str:
+    """**它看某个目标时**的等效遮蔽级别：``无`` / ``轻度`` / ``重度``。
+
+    光照本身只决定「这个区域有多暗」（见 :func:`~.tactics.light_obscurement`），
+    能不能看穿还得看它自己：
+
+    - **黑暗视觉**：黑暗当微光、微光当明亮；
+    - **盲视 / 震颤感知**：射程内完全不靠光（射程外照旧；距离不明时按射程内算）；
+    - **真实视觉**：一律正常。
+
+    ``重度`` 才影响攻击（看不见 = 等同目盲）；``轻度`` 只让基于视觉的察觉检定劣势，
+    这一点在战斗块的「光照」一行里提示 DM。
+    """
+    obscured = light_obscurement(str(getattr(state, "light", "bright") or "bright"))
+    blob = _senses_blob(save, combatant)
+    if "真实视觉" in blob:
+        return "无"
+    for name in ("盲视", "震颤感知"):
+        reach = _sense_range(blob, name)
+        if reach and (distance < 0 or distance <= reach):
+            return "无"
+    if "黑暗视觉" in blob:
+        if obscured == "重度":
+            obscured = "轻度"
+        elif obscured == "轻度":
+            obscured = "无"
+    return obscured
+
+
+def light_attack_advantage(
+    save: Save,
+    state: CombatState | None,
+    attacker: Combatant | None,
+    target: Combatant | None,
+    *,
+    distance: int = -1,
+) -> tuple[Advantage, str]:
+    """光照 / 遮蔽对这一次攻击的影响（PHB 2024「不可见的攻击者与目标」）。
+
+    看不见目标 → 攻击劣势；目标看不见你 → 攻击优势；两边都看不见则相遇抵消。
+    微光（轻度遮蔽）不参与攻击结算——它只影响基于视觉的察觉检定。
+    """
+    if attacker is None or target is None:
+        return Advantage.NORMAL, ""
+    advantage = Advantage.NORMAL
+    reasons: list[str] = []
+    if vision_obscurement(save, state, attacker, distance=distance) == "重度":
+        advantage = combine_advantage(advantage, Advantage.DISADVANTAGE)
+        reasons.append(f"{attacker.name}看不见{target.name}（重度遮蔽）→ 劣势")
+    if vision_obscurement(save, state, target, distance=distance) == "重度":
+        advantage = combine_advantage(advantage, Advantage.ADVANTAGE)
+        reasons.append(f"{target.name}看不见{attacker.name} → 攻击有优势")
+    return advantage, "；".join(reasons)
+
+
 def combatant_speed(save: Save, combatant: Combatant) -> int:
-    """参战者当前速度（尺 / 回合）：基础速度扣除 2024 力竭（每级 −5 尺）。"""
-    base = int(getattr(combatant, "speed", 30) or 30)
+    """参战者当前速度（尺 / 回合）：基础速度扣除 2024 力竭（每级 −5 尺）。
+
+    ⚠️ 速度 **0** 是合法值（被定住、速度被吸干的生物），别写成 ``speed or 30``
+    ——那样 0 会被当成「没填」兜底回 30 尺，「速度归零」的规则就永远判不到。
+    """
+    base = getattr(combatant, "speed", 30)
+    base = 30 if base is None else int(base)
     return max(0, base - 5 * combatant_exhaustion(save, combatant))
 
 
@@ -821,58 +969,6 @@ def resources_text(combatant: Combatant) -> str:
     return "、".join(used) if used else "无"
 
 
-def tick_dot(
-    save: Save,
-    state: CombatState,
-    combatant: Combatant,
-    *,
-    rng: random.Random | None = None,
-) -> str:
-    """回合开始时结算持续伤害（中毒等），返回给 DM 的一句话。
-
-    5e 里中毒是「**每个自己的回合开始时**失去等于中毒等级的生命」，本该自动
-    结算。从前只能靠 DM 每轮手动调一次 ``update_enemy``——漏一轮就少扣血，
-    多扣一次就误伤。现在挂在回合推进里，按时点自动扣。
-
-    扣到 0 血按规则走倒地濒死（并掷死亡豁免），不是简单地少一格血。
-
-    :param rng: 死亡豁免用的随机源。留空用全局随机——**测试要传一个固定的**，
-        否则掷出天然 20 会回 1 血脱离濒死，让「扣到 0 就倒地」这条断言时过时不过。
-    """
-    effect = merge_effects(combatant_conditions(save, combatant))
-    if not effect.dot or effect.dot[1] <= 0:
-        return ""
-    damage_type, amount = effect.dot
-    # 抗性要**在这里**算，不能交给 apply_damage：那里的「抗性后至少 1 点」
-    # 是 PHB 对武器伤害的兜底，而中毒抗性应当直接免掉那 1 点。
-    # 矮人对毒素有抗性时不该每回合照掉 1 血。
-    resist_note = ""
-    if combatant.kind == "player":
-        card = get_character(save, combatant.cid)
-        if card is not None:
-            amount, resist_note = card.apply_resistance(amount, damage_type)
-    else:
-        from .monsters import get_monster
-
-        monster = get_monster(combatant.monster) if combatant.monster else None
-        if monster is not None:
-            amount, resist_note = resolve_damage(
-                amount, damage_type, monster.damage_resistances
-            )
-    if amount <= 0:
-        return f"🔥 {combatant.name} 的持续伤害被抗性完全免掉（{damage_type}）"
-    note = apply_damage(save, state, combatant, amount, damage_type=damage_type)
-    if resist_note:
-        note += f"（{resist_note}）"
-    # 扣到 0 血：按 5e 走倒地濒死，接着掷死亡豁免（否则玩家会一直停在 0 血）
-    card = get_character(save, combatant.cid) if combatant.kind == "player" else None
-    if card is not None and card.is_dying:
-        outcome = card.death_save(rng=rng)
-        set_character(save, card)
-        note += f"；随即{outcome.describe()}"
-    return f"🔥 {combatant.name} 受到持续伤害（{damage_type}）：{note}"
-
-
 def tick_regeneration(
     save: Save, state: CombatState, combatant: Combatant, *, rng: Any = None
 ) -> str:
@@ -881,8 +977,8 @@ def tick_regeneration(
     条件照书上来：还有气（0 血不回）、没满血、本轮没挨过打断再生的那类伤害
     （火焰 / 强酸——巨魔的再生就怕这两个）。
 
-    与 :func:`tick_dot` 一样挂在回合推进里：靠 DM 每轮手动调一次 ``update_enemy``
-    必然会漏，漏一轮就是白掉十几点血。
+    挂在回合推进里：靠 DM 每轮手动调一次 ``update_enemy`` 必然会漏，
+    漏一轮就是白掉十几点血。
     """
     monster = resolve_monster(combatant.monster)
     rules = rules_of(monster)
@@ -999,13 +1095,9 @@ def _walk(
                     state.pending.append(regen)
             enemies.append(combatant)
             continue
-        # —— 玩家：回合开始先结算持续伤害（中毒等），再走倒地濒死 / 跳过 ——
+        # —— 玩家：回合开始先推进状态计时，再走倒地濒死 / 跳过 ——
         if commit:
             state.pending.extend(_tick_condition_timers(save, combatant))
-        if commit and can_act(save, combatant):
-            dot = tick_dot(save, state, combatant, rng=rng)
-            if dot:
-                state.pending.append(dot)
         card = get_character(save, combatant.cid)
         if card is not None and card.is_dying:
             if commit:
@@ -1231,6 +1323,30 @@ def _parse_daylight(text: str) -> bool | None:
     return None
 
 
+def _parse_light(text: str, daylight: bool | None) -> str:
+    """把 DM 写的「明亮 / 微光 / 黑暗」规整成 ``bright`` / ``dim`` / ``dark``。
+
+    留空时**才**按日光推：有日光 = 明亮，没日光 = 黑暗（地牢、夜里、室内）。
+    两者都留空则按明亮处理——宁可让 DM 少一条劣势，也不要凭空给全场扣劣势。
+    """
+    value = str(text or "").strip()
+    if value:
+        for key, cn in LIGHT_LEVELS.items():
+            if value in (key, cn):
+                return key
+        if value in {"亮", "白天", "日间"}:
+            return "bright"
+        if value in {"昏暗", "阴暗", "阴影", "蜡烛"}:
+            return "dim"
+        if value in {"无光", "漆黑", "全黑"}:
+            return "dark"
+    if daylight is True:
+        return "bright"
+    if daylight is False:
+        return "dark"
+    return "bright"
+
+
 def _normalize_specs(specs: list) -> list[EnemySpec]:
     """兼容 ``(monster, count)`` 元组写法。"""
     out: list[EnemySpec] = []
@@ -1292,16 +1408,21 @@ def start_combat(
     current: str = "",
     note: str = "",
     daylight: str = "",
+    light: str = "",
     surprised: str = "",
     rng: Any = None,
 ) -> CombatState:
     """按敌人清单与存档里的玩家开战：掷先攻、排顺序并落盘。
 
     :param specs: :func:`parse_enemy_list` 的结果（也接受旧的 ``(怪物, 数量)`` 元组）。
-    :param current: 当前回合从哪名玩家开始（通常是发起这场冲突的玩家）。
+    :param current: 发起这场冲突的玩家。**只用于回执措辞，不决定谁先动**——
+        先攻顺序说了算（PHB 2024：先攻从高到低即行动顺序），见下面的 ``turn`` 注释。
     :param daylight: 这里有没有**日光**（``是`` / ``否``）；留空表示不知道。
         只影响「日照敏感」那批怪（狗头人、卓尔……）：有日光时它们的攻击带劣势。
         ⚠️ 不按时钟猜——地牢深处也是白天，猜错了就是凭空给它们扣劣势。
+    :param light: 战场**光照**（明亮 / 微光 / 黑暗）：黑暗 = 重度遮蔽，看不见目标
+        的一方攻击带劣势。留空时按 ``daylight`` 推（有日光 = 明亮，没日光 = 黑暗）；
+        两者都留空按明亮——宁可少一条劣势，也不凭空给全场扣劣势。
     :param surprised: **谁遭突袭**（2024：先攻检定劣势）。写名字 / cid，多个用、
         分隔；集体写法「玩家」/「敌人」。留空 = 无人被突袭。
         由 DM 判定谁没注意到威胁（躲藏方隐匿 对 被动察觉）。
@@ -1346,6 +1467,10 @@ def start_combat(
 
     counters: Counter[str] = Counter()
     encounters: dict[str, tuple[Monster, int, int]] = {}
+    #: 同类怪物共用一次先攻（PHB：DM 可以「一组只掷一次、全组共用」）。
+    #: 分组键是模板 key——三只地精一起上时排成一串相邻的顺序，比各掷各的
+    #: 更能体现「一群」；具名 NPC 各自独立（它们不是杂兵）。
+    group_initiative: dict[str, int] = {}
     for spec in normalized:
         for _ in range(max(1, int(spec.count))):
             base = spec.name or spec.monster.cn
@@ -1374,12 +1499,17 @@ def start_combat(
                 if _is_surprised(surprise_set, cid=enemy_cid, name=name, kind="enemy")
                 else Advantage.NORMAL
             )
+            group_key = spec.name if (spec.npc and spec.name) else spec.monster.key
+            initiative = group_initiative.get(group_key)
+            if initiative is None:
+                initiative = roll_d20(init_adv, rng=rng)[1] + spec.monster.initiative
+                group_initiative[group_key] = initiative
             order.append(
                 Combatant(
                     cid=enemy_cid,
                     kind="enemy",
                     name=name,
-                    initiative=roll_d20(init_adv, rng=rng)[1] + spec.monster.initiative,
+                    initiative=initiative,
                     ac=spec.monster.ac,
                     hp=hp,
                     max_hp=max_hp,
@@ -1393,24 +1523,26 @@ def start_combat(
     # 先攻从高到低；同点时玩家先手，再按名字稳定排序。
     order.sort(key=lambda c: (-c.initiative, 0 if c.kind == "player" else 1, c.name))
 
+    # **谁先动由先攻说了算**（PHB：先攻从高到低就是行动顺序）。
+    # 从前这里优先把「发起冲突的玩家」放第一位——那是为了叙述顺手，
+    # 但先攻掷得比人家低的角色一上来就抢了先手，与规则和骰子都对不上。
+    # ``turn`` 只能指向玩家（敌人的回合由 _walk 攒成一批自动结算），
+    # 所以取**先攻顺序里排最前的玩家**；先攻更高的敌人会在轮末前那一段先动。
     turn = 0
     for index, combatant in enumerate(order):
-        if combatant.kind == "player" and combatant.cid == str(current):
+        if combatant.kind == "player":
             turn = index
             break
-    else:
-        for index, combatant in enumerate(order):
-            if combatant.kind == "player":
-                turn = index
-                break
 
+    daylight_flag = _parse_daylight(daylight)
     state = CombatState(
         scene=save.current_scene,
         note=str(note or ""),
         round=1,
         turn=turn,
         order=order,
-        daylight=_parse_daylight(daylight),
+        daylight=daylight_flag,
+        light=_parse_light(light, daylight_flag),
     )
     # 战场棋盘：按场景类型与人数生成，玩家在下、敌人在上（零额外模型调用）。
     # 生成失败（例如缺少场景文档）就退化成「没有棋盘」，射程校验自动跳过。
@@ -1725,6 +1857,110 @@ def forget_defeat(state: CombatState, enemy: Combatant) -> None:
     state.defeated = [item for item in state.defeated if item.get("cid") != enemy.cid]
 
 
+#: 稳定伤势的 DC（PHB：协助动作，DC 10 感知（医药））
+STABILIZE_DC = 10
+
+
+def stabilize_combatant(
+    save: Save,
+    state: CombatState,
+    target: Combatant,
+    healer: Any = None,
+    *,
+    rng: Any = None,
+) -> str:
+    """**稳定伤势**：协助动作，成功通过 DC 10 感知（医药）检定即可。
+
+    - 成功后目标**仍 0 血昏迷**，但不再掷死亡豁免，1d4 小时后恢复 1 点生命；
+    - 失败只是这一次没稳住，可以再试（代价是一个动作）；
+    - **被击晕**的人（留 1 血昏迷）不需要稳定——急救成功直接让他醒过来；
+    - 敌人生命归零就退场了，想留活口请用 :func:`attack` 的 ``knock_out``。
+
+    :param healer: 施救者的角色卡（掷感知（医药）用）。没给就按无加值裸掷——
+        回执里会写明，DM 有得可讲。
+    """
+    if target.kind != "player":
+        return (
+            f"{target.name} 不是玩家角色：敌人生命归零即退场，"
+            "想留活口请用 attack 的 knock_out（击晕）"
+        )
+    card = get_character(save, target.cid)
+    if card is None:
+        return f"（找不到 {target.name} 的角色卡）"
+    if card.is_dead:
+        return f"{card.name} 已经阵亡，稳定伤势无效（需要复活术 / 神迹）"
+    if card.knocked_out:
+        # 击晕的昏迷只需急救就能提前结束（PHB 同款 DC 10 感知（医药））
+        result = medicine_check(healer, rng=rng)
+        if not result.success:
+            return f"{result.describe()} → 急救失败：{card.name} 仍昏迷"
+        card.wake_from_knockout()
+        set_character(save, card)
+        return f"{result.describe()} → 急救成功：{card.name} 醒来（{card.hp}/{card.max_hp}）"
+    if card.hp > 0:
+        return f"{card.name} 还有 {card.hp}/{card.max_hp} 点生命，不需要稳定伤势"
+    if card.stable:
+        left = card.stable_recovery_hours
+        return f"{card.name} 伤势已稳定" + (
+            f"，还要 {left} 小时恢复 1 点生命" if left else ""
+        )
+    result = medicine_check(healer, rng=rng)
+    if not result.success:
+        return (
+            f"{result.describe()} → 稳定失败：{card.name} 仍在濒危"
+            f"（死亡豁免 {card.death_saves_success} 成功 / "
+            f"{card.death_saves_failures} 失败）"
+        )
+    note = card.stabilize(rng=rng)
+    set_character(save, card)
+    return f"{result.describe()} → {note}"
+
+
+def medicine_check(healer: Any, *, rng: Any = None) -> CheckResult:
+    """掷一次感知（医药）检定（DC 10 由调用方写进 ``roll_check``）。"""
+    if healer is None:
+        return roll_check(
+            0,
+            STABILIZE_DC,
+            kind="感知（医药）·未指定施救者",
+            rng=rng,
+        )
+    return healer.check_skill("medicine", STABILIZE_DC, rng=rng)
+
+
+def knock_out_enemy(save: Save, state: CombatState, target: Combatant) -> str:
+    """**击晕敌人**（PHB 2024）：近战把它打到 0 血时改为留 1 血 + 昏迷。
+
+    留活口审问用——它仍有 1 点血、不算被击败（不计战果与经验），
+    但昏迷让它无法行动（``can_act`` 认「昏迷」）。
+    """
+    target.hp = 1
+    target.knocked_out = True
+    target.out = True
+    if "昏迷" not in target.conditions:
+        target.conditions = [*target.conditions, "昏迷"]
+    save_combat(save, state)
+    sync_combatant(save, target)
+    return "被击晕：留 1 点生命并陷入昏迷（短休结束时苏醒）"
+
+
+def wake_knocked_out(save: Save, state: CombatState, target: Combatant) -> str:
+    """从**击晕**中醒来（短休结束 / 被治疗 / 急救成功）。
+
+    只对 :attr:`~.Combatant.knocked_out` 生效——法术造成的昏迷不归它管。
+    """
+    if not target.knocked_out:
+        return ""
+    target.knocked_out = False
+    if target.hp > 0:
+        target.conditions = [c for c in target.conditions if c != "昏迷"]
+        target.out = False
+        forget_defeat(state, target)
+    save_combat(save, state)
+    sync_combatant(save, target)
+    return "从击晕中苏醒"
+
+
 def apply_damage(
     save: Save,
     state: CombatState,
@@ -1735,6 +1971,7 @@ def apply_damage(
     crit: bool = False,
     magical: bool = False,
     burst: bool = False,
+    knock_out: bool = False,
     rng: Any = None,
 ) -> str:
     """对参战者造成伤害并落盘。
@@ -1751,6 +1988,8 @@ def apply_damage(
 
     :param burst: 本次伤害是不是某次自爆的连带伤害——防止两只自爆怪互相引爆
         时无限递归（自爆不再触发自爆）。
+    :param knock_out: **击晕**（PHB 2024）：这次伤害若会把目标打到 0 血，
+        改为留 1 点生命并陷入昏迷。只有**近战**能做到——调用方负责校验。
     """
     amount = max(0, int(amount))
     if target.kind == "player":
@@ -1780,13 +2019,17 @@ def apply_damage(
             else:
                 notes.append(card.add_death_failure(2 if crit else 1))
         elif card.hp <= 0:
-            card.mark_downed()
-            notes.append(
-                f"倒地，进入濒危（死亡豁免 {card.death_saves_success} 成功 / "
-                f"{card.death_saves_failures} 失败）"
-            )
-            if incoming - before >= card.max_hp:
-                notes.append(card.die_instantly())
+            if knock_out:
+                # 击晕：留 1 血 + 昏迷，不走濒危（不掷死亡豁免）
+                notes.append(card.knock_out())
+            else:
+                card.mark_downed()
+                notes.append(
+                    f"倒地，进入濒危（死亡豁免 {card.death_saves_success} 成功 / "
+                    f"{card.death_saves_failures} 失败）"
+                )
+                if incoming - before >= card.max_hp:
+                    notes.append(card.die_instantly())
         # 受伤后维持专注的体质豁免；生命归零 = 昏迷，直接断专注（5e）
         if incoming > 0 and card.concentrating:
             if card.hp <= 0:
@@ -1828,6 +2071,10 @@ def apply_damage(
                 save_combat(save, state)
                 sync_combatant(save, target)
                 return note + "。"
+        if knock_out:
+            # 击晕：留 1 血 + 昏迷，不计入战果（它没死）
+            note += "，" + knock_out_enemy(save, state, target)
+            return note if note.endswith("。") else note + "。"
         target.out = True
         record_defeat(state, target)
         note += "，已倒下"
@@ -1975,10 +2222,16 @@ def heal_combatant(
         if was_down and card.hp > 0:
             card.clear_death_state()
             note += "，恢复意识（死亡豁免清零）"
+        if card.knocked_out and card.hp > 0:
+            # 击晕者被治疗即醒（PHB：恢复任意生命值时昏迷提前结束）
+            note += "，" + card.wake_from_knockout()
         set_character(save, card)
         return note + "。"
 
     target.hp = min(target.max_hp, target.hp + amount)
+    if target.knocked_out and target.hp > 0:
+        note = wake_knocked_out(save, state, target)
+        return f"{target.name} 剩余 {target.hp}/{target.max_hp}，{note}。"
     if target.hp > 0:
         target.out = False
         # 从 0 血被救回来（或者撤销了退场标记）就不能再算战果——
@@ -2064,6 +2317,171 @@ def _weapon_brief(weapon) -> str:
     return "，".join(parts)
 
 
+def remove_conditions(
+    save: Save, combatant: Combatant, names: Iterable[str]
+) -> list[str]:
+    """摘掉参战者的若干状态，返回**真的摘掉了**的那些（规范名）。
+
+    玩家的状态写在角色卡上、敌人的写在参战者上——这条分叉在这一个函数里收口，
+    免得每处「打完架要掉个状态」都各写一遍。
+    """
+    wanted = set(normalize_conditions(list(names)))
+    if not wanted:
+        return []
+    current = combatant_conditions(save, combatant)
+    gone = [name for name in current if name in wanted]
+    if not gone:
+        return []
+    remaining = [name for name in current if name not in wanted]
+    if combatant.is_enemy:
+        combatant.conditions = remaining
+    else:
+        card = get_character(save, combatant.cid)
+        if card is None:
+            return []
+        card.conditions = remaining
+        set_character(save, card)
+    for name in gone:
+        combatant.condition_rounds.pop(name, None)
+    return gone
+
+
+#: 战术动作里**战斗中才有意义**的那几个（战斗外由 DM 用 check + 叙述处理）
+_TACTIC_COMBAT_ONLY = frozenset({"回避", "预备", "借机攻击", "上马", "下马"})
+
+
+def do_tactic(
+    save: Save,
+    state: CombatState | None,
+    ref: str,
+    action: str,
+    *,
+    target: str = "",
+    trigger: str = "",
+    rng: Any = None,
+) -> str:
+    """战术动作统一入口（PHB 2024 第一章）：回避 / 躲藏 / 预备 / 借机攻击 / 上下坐骑。
+
+    为什么要有这一层：这几条**都有骰子、状态或行动资源**，交给 DM 读规则手算
+    等于把已经自动化的东西退回去（躲藏要不要掷 DC15、借机攻击花不花反应、
+    预备在哪一刻作废，全都能程序算）。
+
+    - **回避** → 挂「回避」状态（1 轮，自己下回合开始自动摘），记一个动作；
+    - **躲藏** → 敏捷（隐匿）DC 15，成功挂「隐形」，出手即暴露（见 :func:`attack`）；
+    - **预备** → 把触发条件记在参战者身上，自己下回合开始作废；
+    - **借机攻击** → 用反应替它打一次（玩家走 :func:`attack`，敌人走 :func:`enemy_attack`）；
+    - **上马 / 下马** → 扣一半速度的移动力。
+
+    :param state: 战斗状态；``None`` 表示不在战斗里（只给提示，不改任何东西）。
+    :param trigger: 预备动作的触发条件。
+    """
+    kind = normalize_tactic(action)
+    if not kind:
+        return (
+            f"没认出战术动作「{action}」。可用：回避（闪避 / 躲避）、"
+            "躲藏（隐藏）、预备（准备）、借机攻击、上马、下马"
+        )
+    if state is None:
+        return (
+            f"「{kind}」要在战斗里才由系统结算。剧情里想躲藏 / 骑乘，"
+            "用 check 掷隐匿（躲藏 DC 15）或敏捷豁免，再用 update_character 的 "
+            "conditions 挂「隐形」这类结果即可"
+            if kind in _TACTIC_COMBAT_ONLY
+            else f"现在不在战斗中，「{kind}」改由你用 check 掷骰 + 叙述处理即可"
+        )
+    actor = find_combatant(state, ref)
+    if actor is None:
+        return f"场上没有「{ref}」这个人"
+    if not can_act(save, actor):
+        names = "、".join(combatant_conditions(save, actor)) or "倒下 / 失能"
+        return f"{actor.name} 现在{names}，做不了{kind}"
+
+    if kind == "回避":
+        speed = combatant_speed(save, actor)
+        if dodge_expires(speed, is_incapacitated(combatant_conditions(save, actor))):
+            return f"{actor.name} 速度 {speed} 尺 / 已失能，回避不起作用"
+        note = apply_condition(save, actor, ["回避"], rounds=1)
+        warn = use_resource(save, state, actor.cid, "action")
+        save_combat(save, state)
+        return (
+            f"【{actor.name}】{note}。到下个回合开始前，打它的攻击检定有劣势、"
+            f"它的**敏捷豁免**有优势；失能或速度归零则立刻失效。{warn}"
+        )
+
+    if kind == "躲藏":
+        if actor.kind == "player":
+            card = get_character(save, actor.cid)
+            if card is None:
+                return f"找不到 {actor.name} 的角色卡，无法掷隐匿"
+            result = card.check_skill("隐匿", HIDE_DC, rng=rng)
+        else:
+            monster = resolve_monster(actor.monster)
+            bonus = monster.modifier("dex") if monster is not None else 0
+            if monster is not None and "stealth" in monster.skills:
+                bonus += monster.proficiency
+            result = roll_check(bonus, HIDE_DC, kind="敏捷（隐匿）检定", rng=rng)
+        use_resource(save, state, actor.cid, "action")
+        if not hide_check(result.total, HIDE_DC):
+            save_combat(save, state)
+            return (
+                f"【{actor.name}】{result.describe()} → 没藏住：位置暴露，敌人知道它在哪。\n"
+                f"（{hide_requirement_note()}）"
+            )
+        note = apply_condition(save, actor, ["隐形"])
+        save_combat(save, state)
+        return (
+            f"【{actor.name}】{result.describe()} → 藏住了：{note}。"
+            "打它的攻击有劣势、它对看不见它的生物攻击有优势；"
+            "**但它一出手（不论中不中）位置就暴露**——下一次 attack 会自动摘掉隐形。\n"
+            f"（{hide_requirement_note()}）"
+        )
+
+    if kind == "预备":
+        actor.readied = str(trigger or "").strip() or "（未写条件）"
+        warn = use_resource(save, state, actor.cid, "action")
+        save_combat(save, state)
+        return f"【{actor.name}】{ready_note(trigger)}{warn}"
+
+    if kind == "借机攻击":
+        if not str(target or "").strip():
+            return "借机攻击要写打谁（target）"
+        warn = use_resource(save, state, actor.cid, "reaction")
+        if actor.kind == "player":
+            card = get_character(save, actor.cid)
+            if card is None:
+                return f"找不到 {actor.name} 的角色卡，无法结算借机攻击"
+            text, _hit = attack(save, card, state, str(target), rng=rng)
+        else:
+            text, _hit = enemy_attack(save, state, actor.cid, str(target), rng=rng)
+        return f"（借机攻击：花掉 {actor.name} 的反应）{warn}\n{text}"
+
+    # 上马 / 下马
+    speed = combatant_speed(save, actor)
+    cost = mount_cost(speed)
+    if cost <= 0 or actor.move_used + cost > speed:
+        left = max(0, speed - actor.move_used)
+        return (
+            f"上下坐骑要花一半速度的移动力（{cost} 尺），"
+            f"{actor.name} 本回合只剩 {left} 尺，不够"
+        )
+    actor.move_used += cost
+    actor.moved = True
+    save_combat(save, state)
+    mount = str(target or "").strip()
+    if kind == "上马":
+        tail = (
+            f"骑上{mount or '坐骑'}了：被强制移动或坐骑倒地时过 **DC10 敏捷豁免**，"
+            "失败就在坐骑 5 尺内失足倒地；受训坐骑受你控制（先攻与你同值，"
+            "只能疾走 / 撤离 / 回避），它触发借机攻击时攻击者可选择打你或打它"
+        )
+    else:
+        tail = "下了坐骑"
+    return (
+        f"【{actor.name}】{kind}，花掉 {cost} 尺移动"
+        f"（本回合已用 {actor.move_used}/{speed} 尺）。{tail}"
+    )
+
+
 def attack(
     save: Save,
     card: DndCharacter,
@@ -2074,6 +2492,7 @@ def attack(
     advantage: Advantage = Advantage.NORMAL,
     two_handed: bool = False,
     off_hand: bool = False,
+    knock_out: bool = False,
     rng: Any = None,
 ) -> tuple[str, bool]:
     """玩家攻击：自动掷命中、掷伤害并扣血。
@@ -2093,6 +2512,8 @@ def attack(
 
     :param two_handed: 两用武器是否双手持用。
     :param off_hand: 副手攻击（双武器战斗）：伤害不加大幅值。
+    :param knock_out: **击晕**（PHB 2024）：这次近战若把目标打到 0 血，改为留
+        1 点生命并陷入昏迷。远程 / 法术做不到——只对近战生效。
     :return: ``(给 DM 的结算文案, 是否命中)``
     """
     target = find_combatant(state, target_ref)
@@ -2255,6 +2676,15 @@ def attack(
     if state_reason:
         warn += f"（{state_reason}）\n"
 
+    # 光照 / 遮蔽 / 特殊感官（PHB 2024「不可见的攻击者与目标」）：
+    # 黑暗里看不见对方 → 劣势；对方看不见你 → 优势；都看不见则抵消。
+    light_adv, light_reason = light_attack_advantage(
+        save, state, attacker, target, distance=distance
+    )
+    advantage = combine_advantage(advantage, light_adv)
+    if light_reason:
+        warn += f"（{light_reason}）\n"
+
     grip = ""
     if two_handed and weapon is not None and weapon.is_versatile:
         grip = "（双手持握）"
@@ -2305,6 +2735,12 @@ def attack(
         if distance >= 0
         else f"【{card.name}】{label} → {result.describe()}（目标 AC {target_ac}）"
     ]
+    # PHB 2024：躲藏中 / 隐形状态下出手，**不论中没中位置都暴露**
+    # （「若你进行攻击检定时处于躲藏中，不论是否命中你的位置都会暴露」）
+    if attacker is not None and "隐形" in combatant_conditions(save, attacker):
+        remove_conditions(save, attacker, ["隐形"])
+        lines.append("（出手暴露位置：隐形结束）")
+
     if not result.success:
         lines.append(f"未命中 {target.name}。")
         return warn + "\n".join(lines), False
@@ -2325,9 +2761,20 @@ def attack(
     damage, detail = roll_damage(damage_expr, crit=crit, rng=rng)
     crit_text = "（暴击，伤害骰翻倍）" if crit else ""
     lines.append(f"命中 {target.name}！{detail}{crit_text}")
+    # 击晕只对近战生效（PHB 明写「用近战攻击」）；远程想留活口只能靠叙述。
+    want_ko = bool(knock_out) and is_melee
+    if knock_out and not is_melee:
+        lines.append("（击晕只对近战生效，本次按普通伤害结算）")
     lines.append(
         apply_damage(
-            save, state, target, damage, damage_type=damage_type, crit=crit, rng=rng
+            save,
+            state,
+            target,
+            damage,
+            damage_type=damage_type,
+            crit=crit,
+            knock_out=want_ko,
+            rng=rng,
         )
     )
     return warn + "\n".join(lines), True
@@ -2527,6 +2974,12 @@ def enemy_attack(
     )
     advantage = combine_advantage(advantage, trait_adv)
 
+    # 光照 / 遮蔽 / 特殊感官：黑暗里它看不见玩家就打不准，玩家看不见它也同样
+    light_adv, light_reason = light_attack_advantage(
+        save, state, enemy, target, distance=gate.distance
+    )
+    advantage = combine_advantage(advantage, light_adv)
+
     target_ac = effective_ac(save, target, state)
     bonus = monster.attack_bonus(attack_obj) + combatant_d20_bonus(save, enemy)
     # 记一笔「它这一轮已经出手了」：自动结算据此不重复打同一只怪
@@ -2558,6 +3011,8 @@ def enemy_attack(
             "（它有日照敏感：这里有没有日光由你裁定，"
             "有的话这一击带劣势——下次开战可以用 daylight=是/否 定下来）"
         )
+    if light_reason:
+        lines.append(f"（{light_reason}）")
     if focus_hint:
         lines.append(focus_hint)
 
@@ -3073,6 +3528,22 @@ def state_tile(state: CombatState, combatant: Combatant):
 # --------------------------------------------------------------------------- #
 
 
+def light_text(state: CombatState) -> str:
+    """战场光照的一句话说明（给 DM 看）：遮蔽级别 + 会带来什么后果。"""
+    key = str(getattr(state, "light", "bright") or "bright")
+    name = LIGHT_LEVELS.get(key, "明亮")
+    obscured = light_obscurement(key)
+    if obscured == "重度":
+        return (
+            f"光照：{name}（重度遮蔽——看不见里面的人，等同目盲：看不见目标的一方"
+            "攻击带劣势、看不见它的一方被打有优势；黑暗视觉按微光算，盲视 / 震颤感知"
+            "在射程内不受影响）"
+        )
+    if obscured == "轻度":
+        return f"光照：{name}（轻度遮蔽——基于视觉的察觉检定劣势，不影响攻击）"
+    return f"光照：{name}"
+
+
 def threat_text(state: CombatState) -> str:
     """威胁层级的一句话摘要（给 DM 看；没有威胁时返回空串）。
 
@@ -3127,6 +3598,7 @@ def combat_text(save: Save, state: CombatState, *, with_map: bool = True) -> str
     threat_line = threat_text(state)
     if threat_line:
         lines.append(threat_line)
+    lines.append(light_text(state))
     board = battlefield_text(state, with_map=with_map)
     if board:
         lines.append(board)
@@ -3151,6 +3623,8 @@ def combat_text(save: Save, state: CombatState, *, with_map: bool = True) -> str
             status += "　已退场" + (f"（{combatant.note}）" if combatant.note else "")
         elif hp_now <= 0:
             status += "　已倒下"
+        if combatant.readied:
+            status += f"　⏳ 已预备（触发：{combatant.readied}）"
         turn_used = ""
         if combatant.kind == "player" and (
             current is None or combatant.cid == current.cid

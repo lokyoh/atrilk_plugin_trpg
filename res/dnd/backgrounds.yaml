@@ -1,9 +1,16 @@
-# 背景表（建卡第 4 步）
-# 一条一个背景：技能熟练、工具、语言数、起始装备与背景特性。
+# 背景表（建卡第 2 步：确定起源）
+# 一条一个背景：属性提升（三项）、技能熟练、工具、语言数、起始装备与背景特性。
+#
+# ``bonus`` 是 PHB 2024 的「属性值提升」三项属性（手册第二章 2085「属性值与背景」表）：
+# 玩家在其中选一项 +2、另一项 +1，或三项各 +1（上限 20）。种族**不再**提供属性加值。
 
 - key: acolyte
   cn: 侍僧
   en: Acolyte
+  bonus:
+  - int
+  - wis
+  - cha
   skills:
   - insight
   - religion
@@ -19,6 +26,10 @@
 - key: charlatan
   cn: 骗子
   en: Charlatan
+  bonus:
+  - dex
+  - con
+  - cha
   skills:
   - deception
   - sleight_of_hand
@@ -34,6 +45,10 @@
 - key: criminal
   cn: 罪犯
   en: Criminal
+  bonus:
+  - dex
+  - con
+  - int
   skills:
   - deception
   - stealth
@@ -49,6 +64,10 @@
 - key: folk_hero
   cn: 民间英雄
   en: Folk Hero
+  bonus:
+  - str
+  - con
+  - wis
   skills:
   - animal_handling
   - survival
@@ -65,6 +84,10 @@
 - key: noble
   cn: 贵族
   en: Noble
+  bonus:
+  - str
+  - int
+  - cha
   skills:
   - history
   - persuasion
@@ -81,6 +104,10 @@
 - key: sage
   cn: 智者
   en: Sage
+  bonus:
+  - con
+  - int
+  - wis
   skills:
   - arcana
   - history
@@ -96,6 +123,10 @@
 - key: soldier
   cn: 士兵
   en: Soldier
+  bonus:
+  - str
+  - dex
+  - con
   skills:
   - athletics
   - intimidation
@@ -113,6 +144,10 @@
 - key: outlander
   cn: 化外之民
   en: Outlander
+  bonus:
+  - dex
+  - con
+  - wis
   skills:
   - athletics
   - survival
@@ -129,6 +164,10 @@
 - key: entertainer
   cn: 艺人
   en: Entertainer
+  bonus:
+  - str
+  - dex
+  - cha
   skills:
   - acrobatics
   - performance
@@ -145,6 +184,10 @@
 - key: guild_artisan
   cn: 行会工匠
   en: Guild Artisan
+  bonus:
+  - str
+  - dex
+  - int
   skills:
   - insight
   - persuasion
@@ -161,6 +204,10 @@
 - key: hermit
   cn: 隐士
   en: Hermit
+  bonus:
+  - con
+  - wis
+  - cha
   skills:
   - medicine
   - religion

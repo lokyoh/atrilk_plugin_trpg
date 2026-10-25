@@ -2,8 +2,9 @@
 
 把规则里只有文字的部分落成可结算的数据：
 
-- **状态注册表**：14 种状态 + 野蛮人「狂暴」+ 「擒抱」，每项带机械效果
-  （攻击 / 被攻击的优势劣势、自动失败的豁免、能否行动、速度、伤害抗性……）；
+- **状态注册表**：14 种状态 + 「狂暴」「擒抱」「回避」+ 几种常用增益，
+  每项带机械效果（攻击 / 被攻击的优势劣势、自动失败的豁免、能否行动、
+  速度、伤害抗性……）；
 - **力竭**：2024 口径——每级让**所有 d20 检定**（属性 / 豁免 / 攻击）−2、
   速度 −5 尺，6 级死亡；等级记在角色卡 / 参战者身上；
 - **抗性结算**：抗性减半、免疫归零、易伤翻倍，按伤害类型查表。
@@ -16,6 +17,15 @@ DM 仍然可以用显式的 advantage 参数覆盖（剧情上说得通时）。
 自由文本进、规范名出：:func:`normalize_conditions` 认常见的同义写法
 （「俯伏」→「倒地」、「惊吓」→「恐慌」），认不出的原样保留成自定义备注，
 不会因为模型换了个说法就丢掉状态。
+
+.. note::
+
+   这里**只收真正能机械结算的状态**。曾经有一条「激励」：文案写的是吟游诗人
+   激励，效果却给成了「优势 +1 属性加值」——吟游激励其实是「一次 d20 检定
+   额外加一枚激励骰（1d6 起）」，而本模块没有「加骰」这种机制，于是它既不是
+   吟游激励、也不是 2024 的英雄激励（英雄激励在角色卡的 ``inspiration`` 字段上，
+   见 :mod:`.card`），只会让 DM 读到一条错规则。2026-10-25 把它移除了：
+   **宁可没有，也不给一条算错的**。
 """
 
 from __future__ import annotations
@@ -116,9 +126,6 @@ class ConditionEffect:
     save_bonus_abilities: tuple[tuple[str, int], ...] = ()
     #: AC 加值（守护之灵、护盾术等「给自己加一层甲」的效果）
     ac_bonus: int = 0
-    #: 回合开始时自动扣除的生命值（中毒的持续伤害等）。``("", 0)`` 形式保留伤害类型，
-    #: 第二项是固定点数；空元组表示没有持续伤害。
-    dot: tuple[str, int] = ()
     #: **所有 d20 检定**（属性 / 豁免 / 攻击）的固定加值（负数=减值）。
     #: 2024 力竭走这里：每级 −2。与优势劣势不同，数值加值可叠加。
     d20_bonus: int = 0
@@ -158,13 +165,6 @@ class ConditionEffect:
                 self.save_bonus_abilities, other.save_bonus_abilities
             ),
             ac_bonus=self.ac_bonus + other.ac_bonus,
-            # 持续伤害取**最大**的那个：两次中毒叠加成双倍扣血会让低血量角色
-            # 无声暴毙，而5e 的中毒规则本就是「取最高伤害的那次」而非累加。
-            # 空元组表示「没有持续伤害」，用 -1 让它在max 里排最后。
-            dot=max(
-                (self.dot, other.dot),
-                key=lambda pair: pair[1] if pair else -1,
-            ),
             # 数值加值按来源累加（祝福 +2 叠上元素亲和 +2 就是 +4）——
             # 与优势劣势相反：优势不叠加，加值叠加。
             d20_bonus=self.d20_bonus + other.d20_bonus,
@@ -217,7 +217,8 @@ class Condition:
         return self.cn
 
 
-#: 状态注册表（5e 14 种 + 野蛮人狂暴 + 擒抱；力竭按等级单独结算）
+#: 状态注册表（5e 的 14 种 + 野蛮人狂暴 + 擒抱 + 增益类 + 回避动作；
+#: 力竭按等级单独结算）
 CONDITIONS: tuple[Condition, ...] = (
     Condition(
         "prone",
@@ -321,13 +322,12 @@ CONDITIONS: tuple[Condition, ...] = (
         ConditionEffect(
             own_attack=Advantage.DISADVANTAGE,
             own_check=Advantage.DISADVANTAGE,
-            dot=("毒素", 1),
             notes=(
-                "攻击与属性检定有劣势；**每个自己的回合开始时自动扣 1 生命**"
-                "（DM 用 spells 里的剧毒术可提到更高，见规则）",
+                "攻击与属性检定有劣势；**不造成持续伤害**"
+                "（PHB 两版都只有劣势；本局早先的每回合掉 1 血已不采用）",
             ),
         ),
-        "中毒：攻击检定与属性检定有劣势，每回合开始失去 1 点生命。",
+        "中毒：攻击检定与属性检定有劣势（不影响豁免，也不掉血）。",
     ),
     Condition(
         "restrained",
@@ -402,17 +402,6 @@ CONDITIONS: tuple[Condition, ...] = (
         "祝福术：所有属性检定与豁免有优势，1~3 环时属性加值 +1。",
     ),
     Condition(
-        "inspired",
-        "激励",
-        "Inspired",
-        ConditionEffect(
-            own_attack=Advantage.ADVANTAGE,
-            check_bonus_abilities=(("all", 1),),
-            notes=(" Bard 的激励：一次攻击或豁免掷骰加 1d6",),
-        ),
-        "激励（吟游诗人）：下一次攻击或豁免检定获得优势与 +1d6。",
-    ),
-    Condition(
         "shield",
         "守护之灵",
         "Shield of Faith",
@@ -421,6 +410,30 @@ CONDITIONS: tuple[Condition, ...] = (
             notes=("1 环防护之灵：+2 AC，需专注",),
         ),
         "防护之灵：AC +2（需专注）。",
+    ),
+    Condition(
+        "dodging",
+        "回避",
+        "Dodging",
+        ConditionEffect(
+            vs_attack=Advantage.DISADVANTAGE,
+            save_adv_abilities=("dex",),
+            notes=(
+                "回避动作（PHB 2024）：到**下个回合开始**为止，"
+                "打它的攻击检定有劣势、它的敏捷豁免有优势；失能或速度归零时失效",
+            ),
+        ),
+        "回避：到自己下回合开始前，被攻击有劣势、敏捷豁免有优势。",
+    ),
+    Condition(
+        "shield_spell",
+        "护盾",
+        "Shield",
+        ConditionEffect(
+            ac_bonus=5,
+            notes=("1 环护盾术（反应）：AC +5，到自己下回合开始时结束",),
+        ),
+        "护盾术：AC +5，直到施法者的下回合开始（1 轮）。",
     ),
     Condition(
         "haste",
@@ -482,9 +495,6 @@ CONDITION_ALIASES: dict[str, str] = {
     "祝福术": "祝福",
     "受祝福": "祝福",
     "祝福状态": "祝福",
-    "激励术": "激励",
-    "受激励": "激励",
-    "受到激励": "激励",
     "守护之灵术": "守护之灵",
     "防护之灵": "守护之灵",
     "守护": "守护之灵",
@@ -494,6 +504,13 @@ CONDITION_ALIASES: dict[str, str] = {
     "加速术": "加速",
     "加速状态": "加速",
     "急速": "加速",
+    # 2024 动作名叫「回避」，模型 / DM 更习惯写「闪避」「躲避」
+    "闪避": "回避",
+    "闪避中": "回避",
+    "躲避": "回避",
+    "躲避中": "回避",
+    "回避中": "回避",
+    "回避状态": "回避",
 }
 
 

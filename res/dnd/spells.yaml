@@ -611,6 +611,9 @@
   - wizard
   casting_time: 1 反应
   duration: 1 轮
+  conditions:
+  - 护盾
+  condition_rounds: 1
   desc: AC +5，直到你的下回合开始。
 - key: mage_armor
   cn: 法师护甲

@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..trpg.check import reroll_check
 from ..trpg.dice import Advantage, DiceError, roll
 from ..trpg.rule import JudgeResult, KeywordRule, KeywordRuleJudge, Verdict
 from .attributes import ABILITY_MAP
@@ -25,11 +26,14 @@ from .skills import SKILL_MAP, get_skill
 
 __all__ = [
     "COMBAT_REASON",
+    "REROLL_RE",
     "DndAction",
     "DndRuleJudge",
     "dnd_judge",
     "parse_dice_request",
     "parse_skill_request",
+    "strip_reroll",
+    "wants_reroll",
 ]
 
 #: 命中即打回：明显违背规则、或试图让 AI 直接给出结果的叙述
@@ -84,6 +88,13 @@ NEED_INFO_RULES: tuple[KeywordRule, ...] = (
 #: 于是同一次行动被结算两遍，存档里留下与实际结果矛盾的判定。
 COMBAT_REASON = "战斗行动。"
 
+#: 想重骰但身上没有英雄激励时，挂在检定回执后面的一句话
+_NO_INSPIRATION = "（想重骰，但身上没有英雄激励：这次结果照旧）"
+
+#: 写了重骰但这次压根没掷骰（战斗动作 / 自由叙述）时的说明——
+#: 激励**不消耗**，并告诉他下次该怎么写
+_NO_DICE_TO_REROLL = "（这次没有掷骰，英雄激励留着没动：把「重骰」写在检定指令上才生效，如「察觉 重骰」）"
+
 #: 命中即通过：明确的行动指令
 ACCEPT_RULES: tuple[KeywordRule, ...] = (
     KeywordRule(
@@ -108,6 +119,24 @@ ACCEPT_RULES: tuple[KeywordRule, ...] = (
 )
 
 
+#: 玩家写明「重骰 / 重投」的说法。**只有他写明了才消耗英雄激励**——
+#: 系统不替玩家决定要不要用（用了就没了，而且必须采用新结果）。
+#: 「重投」是常见写法（手册译本里两种都有），一并认。
+REROLL_RE = re.compile(
+    r"重\s*(?:骰|投|掷|摇)|再\s*(?:骰|投|掷|摇)\s*(?:一?[次回]|一?把)?"
+)
+
+
+def wants_reroll(text: str) -> bool:
+    """玩家这句话里有没有写明要重掷（重骰 / 重投 / 重掷 / 再骰……）。"""
+    return bool(REROLL_RE.search(text or ""))
+
+
+def strip_reroll(text: str) -> str:
+    """去掉重骰字样，剩下的部分交给检定 / 骰子指令解析。"""
+    return REROLL_RE.sub("", text or "").strip("，,。.、；;!！?？ ")
+
+
 @dataclass(slots=True)
 class DndAction:
     """一次行动被规则判断器解析后的结论。"""
@@ -118,6 +147,8 @@ class DndAction:
     check_bonus: int = 0
     dc: int = 0
     advantage: Advantage = Advantage.NORMAL
+    #: 这次行动有没有消耗掉英雄激励（有则调用方需要把角色卡落盘）
+    inspiration_spent: bool = False
 
     @property
     def needs_check(self) -> bool:
@@ -142,32 +173,51 @@ class DndRuleJudge(KeywordRuleJudge):
         character: DndCharacter | None = None,
         context: dict | None = None,
     ) -> DndAction:
-        """解析行动：先认直接指令，再走关键词规则，最后结合角色给出检定建议。"""
+        """解析行动：先认直接指令，再走关键词规则，最后结合角色给出检定建议。
+
+        玩家在行动里写了「重骰 / 重投」时才会消耗英雄激励重掷——**重掷必须
+        采用新结果**（PHB 2024 边栏），所以这里不会「取两次里好的那个」。
+        """
         text = (action or "").strip()
+        wants = wants_reroll(text)
+        body = strip_reroll(text) if wants else text
 
         # 1. 纯骰子指令：2d6+3
-        dice_expr = parse_dice_request(text)
+        dice_expr = parse_dice_request(body)
         if dice_expr:
             try:
                 result = roll(dice_expr, label="自由掷骰")
             except DiceError as e:
                 return DndAction(JudgeResult(Verdict.NEED_INFO, reason=str(e)))
-            return DndAction(
-                JudgeResult(Verdict.ACCEPT, reason=f"自由掷骰：{result.describe()}"),
-            )
+            reason = f"自由掷骰：{result.describe()}"
+            if wants:
+                spent, note = self._spend_for_reroll(character)
+                if spent:
+                    again = roll(dice_expr, label="自由掷骰")
+                    reason = f"{reason}\n英雄激励重掷：{again.describe()}"
+                elif note:
+                    reason = f"{reason}\n{note}"
+                return DndAction(
+                    JudgeResult(Verdict.ACCEPT, reason=reason),
+                    inspiration_spent=spent,
+                )
+            return DndAction(JudgeResult(Verdict.ACCEPT, reason=reason))
 
-        # 2. 技能 / 属性检定指令：察觉 / 力量检定 / 察觉 DC15
+        # 2. 技能 / 属性检定指令：察觉 / 力量检定 / 察觉 DC15 / 察觉 重骰
         if character is not None:
-            check = parse_skill_request(text)
+            check = parse_skill_request(body)
             if check:
                 skill_key, dc, advantage = check
                 result = self._roll(character, skill_key, dc, advantage)
+                result, spent, note = self._with_reroll(character, result, wants)
+                reason = f"{result.describe()}\n{note}" if note else result.describe()
                 return DndAction(
-                    JudgeResult(Verdict.ACCEPT, reason=result.describe()),
+                    JudgeResult(Verdict.ACCEPT, reason=reason),
                     check_kind=result.kind,
                     check_bonus=result.bonus,
                     dc=dc,
                     advantage=advantage,
+                    inspiration_spent=spent,
                 )
 
         # 3. 关键词规则
@@ -177,23 +227,56 @@ class DndRuleJudge(KeywordRuleJudge):
         #    战斗动作例外：命中 / 伤害 / 豁免由战斗系统结算，判断器不预掷——
         #    预掷出的那次（如施法被当成「提到魔法」掷奥秘）会与正式结算打架。
         if base.accepted and character is not None and base.reason != COMBAT_REASON:
-            suggested = self._suggest_check(text, character)
+            suggested = self._suggest_check(body, character)
             if suggested:
                 skill_key, dc, advantage = suggested
                 result = self._roll(character, skill_key, dc, advantage)
-                base.reason = (
-                    f"{base.reason}\n{result.describe()}"
-                    if base.reason
-                    else result.describe()
-                )
+                result, spent, note = self._with_reroll(character, result, wants)
+                line = f"{result.describe()}\n{note}" if note else result.describe()
+                base.reason = f"{base.reason}\n{line}" if base.reason else line
                 return DndAction(
                     base,
                     check_kind=result.kind,
                     check_bonus=result.bonus,
                     dc=dc,
                     advantage=advantage,
+                    inspiration_spent=spent,
                 )
+        if wants:
+            # 写了重骰但这次根本没掷骰（战斗动作 / 纯叙述）：激励留着，说清楚为什么没用
+            base.reason = (
+                f"{base.reason}\n" if base.reason else ""
+            ) + _NO_DICE_TO_REROLL
         return DndAction(base)
+
+    @staticmethod
+    def _spend_for_reroll(
+        character: DndCharacter | None,
+    ) -> tuple[bool, str]:
+        """玩家写明要重骰：尝试消耗英雄激励。
+
+        :return: ``(是否消耗成功, 消耗失败时的提示)``。没带角色卡就不算数。
+        """
+        if character is None:
+            return False, ""
+        if character.spend_inspiration():
+            return True, ""
+        return False, _NO_INSPIRATION
+
+    @classmethod
+    def _with_reroll(
+        cls,
+        character: DndCharacter | None,
+        result,
+        wants: bool,
+    ) -> tuple[object, bool, str]:
+        """写明重骰就消耗激励重掷一次；返回 ``(结果, 是否消耗, 提示)``。"""
+        if not wants or character is None:
+            return result, False, ""
+        spent, note = cls._spend_for_reroll(character)
+        if not spent:
+            return result, False, note
+        return reroll_check(result), True, ""
 
     @staticmethod
     def _roll(character: DndCharacter, key: str, dc: int, advantage: Advantage):
@@ -246,7 +329,9 @@ class DndRuleJudge(KeywordRuleJudge):
     def rules_text(self) -> str:
         return (
             "行动请尽量具体：做什么、用什么、对谁。\n"
-            "可直接下检定指令，如「察觉」「力量检定」「察觉 DC15」「2d6+3」。"
+            "可直接下检定指令，如「察觉」「力量检定」「察觉 DC15」「2d6+3」。\n"
+            "身上有英雄激励时，在指令里写「重骰」（或「重投」）即可消耗它重掷一次，"
+            "但**必须采用新结果**。"
         )
 
 

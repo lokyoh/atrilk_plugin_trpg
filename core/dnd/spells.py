@@ -38,6 +38,8 @@ __all__ = [
     "format_spell_list",
     "get_spell",
     "max_slots",
+    "merge_dice",
+    "parse_single_dice",
     "slot_text",
     "spells_for_class",
     "spells_of_level",
@@ -79,6 +81,44 @@ _LEVEL_LABELS: dict[int, str] = {
 #: 戏法成长文本「5 级 2d10、11 级 3d10、17 级 4d10」→ (等级, 伤害骰)
 _SCALING_RE = re.compile(r"(\d+)\s*级\s*(\d+d\d+)")
 
+#: 升环文本「每升一环 +1d8」「每升一环 +1d4+1」→ (骰数, 面数, 固定加值)
+_UPCAST_DICE_RE = re.compile(r"每升一环\s*\+\s*(\d*)d(\d+)\s*([+-]\s*\d+)?")
+
+#: 单一骰式（``3d8`` / ``2d8+3`` / ``1d4-1``）——伤害结算只认这一种
+_SINGLE_DICE_RE = re.compile(r"^(\d*)d(\d+)\s*(?:([+-])\s*(\d+))?$")
+
+
+def parse_single_dice(text: str) -> tuple[int, int, int] | None:
+    """``"3d8"`` / ``"2d8+3"`` → ``(骰数, 面数, 固定加值)``；不是单一骰式返回 ``None``。"""
+    match = _SINGLE_DICE_RE.match(str(text or "").strip())
+    if match is None:
+        return None
+    sign = -1 if match.group(3) == "-" else 1
+    return (
+        int(match.group(1) or 1),
+        int(match.group(2)),
+        sign * int(match.group(4) or 0),
+    )
+
+
+def merge_dice(base: str, extra: str) -> str:
+    """把两段骰式合成一个 ``NdM+K``（``roll_damage`` 只认单一骰式）。
+
+    面数不同或任一段不是单一骰式时**原样返回** base——宁可少算这一段，
+    也不给一个解析不了、最后按 0 点结算的表达式。
+    """
+    if not base or not extra:
+        return base
+    b, e = parse_single_dice(base), parse_single_dice(extra)
+    if b is None or e is None or b[1] != e[1]:
+        return base
+    out = f"{b[0] + e[0]}d{b[1]}"
+    flat = b[2] + e[2]
+    if flat:
+        out += f"{flat:+d}"
+    return out
+
+
 #: 法术位表：职业等级 -> {环阶: 法术位数量}
 #: 全职施法者（法师 / 牧师 / 德鲁伊 / 吟游诗人 / 术士）按 PHB 法术位表延伸到 20 级
 #:（2014 与 2024 相同）。
@@ -105,9 +145,10 @@ FULL_CASTER_SLOTS: dict[int, dict[int, int]] = {
     20: {1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2, 7: 2, 8: 1, 9: 1},
 }
 
-#: 半施法者（圣武士 / 游侠）：1 级还没有法术；按 PHB 法术位表延伸到 20 级（两版相同）。
+#: 半施法者（圣武士 / 游侠）：**PHB 2024 起 1 级就能施法**（2 个一环位），
+#: 2 级以后与 2014 表相同 —— 等价于「职业等级的一半向上取整」去查兼职施法者表。
 HALF_CASTER_SLOTS: dict[int, dict[int, int]] = {
-    1: {},
+    1: {1: 2},
     2: {1: 2},
     3: {1: 3},
     4: {1: 3},
@@ -272,16 +313,51 @@ class Spell:
                 dice = tier_dice
         return dice
 
-    def damage_expr(self, modifier: int = 0, *, level: int = 0) -> str:
+    def upcast_dice(self, slot_level: int = 0) -> str:
+        """用更高环位施放时**追加**的伤害 / 治疗骰（PHB：每升一环 +NdM）。
+
+        三环法术拿五环位放 → 升两级 → ``2d8``（数据是「每升一环 +1d8」）。
+        认不出的写法（「多 1 个目标」「多出一枚飞弹」）与不是骰子的（「+5 临时
+        生命」）返回空串，由 DM 按 ``upcast`` 原文裁决——宁可少算，不瞎算。
+
+        :param slot_level: 实际使用的法术位环阶；不高于本法术环阶时返回空串。
+        """
+        upcast = self.upcast or ""
+        if self.level <= 0 or int(slot_level or 0) <= self.level or not upcast:
+            return ""
+        match = _UPCAST_DICE_RE.search(upcast)
+        if match is None or "临时" in upcast:
+            return ""
+        # 括号里带限定（「+1d6（爆炸伤害）」「+1d6（首次伤害）」）的不敢直接加进
+        # 主伤害——那是另一段伤害，交给 DM 按原文处理。
+        if upcast[match.end() :].lstrip().startswith("（"):
+            return ""
+        steps = int(slot_level) - self.level
+        count = int(match.group(1) or 1)
+        sides = int(match.group(2))
+        flat = int((match.group(3) or "0").replace(" ", ""))
+        expr = f"{count * steps}d{sides}"
+        if flat:
+            expr += f"{flat * steps:+d}"
+        return expr
+
+    def damage_expr(
+        self, modifier: int = 0, *, level: int = 0, slot_level: int = 0
+    ) -> str:
         """可掷的伤害表达式：把「施法属性调整值」替换成实际加值。
 
         :param level: 施法者的**角色等级**——戏法按它成长（17 级的火焰箭是 4d10）。
+        :param slot_level: 实际使用的法术位环阶——高于本法术环阶时追加升环骰
+            （二环雷鸣波是 3d8，PHB 第一章示例就是这个）。
         """
         text = re.sub(r"（[^）]*）", "", self.damage or "").strip()
         if self.is_cantrip and int(level) > 0:
             text = re.sub(
                 r"（[^）]*）", "", self.cantrip_damage(int(level)) or ""
             ).strip()
+        extra = self.upcast_dice(slot_level)
+        if extra and text:
+            text = merge_dice(text, extra)
         if "施法属性调整值" in text:
             text = text.replace("施法属性调整值", f"{int(modifier):+d}")
         return text

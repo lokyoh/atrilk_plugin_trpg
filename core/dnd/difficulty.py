@@ -70,7 +70,9 @@ SKILL_BASE_DC: dict[str, int] = {
     "perception": 13,  # 感知：察觉、倾听、搜索
     "investigation": 15,
     "insight": 13,  # 洞察：看穿动机
-    "medicine": 13,  # 医疗：稳定伤势
+    # 医疗：**稳定伤势是明文 DC 10**（PHB 2024 第一章），基准就照它来——
+    # 从前写 13，DM 一紧张就会给「包扎一下」上 DC 13，实际上是 DC 10 的活。
+    "medicine": 10,
     "survival": 13,  # 生存：追踪、辨识方向
     "animal_handling": 13,  # 驯养
     "persuasion": 15,
