@@ -32,6 +32,7 @@ from ...dnd.battlemap import (
 from ...dnd.bestiary import bestiary_text, find_bestiary
 from ...dnd.card import DndCharacter
 from ...dnd.class_features import CLASS_FEATURES, features_for
+from ...dnd.class_resources import RESOURCE_CN, resources_text
 from ...dnd.combat import (
     apply_condition,
     apply_threat_profile,
@@ -137,6 +138,13 @@ from ...dnd.save_store import (
 )
 from ...dnd.settlement import settle_combat
 from ...dnd.skills import SKILLS, get_skill
+from ...dnd.spell_progression import (
+    cantrips_at,
+    change_text,
+    picks_at,
+    prepared_at,
+    spellbook_at,
+)
 from ...dnd.spells import (
     SPELLS,
     format_spell_lines,
@@ -509,7 +517,25 @@ def _query_profession(name: str) -> str:
     )
     lines.append("豁免熟练：" + "、".join(get_ability(k).cn for k in cls.saves))
     lines.append(f"可选技能（{cls.skill_count} 项）：" + "、".join(cls.skill_names()))
+    # C1：受训要看得见 —— 玩家不知道能穿什么甲、用什么武器就没法选装备
+    if cls.format_proficiencies():
+        lines.append("受训：" + cls.format_proficiencies())
+    # T11：准备制职业要说清「每天能准备几个」（长休后改，否则玩家以为法术书里全能用）
+    if cls.is_prepared_caster:
+        book = spellbook_at(cls.key, 1)
+        note = f"（法术书 {book} 条，从里面挑）" if book else ""
+        lines.append(
+            f"准备法术：1 级 {prepared_at(cls.key, 1)} 个{note}、20 级 "
+            f"{prepared_at(cls.key, 20)} 个（数量随等级涨，与属性无关）；"
+            f"{change_text(cls.key)}；**只能放准备过的**"
+        )
     subs = subclass_choices(cls.key)
+    # 资源（狂暴 / 回气 / 功力 / 引导神力……）：只说 1 级与 20 级，中间等级
+    # 一句「随等级涨」带过——逐级列 20 行没人看，写卡时还有 summary 兜底。
+    first = resources_text(cls.key, 1)
+    last = resources_text(cls.key, 20)
+    if first and last:
+        lines.append(f"资源：1 级 {first}；20 级 {last}")
     if subs:
         lines.append(
             f"子职（{SUBCLASS_LEVEL} 级选，共 {len(subs)} 个）："
@@ -540,6 +566,20 @@ def _query_subclass(name: str) -> str:
     lines = [head, f"获得等级：{SUBCLASS_LEVEL} 级"]
     if sub.desc:
         lines.append(sub.desc)
+    # 引擎真会算的那几条单独点出来，免得 DM 以为全靠自己记
+    engine: list[str] = []
+    crits = [f"L{f.level} 起 {f.crit_at}（{f.name}）" for f in sub.features if f.crit_at]
+    if crits:
+        engine.append("暴击阈值：" + "、".join(crits))
+    if sub.superiority:
+        growth = "、".join(
+            f"L{lv} {count}d{die}" for lv, (count, die) in sorted(sub.superiority.items())
+        )
+        engine.append(f"卓越骰（短休回满）：{growth}")
+    if any(f.raging_dice for f in sub.features):
+        engine.append("狂怒：狂暴中鲁莽攻击每回合首次命中加骰（引擎自动结算）")
+    if engine:
+        lines.append("引擎结算：" + "；".join(engine))
     if sub.features:
         lines.append("特性：")
         lines.extend(f"  L{f.level} {f.name}：{f.text}" for f in sub.features)
@@ -701,12 +741,27 @@ def _query_spell(name: str) -> str:
     except KeyError:
         cls = None
     if cls is not None:
-        spells = spells_for_class(cls.key)
-        lines = [f"{cls.cn}可用法术（{len(spells)} 个）："]
+        if not cls.is_caster:
+            return f"{cls.cn}不是施法职业，没有法术表。"
+        # 0~9 环全表有几百条，逐条列出来会刷屏：列 0~3 环的明细，
+        # 高环只报数量（要具体条目就用「法术 火球术」按名字查）。
+        every = spells_for_class(cls.key, levels=range(0, 10))
+        counts = {lv: sum(1 for s in every if s.level == lv) for lv in range(0, 10)}
+        summary = "、".join(
+            f"{'戏法' if lv == 0 else f'{lv} 环'} {counts[lv]}"
+            for lv in range(0, 10)
+            if counts[lv]
+        )
+        spells = [s for s in every if s.level <= 3]
+        lines = [
+            f"{cls.cn}可用法术（共 {len(every)} 个：{summary}）；"
+            f"下面列 0~3 环的 {len(spells)} 个，高环按名字查："
+        ]
         lines.append(format_spell_lines(spells))
         lines.append(
             f"施法属性：{cls.casting_text or '—'}　施法类型：{cls.caster_text or '—'}"
-            f"　建卡可选：戏法 {cls.cantrips} 个 + 法术 {cls.spells_known} 个"
+            f"　建卡可选（1 级）：戏法 {cantrips_at(cls.key, 1)} 个 + "
+            f"法术 {picks_at(cls.key, 1)} 个（数量随等级涨）"
         )
         return "\n".join(lines)
 
@@ -1181,7 +1236,9 @@ class UpdateCharacterTool(AgentTool):
             "str",
             "hp / temp_hp / conditions / concentrating / 死亡豁免 / exhaustion / exp / "
             "level / name / notes / features / tags / spells / equipment / "
-            "inspiration（英雄激励，至多 1 个）/ attune（同调）",
+            "inspiration（英雄激励，至多 1 个）/ attune（同调）/ "
+            "准备（准备制职业的今日法术表）/ 掷血（升级掷生命骰）/ "
+            "资源（狂暴·回气·功力·术法点…的手工增减）",
         ),
         ToolArg(
             "value",
@@ -1189,7 +1246,8 @@ class UpdateCharacterTool(AgentTool):
             "新值；hp 可写「满血」；conditions/spells/equipment 用、分隔（可写「清空」）；"
             "concentrating 写法术名（换专注会顶替旧法术）或「中断」；"
             "features/tags 追加；死亡豁免可写 清空/复活/稳定/死亡/成功N/失败N；"
-            "attune 写物品名同调、终止+物品名解除（至多 3 件）",
+            "attune 写物品名同调、终止+物品名解除（至多 3 件）；"
+            "资源写「术法点 +1 / 狂暴 -1 / 术法点=3 / 满」",
         ),
         ToolArg("player", "str", "改谁：角色名或 user_id；单人可留空"),
     )
@@ -1328,6 +1386,7 @@ class UpdateCharacterTool(AgentTool):
         elif field == "exp":
             # 支持「=300」直接设与「+300 / -300」增减；达阈值自动走升级结算
             before = card.exp
+            before_level = card.level
             if text.startswith(("+", "-")):
                 card.exp = max(0, card.exp + _parse_int(text, 0))
             else:
@@ -1335,8 +1394,10 @@ class UpdateCharacterTool(AgentTool):
             message = f"经验值 {before} → {card.exp} XP；{xp_progress_text(card)}"
             while can_level_up(card):
                 message += "\n" + level_up(card)
-            # 升级后玩家还欠的决定（子职 / 属性加点）：开选择会话，答完自动写回
-            tip = start_levelup_session(card, save.save_id if save is not None else "")
+            # 升级后玩家还欠的决定（子职 / 属性加点 / 新法术）：开选择会话，答完自动写回
+            tip = start_levelup_session(
+                card, save.save_id if save is not None else "", from_level=before_level
+            )
             if tip:
                 message += "\n" + tip
         elif field == "level":
@@ -1366,11 +1427,56 @@ class UpdateCharacterTool(AgentTool):
                     f"（Lv.{EPIC_BOON_LEVEL} 是传奇恩惠等级：请挑一项传奇恩惠，"
                     "用 features 落盘 —— 不是加属性）"
                 )
-            # 升级后玩家自己还有决定要做的（子职 / 属性加点）：直接给他开
+            # 升级后玩家自己还有决定要做的（子职 / 属性加点 / 新法术）：直接给他开
             # 选择会话，答完自动写回，不用 DM 手动传话。
-            tip = start_levelup_session(card, save.save_id if save is not None else "")
+            tip = start_levelup_session(
+                card, save.save_id if save is not None else "", from_level=before
+            )
             if tip:
                 message += "\n" + tip
+        elif field in {"掷血", "掷生命骰", "hp_roll", "生命骰"}:
+            # B9：升级不必取平均值 —— 掷一次生命骰，结果记在卡上（按等级）
+            target_level = max(2, _parse_int(text, card.level))
+            before = card.max_hp
+            rolled, gain = card.roll_hit_die(target_level)
+            die = int(
+                getattr(card.profession_obj, "hit_die", 8) or 8
+            )
+            message = (
+                f"Lv.{target_level} 掷生命骰 1d{die} → {rolled}，该级生命 +{gain}"
+                f"（生命上限 {before} → {card.max_hp}）"
+            )
+        elif field in {"准备", "准备法术", "prepared", "prepared_spells"}:
+            # T11：准备制职业挑今日准备的法术（长休后可改）
+            if not card.is_prepared_caster:
+                message = f"{card.profession_obj.cn if card.profession_obj else card.name} 不是准备制职业，不用准备法术"
+            elif text.lower() in _CONDITION_CLEAR_WORDS:
+                card.prepared_spells = []
+                message = "准备列表已清空"
+            else:
+                names = [n for n in re.split(r"[,，、;；]+", text) if n.strip()]
+                keys: list[str] = []
+                unknown: list[str] = []
+                for name in names:
+                    found = get_spell(name.strip())
+                    if found is None:
+                        unknown.append(name.strip())
+                    else:
+                        keys.append(found.key)
+                card.prepared_spells = list(dict.fromkeys(keys))
+                limit = card.prepared_limit()
+                message = f"已准备 {len(card.prepared_spells)}/{limit}：" + "、".join(
+                    get_spell(k).cn for k in card.prepared_spells
+                )
+                if unknown:
+                    message += f"；认不出的法术：{'、'.join(unknown)}"
+                if len(card.prepared_spells) > limit:
+                    message += f"；⚠️ 超过可准备数 {limit}，多出来的按未准备处理"
+        elif field in {"资源", "resources", "职业资源"}:
+            # 职业资源（狂暴 / 回气 / 功力 / 引导神力 / 术法点……）的**手工调整**。
+            # 正常消耗走 tactic、恢复走 rest；这里兜的是「术法点换法术位」
+            # 「DM 额外给一次狂暴」这类规则里没接的路。
+            message = _adjust_resources(card, text)
         elif field == "name":
             card.name = text
             message = f"姓名已设为 {card.name or '（空）'}"
@@ -1462,7 +1568,8 @@ class UpdateCharacterTool(AgentTool):
             return (
                 "不支持的字段，可用：hp / temp_hp / conditions / concentrating / "
                 "死亡豁免 / exhaustion / exp / level / name / notes / features / "
-                "tags / spells / equipment / inspiration（英雄激励）/ attune（同调）"
+                "掷血（掷生命骰）/ tags / spells / equipment / "
+                "inspiration（英雄激励）/ attune（同调）"
             )
 
         if save is not None:
@@ -1988,6 +2095,64 @@ class MoveTool(AgentTool):
 _ACTION_SURGE_WORDS = {"动作如潮", "如潮", "action_surge", "action surge"}
 
 
+#: 资源的中文名 -> 内部键（``update_character`` 的「资源」字段认中文）
+_RESOURCE_KEYS: dict[str, str] = {cn: key for key, cn in RESOURCE_CN.items()}
+
+
+def _adjust_resources(card: Any, text: str) -> str:
+    """手工调整职业资源的**已用次数**（正常消耗走 tactic、恢复走 rest）。
+
+    写法：``术法点 +1``（多用一次）/ ``术法点-1``（少用一次，回 1 次）/
+    ``术法点=3``（已用 3 次）/ ``满`` 或 ``清空``（全部恢复）。多个用「、」分隔。
+    """
+    from ...dnd.class_resources import SPENDABLE
+
+    cap_map = card.spendable_resources()
+    if not cap_map:
+        return f"{card.name} 没有可消耗的职业资源（法师的等级表里没有这类条目）"
+    raw = str(text or "").strip()
+    if not raw:
+        return "资源：要写「术法点 +1」「狂暴 -1」「满」这样的调整"
+    if raw.lower() in _CONDITION_CLEAR_WORDS or raw in {"满", "全满", "恢复"}:
+        card.resources = {}
+        return "职业资源全部恢复：" + card.resources_text(used=True)
+    notes: list[str] = []
+    for piece in re.split(r"[,，、;；]+", raw):
+        token = piece.strip()
+        if not token:
+            continue
+        match = re.match(
+            r"^(?P<name>[^\d+\-=＝＋－]+?)\s*(?P<op>[+\-＋－=＝]?)\s*(?P<num>\d+)?$",
+            token,
+        )
+        if not match:
+            notes.append(f"「{token}」看不懂（写「术法点 +1」或「术法点=2」）")
+            continue
+        name = match.group("name").strip()
+        key = _RESOURCE_KEYS.get(name, name if name in SPENDABLE else "")
+        if not key or key not in cap_map:
+            notes.append(f"「{name}」不是 {card.name} 的资源")
+            continue
+        op = (match.group("op") or "").replace("＋", "+").replace("－", "-")
+        op = op.replace("＝", "=")
+        cap = cap_map[key]
+        used = int(card.resources.get(key, 0) or 0)
+        num = match.group("num")
+        if op in {"+", "-"}:
+            delta = _parse_int(num or "1", 1)
+            used = max(0, min(cap, used + (delta if op == "+" else -delta)))
+        elif op == "=":
+            used = max(0, min(cap, _parse_int(num or "0", used)))
+        elif num is not None:  # 只写数字 = 设成已用几次
+            used = max(0, min(cap, _parse_int(num, used)))
+        else:
+            notes.append(f"「{token}」要写清加减或数值")
+            continue
+        card.resources[key] = used
+        notes.append(f"{RESOURCE_CN.get(key, key)} {cap - used}/{cap}")
+    return "职业资源：" + "、".join(notes)
+
+
 def _do_action_surge(context: AgentContext, save: Any, ref: str) -> str:
     """战士「动作如潮」：消耗一次卡上资源，战斗记账给本回合 +1 动作。
 
@@ -2019,20 +2184,24 @@ def _do_action_surge(context: AgentContext, save: Any, ref: str) -> str:
 
 
 class TacticTool(AgentTool):
-    """战术动作：回避 / 躲藏 / 预备 / 借机攻击 / 上下坐骑 / 动作如潮（PHB 2024）。"""
+    """战术动作：回避 / 躲藏 / 预备 / 借机攻击 / 上下坐骑 / 职业资源（PHB 2024）。"""
 
     function_name = "tactic"
     description = (
         "战术动作，系统掷骰并落状态：回避（到下回合开始被打劣势、敏捷豁免优势）、"
         "躲藏（隐匿 DC15，成功即隐形，出手就暴露）、预备（记下触发条件，触发时用反应）、"
         "借机攻击（用反应打一次近战）、上马 / 下马（花一半速度）、"
-        "动作如潮（战士：本回合 +1 个动作，短休恢复）"
+        "动作如潮（战士：本回合 +1 个动作）、狂暴（野蛮人：伤害+2/抗性）、"
+        "回气（战士：1d10+等级回血）、疾风步 / 患者防御（武僧：花 1 功力）、"
+        "鲁莽攻击（野蛮人：本回合攻有优势、挨打也有优势）、"
+        "卓越骰（战斗大师：花 1 骰掷点数，写法「卓越骰 精确攻击」）"
     )
     args = (
         ToolArg(
             "action",
             "str",
-            "回避（=闪避/躲避）/ 躲藏（=隐藏）/ 预备（=准备）/ 借机攻击 / 上马 / 下马 / 动作如潮",
+            "回避（=闪避/躲避）/ 躲藏（=隐藏）/ 预备（=准备）/ 借机攻击 / 上马 / 下马 / "
+            "动作如潮 / 狂暴 / 回气 / 疾风步 / 患者防御 / 鲁莽攻击 / 卓越骰",
         ),
         ToolArg("player", "str", "谁在做：角色名或 user_id；单人可留空"),
         ToolArg("target", "str", "借机攻击写打谁；上马写坐骑名"),
@@ -2637,6 +2806,19 @@ class CastSpellTool(AgentTool):
         warn = ""
         if not card.knows_spell(spell_obj):
             warn = f"（注意：{spell_obj.cn} 不在 {card.name} 的法术表里，若是卷轴 / 神赐请自行解释）\n"
+        # T11：准备制职业（牧师 / 德鲁伊 / 圣武士 / 法师）只能施放**已准备**的法术。
+        # 只在卡上真的记了准备列表时才校验——没记就当作未管理，不拦（宁可松）。
+        if (
+            card.is_prepared_caster
+            and card.prepared_spells
+            and spell_obj.level > 0
+            and spell_obj.key not in card.prepared_spells
+        ):
+            warn += (
+                f"（注意：{spell_obj.cn} 没在准备列表里 —— "
+                f"{card.name} 现在准备了 {len(card.prepared_spells)}/{card.prepared_limit()} 个；"
+                "长休后可用 update_character 的「准备」改列表）\n"
+            )
 
         # —— 射程校验（先查够不够得着，够不着就别花法术位）——
         pre_state = load_combat(save)
@@ -3124,6 +3306,14 @@ class RestTool(AgentTool):
                             notes.append("从倒地中恢复（死亡豁免清零）")
                 else:
                     notes.append("生命骰消耗与治疗由你裁决（可用 hit_dice 指定颗数）")
+            # —— 职业资源（狂暴 / 回气 / 功力 / 引导神力 / 术法点……）——
+            # 各条的恢复口径不同（短休全部 / 短休只回 1 次 / 只有长休才回），
+            # 交给卡按 RECOVERY 表算，这里只把有变化的逐条列出来。
+            for item in card.restore_resources(short=not long_rest):
+                notes.append(item)
+            # 休息时狂暴一定已经结束（10 分钟），状态别留着骗抗性
+            if card.drop_condition("狂暴"):
+                notes.append("狂暴结束")
             # —— 击晕 / 稳定伤势的自然恢复（PHB 2024）——
             # 击晕者「立即开始短休，短休结束时脱离昏迷」：长休也算（含短休效果）。
             if card.knocked_out:

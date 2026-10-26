@@ -67,7 +67,14 @@ from .progression import (
 )
 from .race import Race, get_race, race_choice_lines, race_choices
 from .skills import get_skill
-from .spells import Spell, get_spell, spells_for_class
+from .spell_progression import (
+    cantrips_at,
+    gain_at,
+    picks_at,
+    prepared_at,
+    spellbook_at,
+)
+from .spells import Spell, get_spell, max_slots, spells_for_class
 from .subclass import SUBCLASS_LEVEL, SubClass, resolve_subclass, subclass_choices
 
 __all__ = [
@@ -141,6 +148,15 @@ CREATION_STEPS: tuple[CreationStep, ...] = (
 
 #: 兼容命名
 STEPS = CREATION_STEPS
+
+#: 升级会话要问的三件事，按顺序：子职 → 属性提升 → 新法术。
+#: 与建卡顺序的差别只是「法术」在加点之后（这一级新得几个法术，与加点无关，
+#: 但放在最后能少打断玩家一次）。
+_LEVELUP_STEPS: tuple[CreationStep, ...] = (
+    CreationStep.SUBCLASS,
+    CreationStep.ASI,
+    CreationStep.SPELLS,
+)
 
 #: 需要从选项列表里挑一个的步骤
 CHOICE_STEPS: frozenset[CreationStep] = frozenset(
@@ -336,6 +352,86 @@ def parse_multi_choice(
     return picked
 
 
+#: 环阶的中文说法（建卡选法术的分组标题用）
+_CIRCLE_CN = {
+    1: "一环",
+    2: "二环",
+    3: "三环",
+    4: "四环",
+    5: "五环",
+    6: "六环",
+    7: "七环",
+    8: "八环",
+    9: "九环",
+}
+
+
+def _circle_text(level: int) -> str:
+    """``1`` → ``一环``；10 环以上（不存在，但别崩）原样写。"""
+    return _CIRCLE_CN.get(int(level), f"{level} 环")
+
+
+def _spell_list_lines(
+    options: list[Spell], top: int, *, descending: bool = False
+) -> list[str]:
+    """把候选法术按环阶分组渲染（每行 8 个，序号从 1 起，对应 ``options``）。
+
+    :param descending: 高环在前（升级时用：只挑两三个，先把值钱的摆出来）。
+    """
+    numbers = {id(spell): index for index, spell in enumerate(options, 1)}
+
+    def _rows(entries: list[tuple[int, Spell]]) -> list[str]:
+        rows: list[str] = []
+        for start in range(0, len(entries), 8):
+            chunk = entries[start : start + 8]
+            rows.append("  " + "  ".join(f"{i}.{s.cn}" for i, s in chunk))
+        return rows
+
+    lines: list[str] = []
+    cantrip_entries = [(numbers[id(s)], s) for s in options if s.level == 0]
+    if cantrip_entries:
+        lines.append("◆ 戏法（0 环，可无限施展）：")
+        lines.extend(_rows(cantrip_entries))
+    circles = range(top, 0, -1) if descending else range(1, top + 1)
+    for circle in circles:
+        entries = [(numbers[id(s)], s) for s in options if s.level == circle]
+        if not entries:
+            continue
+        lines.append(f"◆ {_circle_text(circle)}法术：")
+        lines.extend(_rows(entries))
+    return lines
+
+
+def _levelup_spell_prompt(session: CreationSession, profession: DndClass) -> str:
+    """升级会话的「新法术」提示：只问**这一级新得的那几个**。"""
+    cantrips, spells = session.levelup_spell_gain()
+    options = session.levelup_spell_options()
+    top = session.max_spell_circle()
+    book = spellbook_at(profession.key, session.level)
+    parts: list[str] = []
+    if cantrips:
+        parts.append(f"戏法 {cantrips} 个")
+    if spells:
+        parts.append(f"法术书 {spells} 条" if book else f"可准备 {spells} 个")
+    head = "、".join(parts) or "没有新法术"
+    lines = [
+        f"Lv.{session.level} 的新法术（{profession.cn}：{head}，"
+        f"可挑一环~{_circle_text(top)}）："
+    ]
+    lines.extend(_spell_list_lines(options, top, descending=True))
+    if book:
+        lines.append(
+            "（抄进**法术书**，长休后从书里挑今日准备的；准备数见卡上的「准备」）"
+        )
+    elif session.prepared:
+        lines.append("（会同时加进你的**准备列表**——现在是当日可用的了）")
+    lines.append(
+        "回复序号（例如「1 3」）或法术名（逗号分隔）；回复「自动」由我挑（优先高环）；"
+        "回复「跳过」留给 DM 后补"
+    )
+    return "\n".join(lines)
+
+
 def creation_prompt(step: CreationStep, session: CreationSession | None = None) -> str:
     """给出某一步的提示文本。"""
     if step is CreationStep.MODE:
@@ -524,40 +620,42 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
         profession = session.profession_obj if session else None
         if not profession:
             return "选择法术：需要先确定职业。"
+        if session is not None and session.purpose == "levelup":
+            return _levelup_spell_prompt(session, profession)
         cantrips, known = (
             session.spell_picks()
             if session
             else (profession.cantrips, profession.spells_known)
         )
         options = session.spell_options() if session else []
-        if cantrips:
-            head = f"戏法 {cantrips} 个 + 一环法术 {known} 个"
+        top = session.max_spell_circle() if session else 1
+        if top <= 1:
+            # 1 级（或半施法者早期）：保持老文案，别让 1 级的提示变得啰嗦
+            if cantrips:
+                head = f"戏法 {cantrips} 个 + 一环法术 {known} 个"
+            else:
+                head = f"一环法术 {known} 个（本职业没有戏法）"
         else:
-            head = f"一环法术 {known} 个（本职业没有戏法）"
+            count_text = (
+                f"戏法 {cantrips} 个 + 法术 {known} 个"
+                if cantrips
+                else f"法术 {known} 个（本职业没有戏法）"
+            )
+            head = f"{count_text}，可挑一环~{top} 环、环阶组合随意"
         lines = [
             f"选择法术（{profession.cn}：{head}，"
             f"施法属性 {profession.casting_text}）："
         ]
-        numbers = {id(spell): index for index, spell in enumerate(options, 1)}
-        cantrip_entries = [(numbers[id(s)], s) for s in options if s.level == 0]
-        spell_entries = [(numbers[id(s)], s) for s in options if s.level >= 1]
-
-        def _format(entries: list[tuple[int, Spell]]) -> list[str]:
-            rows: list[str] = []
-            for start in range(0, len(entries), 8):
-                chunk = entries[start : start + 8]
-                rows.append("  " + "  ".join(f"{i}.{s.cn}" for i, s in chunk))
-            return rows
-
-        if cantrip_entries:
-            lines.append("◆ 戏法（0 环，可无限施展）：")
-            lines.extend(_format(cantrip_entries))
-        if spell_entries:
-            lines.append("◆ 一环法术：")
-            lines.extend(_format(spell_entries))
+        lines.extend(_spell_list_lines(options, top))
+        if profession.key == "wizard":
+            limit = prepared_at(profession.key, session.level if session else 1)
+            lines.append(
+                f"（法师挑的是**法术书**：共 {known} 条；今日可准备 {limit} 个，"
+                "长休后从法术书里挑）"
+            )
         lines.append(
             "回复序号（例如「1 3 5 8 9 10」），或直接写法术名（用逗号分隔）；"
-            "回复「自动」由我按列表顺序挑。"
+            "回复「自动」由我挑（优先高环）"
         )
         return "\n".join(lines)
 
@@ -610,6 +708,17 @@ class CreationSession:
     #: 升级会话所属的存档 id（空 = 无存档）。升级发生在游戏内，答完的新卡
     #: 要写回**存档**（``set_character``）而不是插件目录的全局卡。
     save_id: str = ""
+    #: 升级会话的**起始等级**（升级前那一级）。用来算「这一级新得几个法术」；
+    #: 0 = 没标（建卡会话，或调用方没给）→ 按当前等级 -1 兜底。
+    from_level: int = 0
+    #: 会话是不是从**已有角色卡**还原来的（改卡 / 升级）。这类会话写回时
+    #: 经验与准备列表按卡上原样搬回去，不能按建卡的规则重算。
+    from_card: bool = False
+    #: 卡上现有的累计经验（:func:`session_from_card` 填），写回时用
+    exp: int = 0
+    #: 今日准备的法术（法术 key，不含戏法）。从卡还原时带上原名单；
+    #: 建卡时留空，由 :func:`build_character` 按挑的法术推。
+    prepared: list[str] = field(default_factory=list)
     #: 开卡等级（1~20）。**高等级开卡**：HP / 熟练加值 / 法术位 / 属性提升次数
     #: 都按它算；3 级起必须选子职。
     level: int = 1
@@ -671,6 +780,10 @@ class CreationSession:
             "name": self.name,
             "purpose": self.purpose,
             "save_id": self.save_id,
+            "from_level": self.from_level,
+            "from_card": self.from_card,
+            "exp": self.exp,
+            "prepared": list(self.prepared),
             "level": self.level,
             "asi": dict(self.asi),
             "asi_done": self.asi_done,
@@ -717,6 +830,10 @@ class CreationSession:
             name=data.get("name", ""),
             purpose=str(data.get("purpose", "") or "create"),
             save_id=str(data.get("save_id", "") or ""),
+            from_level=int(data.get("from_level", 0) or 0),
+            from_card=bool(data.get("from_card", False)),
+            exp=int(data.get("exp", 0) or 0),
+            prepared=list(data.get("prepared", [])),
             level=max(1, min(int(data.get("level", 1) or 1), MAX_LEVEL)),
             asi={str(k): int(v) for k, v in data.get("asi", {}).items()},
             asi_done=int(data.get("asi_done", 0) or 0),
@@ -1124,35 +1241,108 @@ class CreationSession:
         return "1 级特性都选好了。"
 
     def spell_picks(self) -> tuple[int, int]:
-        """本职业建卡要选的 ``(戏法数, 一环法术数)``；``(0, 0)`` 表示不用选法术。"""
+        """本职业建卡要选的 ``(戏法数, 法术数)``；``(0, 0)`` 表示不用选法术。
+
+        2024 的数量按**等级**查职业表（``res/dnd/spell_progression.yaml``）：
+        法师挑的是**法术书**（1 级 6 条、每级 +2，20 级 44 条），其余施法职业
+        挑的是**准备表**（牧师 1 级 4 个、20 级 22 个……）。
+        """
         profession = self.profession_obj
         if not profession or not profession.is_caster:
             return 0, 0
+        cantrips = cantrips_at(profession.key, self.level)
+        picks = picks_at(profession.key, self.level)
+        if cantrips or picks:
+            return cantrips, picks
+        # 表里没有这个职业（旧数据）→ 退回 classes.yaml 的 1 级数值
         return profession.cantrips, profession.spells_known
 
+    def max_spell_circle(self) -> int:
+        """开卡等级最高能挑到几环（按该职业的法术位表推，不是按等级硬算）。"""
+        profession = self.profession_obj
+        if not profession or not profession.is_caster:
+            return 0
+        slots = max_slots(profession.caster_kind, self.level)
+        return max(slots) if slots else 1
+
     def spell_options(self) -> list[Spell]:
-        """本职业建卡可选的戏法 + 一环法术（戏法在前，各自按名字排序）。"""
+        """本职业建卡可选的法术：戏法在前，其余按环阶 / 名字排。
+
+        **上限是当前等级真能施放的最高环阶**（法师 5 级才有三环位，
+        就不该在三环法术里挑），一环以下的低环也照样可选（5e 允许）。
+        """
         profession = self.profession_obj
         if not profession:
             return []
-        pool = spells_for_class(profession.key)
+        top = self.max_spell_circle()
+        pool = spells_for_class(profession.key, levels=range(0, top + 1))
         cantrips = sorted((s for s in pool if s.level == 0), key=lambda s: s.cn)
-        first = sorted((s for s in pool if s.level == 1), key=lambda s: s.cn)
-        return [*cantrips, *first]
+        spells = sorted(
+            (s for s in pool if 1 <= s.level <= top), key=lambda s: (s.level, s.cn)
+        )
+        return [*cantrips, *spells]
+
+    # —— 升级会话：这一级新得几个法术 ——
+
+    def levelup_spell_gain(self) -> tuple[int, int]:
+        """从 :attr:`from_level` 升到 :attr:`level` 新得的 ``(戏法数, 法术数)``。
+
+        法师的「法术数」是**法术书**条目（每级 +2），其余职业是**可准备数**。
+        非施法职业、或这一级什么都没涨 → ``(0, 0)``（该步整步跳过）。
+        """
+        profession = self.profession_obj
+        if not profession or not profession.is_caster:
+            return 0, 0
+        start = self.from_level or max(1, self.level - 1)
+        return gain_at(profession.key, start, self.level)
+
+    def levelup_spell_options(self) -> list[Spell]:
+        """升级时可选的新法术：当前等级能施放的、且**卡上还没有的**。
+
+        只列这一级真会涨的那一类：没涨戏法就不列戏法（否则编号里混进一堆
+        戏法，玩家按序号挑会被「要挑 0 个戏法」打回）。
+        """
+        cantrips, spells = self.levelup_spell_gain()
+        known = set(self.spells)
+        pool = self.spell_options()
+        # 戏法在前（涨了才列），法术**高环在前**：只挑两三个时先把值钱的摆出来
+        low = [s for s in pool if s.level == 0 and cantrips > 0]
+        high = sorted(
+            (s for s in pool if s.level >= 1 and spells > 0),
+            key=lambda s: (-s.level, s.cn),
+        )
+        return [s for s in [*low, *high] if s.key not in known]
+
+    def levelup_step_needed(self, step: CreationStep) -> bool:
+        """升级会话里这一步是否真有要玩家决定的事（否则整步跳过）。"""
+        if step is CreationStep.SUBCLASS:
+            return (
+                bool(self.profession)
+                and self.level >= SUBCLASS_LEVEL
+                and self.subclass_obj is None
+            )
+        if step is CreationStep.ASI:
+            return self.asi_pending() > 0
+        if step is CreationStep.SPELLS:
+            cantrips, spells = self.levelup_spell_gain()
+            return cantrips + spells > 0 and bool(self.levelup_spell_options())
+        return False
 
     def advance(self) -> CreationStep:
         """进入下一步（没有可选项的步骤自动跳过）。"""
         # 属性提升一轮只处理**一次**加点：还有剩余就留在这一步（4/8/12/16 级各一次）
         if self.step is CreationStep.ASI and self.asi_pending():
             return self.step
-        # 升级选择会话只做**子职与属性加点**两件事：答完当前项直接收尾
-        # （或接上还欠的 ASI）——技能 / 装备 / 法术 / 阵营都是建卡时定好的，
-        # 重问一遍既烦人又可能覆盖玩家已有的选择。
+        # 升级选择会话只做**子职 / 属性加点 / 新法术**三件事：答完最后一件事直接收尾
+        # ——技能 / 装备 / 阵营都是建卡时定好的，重问一遍既烦人又可能覆盖玩家的选择。
         if self.purpose == "levelup":
-            if self.step is CreationStep.SUBCLASS and self.asi_pending():
-                self.step = CreationStep.ASI
-            else:
-                self.step = CreationStep.DONE
+            order = _LEVELUP_STEPS
+            index = order.index(self.step) if self.step in order else -1
+            for step in order[index + 1 :]:
+                if self.levelup_step_needed(step):
+                    self.step = step
+                    return self.step
+            self.step = CreationStep.DONE
             return self.step
         index = CREATION_STEPS.index(self.step)
         while True:
@@ -1242,6 +1432,8 @@ class CreationSession:
                 return self.choose_package_weapon(raw)
             return self.choose_equipment(raw)
         if step is CreationStep.SPELLS:
+            if self.purpose == "levelup":
+                return self.choose_levelup_spells(raw)
             return self.choose_spells(raw)
         if step is CreationStep.ASI:
             return self.choose_asi(raw)
@@ -1464,10 +1656,17 @@ class CreationSession:
         self.record(f"职业：{profession.cn}")
         self.advance()
         saves = "、".join(get_ability(k).cn for k in profession.saves)
-        return (
+        lines = [
             f"已选择「{profession.cn}」（生命骰 {profession.hit_dice}，豁免：{saves}）。"
-            f"\n\n{creation_prompt(self.step, self)}"
-        )
+        ]
+        # C1：选完职业要告诉玩家拿到了哪些受训 —— 否则他不知道自己能穿什么甲、
+        # 能用什么武器（护甲熟练还会影响 AC 与施法）。
+        proficiencies = profession.format_proficiencies()
+        if proficiencies:
+            lines.append(f"受训：{proficiencies}（种族额外给的会在建卡时一起算上）。")
+        lines.append("")
+        lines.append(creation_prompt(self.step, self))
+        return "\n".join(lines)
 
     def choose_subclass(self, text: str) -> str:
         """选择子职（PHB 2024：所有职业 3 级获得，1~2 级不出现这一步）。"""
@@ -1865,7 +2064,7 @@ class CreationSession:
         return f"已选 {picked}。\n\n{creation_prompt(self.step, self)}"
 
     def choose_spells(self, text: str) -> str:
-        """选择法术（戏法 + 一环法术）。"""
+        """选择法术（戏法 + 各级法术，数量按 2024 职业表随等级给）。"""
         self._require(CreationStep.SPELLS)
         profession = self.profession_obj
         if not profession:
@@ -1876,31 +2075,110 @@ class CreationSession:
 
         options = self.spell_options()
         if not options:
-            raise CreationError(f"{profession.cn}在 0~3 环里没有可选法术。")
+            raise CreationError(f"{profession.cn}在当前等级没有可选法术。")
 
         raw = text.strip()
         if raw.lower() in _AUTO_WORDS or raw.lower() in _SKIP_WORDS:
-            picked = [s for s in options if s.level == 0][:cantrips] + [
-                s for s in options if s.level >= 1
-            ][:known]
+            # 「自动」从高环往低环填：高环法术更值钱，别让人 20 级法师自动
+            # 挑出一堆一环法术（列表顺序是一环在前）。
+            picked = [s for s in options if s.level == 0][:cantrips]
+            rest = sorted(
+                (s for s in options if s.level >= 1),
+                key=lambda s: (-s.level, s.cn),
+            )
+            picked += rest[:known]
         else:
             names = parse_multi_choice(raw, [s.cn for s in options], cantrips + known)
             picked = [spell for spell in (get_spell(name) for name in names) if spell]
 
         chosen_cantrips = [s for s in picked if s.level == 0]
         chosen_spells = [s for s in picked if s.level >= 1]
+        top = self.max_spell_circle()
+        too_high = [s.cn for s in chosen_spells if s.level > top]
+        if too_high:
+            raise CreationError(
+                f"{profession.cn} {self.level} 级最高只到 {top} 环，"
+                f"挑不了 {'、'.join(too_high)}。"
+            )
         if len(chosen_cantrips) != cantrips or len(chosen_spells) != known:
             raise CreationError(
-                f"需要选 戏法 {cantrips} 个 + 一环法术 {known} 个，"
+                f"需要选 戏法 {cantrips} 个 + 法术 {known} 个，"
                 f"你现在选了 戏法 {len(chosen_cantrips)} 个 + 法术 {len(chosen_spells)} 个。"
                 "（若要改动，重新把全部序号发一次即可）"
             )
 
         self.spells = [s.key for s in picked]
+        self._sync_prepared()
         label = "、".join(s.cn for s in picked)
         self.record(f"法术：{label}")
         self.advance()
         return f"已选择法术：{label}。\n\n{creation_prompt(self.step, self)}"
+
+    def _sync_prepared(self) -> None:
+        """法术表变了以后修正准备列表：只留还在表里的；空表（未管理）保持空。"""
+        if not self.prepared:
+            return
+        known = set(self.spells)
+        self.prepared = [key for key in self.prepared if key in known]
+
+    def choose_levelup_spells(self, text: str) -> str:
+        """升级会话：只挑**这一级新得**的那几个法术（追加，不覆盖旧列表）。
+
+        法师挑的是法术书条目；其余职业挑的是新的准备法术 —— 卡上本来就有
+        准备名单（非空 = 已管理）时，新挑的会一并加进去。
+        """
+        self._require(CreationStep.SPELLS)
+        profession = self.profession_obj
+        if not profession:
+            raise CreationError("需要先选择职业。")
+        cantrips, spells = self.levelup_spell_gain()
+        if cantrips <= 0 and spells <= 0:
+            raise CreationError(f"{profession.cn}这一级没有新法术可挑。")
+        options = self.levelup_spell_options()
+        if not options:
+            raise CreationError(
+                f"{profession.cn}在这一级没有还没学过的可选法术，"
+                "先用 /跑团.改卡 法术 补全法术表。"
+            )
+
+        raw = text.strip()
+        if raw.lower() in _SKIP_WORDS:
+            self.record("新法术：跳过")
+            self.advance()
+            return (
+                "已跳过这一级的新法术（数量差着，随时可用 /跑团.改卡 法术 补上）。"
+                f"\n\n{creation_prompt(self.step, self)}"
+            )
+        if raw.lower() in _AUTO_WORDS:
+            picked = [s for s in options if s.level == 0][:cantrips]
+            rest = sorted(
+                (s for s in options if s.level >= 1),
+                key=lambda s: (-s.level, s.cn),
+            )
+            picked += rest[:spells]
+        else:
+            names = parse_multi_choice(raw, [s.cn for s in options], cantrips + spells)
+            picked = [spell for spell in (get_spell(name) for name in names) if spell]
+
+        chosen_cantrips = [s for s in picked if s.level == 0]
+        chosen_spells = [s for s in picked if s.level >= 1]
+        if len(chosen_cantrips) != cantrips or len(chosen_spells) != spells:
+            raise CreationError(
+                f"这一级要挑 戏法 {cantrips} 个 + 法术 {spells} 个，"
+                f"你现在选了 戏法 {len(chosen_cantrips)} 个 + 法术 {len(chosen_spells)} 个。"
+                "（不想现在挑就回复「跳过」）"
+            )
+
+        # 追加而不是覆盖：旧法术 / 旧准备都留着
+        self.spells = list(dict.fromkeys([*self.spells, *(s.key for s in picked)]))
+        if not spellbook_at(profession.key, self.level) and self.prepared:
+            self.prepared = list(
+                dict.fromkeys([*self.prepared, *(s.key for s in chosen_spells)])
+            )
+        label = "、".join(s.cn for s in picked)
+        self.record(f"新法术：{label}")
+        self.advance()
+        return f"已加入新法术：{label}。\n\n{creation_prompt(self.step, self)}"
 
     def choose_alignment(self, text: str) -> str:
         """选择阵营（纯扮演标记，允许跳过）。"""
@@ -1988,6 +2266,10 @@ def session_from_card(card: DndCharacter) -> CreationSession:
     session.equipment = [i for i in card.equipment if i not in bg_items]
     session.equipment_package = card.equipment_package
     session.spells = list(card.spells)
+    session.prepared = list(card.prepared_spells)
+    session.exp = int(card.exp)
+    # 从卡还原的会话：写回时经验 / 准备列表按卡上原样搬（别按建卡规则重算）
+    session.from_card = True
     # 额外戏法 / 魔法学徒的法术在建卡时已并入卡上的 spells，卡上没有独立字段；
     # 还原成「已完成」——否则升级 / 改卡会话经过「特性」步会把它们**再问一遍**，
     # 重复的法术并进卡里。反正 build_character 是并集去重，填卡上已有键无副作用。
@@ -2065,7 +2347,20 @@ def build_character(session: CreationSession) -> DndCharacter:
         alignment=session.alignment,
         money=money,
     )
-    # 高等级开卡的起始经验：落在「刚好达到该等级」的累计经验上，
-    # 否则卡上写着 Lv.5 却只有 0 XP，下一次升级提示会立刻自相矛盾。
-    card.exp = LEVEL_XP_THRESHOLDS[max(0, min(card.level, MAX_LEVEL) - 1)]
+    # 经验 / 准备列表：**从卡还原的会话（改卡 / 升级）按卡上原样写回**。
+    # 新建卡才用「刚好达到该等级」的阈值打底——用阈值覆盖已有卡会吃掉玩家
+    # 攒的超额经验；同理，按建卡规则重推准备列表会覆盖 DM 定好的名单。
+    if session.from_card:
+        card.exp = max(0, session.exp)
+        card.prepared_spells = list(dict.fromkeys(session.prepared))
+    else:
+        card.exp = LEVEL_XP_THRESHOLDS[max(0, min(card.level, MAX_LEVEL) - 1)]
+        # 2024：建卡挑的这批法术**就是今日准备**（八个施法职业都是准备制）。
+        # 法师例外——它挑的是法术书，准备列表留给 DM 在长休后定。
+        if card.is_prepared_caster and not spellbook_at(card.profession, card.level):
+            card.prepared_spells = [
+                key
+                for key in session.spells
+                if (spell := get_spell(key)) is not None and spell.level > 0
+            ]
     return card

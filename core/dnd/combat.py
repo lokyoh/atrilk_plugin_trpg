@@ -58,6 +58,7 @@ from .battlemap import (
     terrain_at,
 )
 from .card import DndCharacter
+from .class_resources import value_at
 from .conditions import (
     attack_advantage,
     combine_advantage,
@@ -68,7 +69,7 @@ from .conditions import (
     resolve_damage,
 )
 from .environment import underwater_disadvantage
-from .equipment import get_weapon, parse_item_stack
+from .equipment import ArmorCategory, get_armor, get_weapon, parse_item_stack
 from .monster_rules import (
     DeathBurst,
     attack_advantage_of,
@@ -88,7 +89,15 @@ from .npcs import (
     update_npc,
 )
 from .progression import xp_for_cr
-from .save_store import Save, get_character, read_scene, save_dir, set_character
+from .save_store import (
+    Save,
+    find_character,
+    get_character,
+    read_scene,
+    save_dir,
+    set_character,
+)
+from .subclass_grants import has_raging_dice
 from .tactics import (
     HIDE_DC,
     LIGHT_LEVELS,
@@ -133,6 +142,10 @@ __all__ = [
     "count_legendary_use",
     "cover_text",
     "current_actor",
+    "do_flurry",
+    "do_patient_defense",
+    "do_rage",
+    "do_second_wind",
     "do_tactic",
     "effective_ac",
     "effective_hp",
@@ -258,6 +271,15 @@ class Combatant:
     #: **预备动作**的触发条件（空 = 没预备）。花一个动作定下，触发时用反应执行；
     #: 没触发就在自己下个回合开始时作废（:meth:`reset_turn` 清空）。
     readied: str = ""
+    #: **不占动作的攻击次数**（武僧「疾风步」给 2 次）。下一次 :func:`attack`
+    #: 先扣这里——扣完才回到正常行动经济。
+    free_attacks: int = 0
+    #: **鲁莽攻击**（野蛮人 2 级）：本回合力量攻击有优势，但到它下个回合开始，
+    #: 打它的攻击也有优势。有指针是因为**对方的攻击结算要读它**（见
+    #: :func:`enemy_attack` 的优势计算）。
+    reckless: bool = False
+    #: **狂怒**已经触发过（狂战士 3 级：每回合只有第一次命中加骰）。
+    fury_used: bool = False
 
     @property
     def is_enemy(self) -> bool:
@@ -283,6 +305,11 @@ class Combatant:
         self.actions_used = 0
         self.actions_max = 1
         self.attacks_made = 0
+        # 疾风步那类「不占动作的攻击」只在给出的那一回合有效
+        self.free_attacks = 0
+        # 鲁莽攻击 / 狂怒都是「本回合」的记账：自己回合结束时失效
+        self.reckless = False
+        self.fury_used = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -317,6 +344,9 @@ class Combatant:
             "condition_rounds": dict(self.condition_rounds),
             "knocked_out": self.knocked_out,
             "readied": self.readied,
+            "free_attacks": self.free_attacks,
+            "reckless": self.reckless,
+            "fury_used": self.fury_used,
         }
 
     @classmethod
@@ -364,6 +394,9 @@ class Combatant:
             },
             knocked_out=bool(data.get("knocked_out", False)),
             readied=str(data.get("readied", "") or ""),
+            free_attacks=max(0, _int_or(data.get("free_attacks"), 0)),
+            reckless=bool(data.get("reckless", False)),
+            fury_used=bool(data.get("fury_used", False)),
         )
 
 
@@ -1008,6 +1041,11 @@ def use_attack(
         return ""
     combatant = find_combatant(state, ref, kind="player")
     if combatant is None:
+        return ""
+    # 疾风步那类「白给的攻击」先扣：它不占动作，也不占额外攻击的连打额度
+    if combatant.free_attacks > 0:
+        combatant.free_attacks -= 1
+        save_combat(save, state)
         return ""
     per_action = max(1, int(attacks_per_action or 1))
     if combatant.attacks_made < per_action:
@@ -2452,7 +2490,294 @@ def remove_conditions(
 
 
 #: 战术动作里**战斗中才有意义**的那几个（战斗外由 DM 用 check + 叙述处理）
-_TACTIC_COMBAT_ONLY = frozenset({"回避", "预备", "借机攻击", "上马", "下马"})
+_TACTIC_COMBAT_ONLY = frozenset(
+    {
+        "回避",
+        "预备",
+        "借机攻击",
+        "上马",
+        "下马",
+        "疾风步",
+        "患者防御",
+        "鲁莽攻击",
+        "卓越骰",
+    }
+)
+
+#: 「卓越骰 精确攻击」这类写法的前缀（战技名跟在后面，只做展示，不改结算）
+_SUPERIORITY_WORDS = ("卓越骰", "卓越", "战技", "卓越战技")
+
+
+# --------------------------------------------------------------------------- #
+# 职业资源（狂暴 / 回气 / 疾风步 / 患者防御）
+# --------------------------------------------------------------------------- #
+
+
+def _player_card(save: Save, ref: str) -> DndCharacter | None:
+    """按 user_id 或角色名取角色卡（战斗内外都能用）。"""
+    return find_character(save, ref)
+
+
+def _wears_heavy_armor(card: DndCharacter) -> bool:
+    """是否穿着**重甲**（狂暴的唯一装备前置；盾牌不算）。"""
+    for item in card.equipment:
+        armor = get_armor(item)
+        if armor is not None and armor.category is ArmorCategory.HEAVY:
+            return True
+    return False
+
+
+def do_rage(save: Save, state: CombatState | None, ref: str) -> str:
+    """野蛮人「狂暴」：花一个附赠动作 + 一次狂暴次数，挂「狂暴」状态。
+
+    进结算的只有**有数值的三条**（2024 PHB「狂暴」）：
+
+    - 力量攻击的伤害加值（:attr:`DndCharacter.rage_damage`，由攻击结算自动加）；
+    - 对钝击 / 穿刺 / 挥砍的抗性（状态表里「狂暴」自带，伤害结算自动减半）；
+    - 力量检定与力量豁免的优势（同上）。
+
+    前置条件照书：**未着装重甲**。次数用完就用不了（短休回 1 次）。
+    「一整轮既没攻击也没受伤就结束」不自动判——那要看 DM 的叙述，写在回执里提醒。
+    """
+    card = _player_card(save, ref)
+    if card is None:
+        return f"没找到「{ref}」的角色卡，无法进入狂暴"
+    if card.profession != "barbarian":
+        return f"{card.name} 不是野蛮人，没有「狂暴」这项特性"
+    cap = card.resource_max("rage_uses")
+    if cap <= 0:
+        return f"{card.name} 的等级还没有狂暴次数（野蛮人 1 级起有 2 次）"
+    if card.raging:
+        return (
+            f"{card.name} 已经在狂暴中（还剩 {card.resource_left('rage_uses')}/{cap} 次，"
+            "不用再花一次）"
+        )
+    if _wears_heavy_armor(card):
+        return (
+            f"{card.name} 穿着重甲，进不了狂暴"
+            "（2024：未着装重甲时才能以一个附赠动作进入狂暴）"
+        )
+    if not card.use_resource("rage_uses"):
+        return f"（{card.name} 的狂暴次数用完了（{cap}/{cap}），短休回 1 次、长休回满）"
+    label = card.add_condition("狂暴")
+    set_character(save, card)
+    warn = ""
+    if state is not None:
+        warn = use_resource(save, state, card.user_id, "bonus")
+        save_combat(save, state)
+    return (
+        f"【{card.name}】进入{label}：力量攻击伤害 +{card.rage_damage}、"
+        "对钝击 / 穿刺 / 挥砍有抗性、力量检定与豁免有优势。"
+        f"剩余 {card.resource_left('rage_uses')}/{cap} 次（短休回 1 次）。"
+        "\n（狂暴持续 10 分钟；若一整轮既没攻击也没受伤就结束——由你按叙述摘掉。）"
+        + (f"\n{warn}" if warn else "")
+    )
+
+
+def do_second_wind(
+    save: Save, state: CombatState | None, ref: str, *, rng: Any = None
+) -> str:
+    """战士「回气」：附赠动作，回 ``1d10 + 战士等级`` 点生命（2 级起每休息 2 次+）。"""
+    card = _player_card(save, ref)
+    if card is None:
+        return f"没找到「{ref}」的角色卡，无法结算回气"
+    cap = card.resource_max("second_wind")
+    if cap <= 0:
+        return f"{card.name} 没有「回气」特性（战士 1 级起有）"
+    if card.hp >= card.max_hp:
+        return f"{card.name} 生命已满（{card.hp}/{card.max_hp}），别浪费回气"
+    if not card.use_resource("second_wind"):
+        return f"（{card.name} 的回气次数用完了（{cap}/{cap}），短休或长休后回满）"
+    result = roll("1d10", label="回气", rng=rng)
+    amount = max(0, result.total + card.level)
+    target = (
+        find_combatant(state, card.user_id, kind="player")
+        if state is not None
+        else None
+    )
+    warn = ""
+    if state is not None:
+        warn = use_resource(save, state, card.user_id, "bonus")
+    if target is not None:
+        note = heal_combatant(save, state, target, amount)
+    else:
+        before = card.hp
+        card.current_hp = min(card.max_hp, card.hp + amount)
+        set_character(save, card)
+        note = f"{card.name} 剩余 {card.hp}/{card.max_hp}（原 {before}）"
+    return (
+        f"【{card.name}】{result.describe()}{card.level:+d}（等级）= {amount} 点 → {note}"
+        f"（剩余 {card.resource_left('second_wind')}/{cap} 次）"
+        + (f"\n{warn}" if warn else "")
+    )
+
+
+def do_flurry(
+    save: Save, state: CombatState | None, ref: str, *, rng: Any = None
+) -> str:
+    """武僧「疾风步」：1 点功力 + 附赠动作，**本回合多打两次徒手**。
+
+    这两次不占动作（``Combatant.free_attacks`` 记账，下一次 ``attack`` 自动抵扣，
+    见 :func:`use_attack`）；附赠动作在这里就花掉。
+    """
+    if state is None:
+        return "疾风步要在战斗里才结算（它换的是附赠动作与两次攻击）"
+    card = _player_card(save, ref)
+    if card is None:
+        return f"没找到「{ref}」的角色卡，无法结算疾风步"
+    if card.profession != "monk":
+        return f"{card.name} 不是武僧，没有「疾风步」"
+    cap = card.resource_max("focus")
+    if cap <= 0:
+        return f"{card.name} 还没有功力点（武僧 2 级起有 2 点）"
+    warn = use_resource(save, state, card.user_id, "bonus")
+    if not card.use_resource("focus"):
+        return f"（{card.name} 的功力点用完了（{cap}/{cap}），短休或长休后回满）"
+    set_character(save, card)
+    actor = find_combatant(state, card.user_id, kind="player")
+    if actor is not None:
+        actor.free_attacks += 2
+        save_combat(save, state)
+    die = value_at(card.profession, card.level, "martial_arts_die")
+    return (
+        f"【{card.name}】疾风步：花 1 点功力 + 附赠动作，"
+        f"本回合可再打 **2 次徒手**（武艺骰 d{die}，命中与伤害照常掷）。"
+        f"剩余功力 {card.resource_left('focus')}/{cap}" + (f"\n{warn}" if warn else "")
+    )
+
+
+def do_reckless(save: Save, state: CombatState, ref: str) -> str:
+    """野蛮人「鲁莽攻击」：**不花动作**，本回合力量攻击有优势、到它下个回合开始
+    打它的攻击也有优势（PHB 2024）。
+
+    书上的时机是「你进行本回合第一次攻击检定时决定」——这里做成战前声明一次，
+    记在 ``Combatant.reckless``：自己回合攻击时由 DM 传 ``advantage=优势``，
+    对方的攻击结算则**自动**读到这个标记（见 :func:`enemy_attack`），
+    所以「打你有优势」不是一句提示，是真的会减寿的。
+    """
+    actor = find_combatant(state, ref, kind="player")
+    if actor is None:
+        return f"场上没有「{ref}」这个人"
+    card = _player_card(save, ref)
+    if card is None:
+        return f"没找到「{ref}」的角色卡，无法确认鲁莽攻击"
+    if card.profession != "barbarian":
+        return f"{card.name} 不是野蛮人，没有「鲁莽攻击」（野蛮人 2 级特性）"
+    if card.level < 2:
+        return f"{card.name} 还没到 2 级，用不了「鲁莽攻击」"
+    if actor.reckless:
+        return f"{actor.name} 本回合已经在鲁莽攻击了（自己回合攻击有优势、打它也有优势）"
+    actor.reckless = True
+    save_combat(save, state)
+    return (
+        f"【{actor.name}】鲁莽攻击（不花动作）：本回合它的**力量攻击有优势**；"
+        "到它下个回合开始前，**打它的攻击检定也有优势**。"
+    )
+
+
+def do_superiority(
+    save: Save,
+    state: CombatState | None,
+    ref: str,
+    maneuver: str = "",
+    *,
+    rng: Any = None,
+) -> str:
+    """战斗大师「卓越战技」：花 1 粒卓越骰，掷出点数交给战技用。
+
+    引擎只做**这两件程序该做的事**：扣骰子个数、掷骰子。战技本身的结算（精确攻击
+    加在命中上、绊摔要对方过豁免、招架减伤……）按 ``text`` 由 DM 裁定 ——
+    15 种战技各有各的例外，硬写进引擎只会算错。
+
+    掷出的点数直接写进回执，DM 把它加到对应的那次检定 / 伤害 / 减伤上即可。
+    """
+    card = _player_card(save, ref)
+    if card is None:
+        return f"没找到「{ref}」的角色卡，无法结算卓越战技"
+    count, die = card.superiority_dice
+    if count <= 0 or die <= 0:
+        return f"{card.name} 没有「卓越骰」（战斗大师 3 级特性）"
+    cap = card.resource_max("superiority")
+    if not card.use_resource("superiority"):
+        return (
+            f"（{card.name} 的卓越骰用完了（{cap}/{cap}），"
+            "短休或长休后回满）"
+        )
+    result = roll(f"1d{die}", label="卓越骰", rng=rng)
+    set_character(save, card)
+    name = str(maneuver or "").strip() or "战技"
+    return (
+        f"【{card.name}】{name}：{result.describe()} = **{result.total}**（d{die}）。"
+        f"把 {result.total} 加到这次战技的检定 / 伤害 / 减伤上（按战技原文裁定）。"
+        f"剩余卓越骰 {card.resource_left('superiority')}/{cap}（短休回满）"
+    )
+
+
+def _fury_extra(
+    save: Save,
+    state: CombatState,
+    card: DndCharacter,
+    attacker: Combatant | None,
+    weapon: Any,
+    *,
+    is_melee: bool,
+    crit: bool,
+    rng: Any = None,
+) -> tuple[str, int]:
+    """狂战士「狂怒」的额外伤害：返回 ``(说明, 点数)``，不触发时给 ``("", 0)``。
+
+    条件照原文：**狂暴中** + 本回合用了**鲁莽攻击** + **基于力量的攻击**
+    首次命中 + 每回合只一次 —— 四样缺一不可，所以判定都摆在这里，
+    调用点只看点数。
+    """
+    if attacker is None or not is_melee:
+        return "", 0
+    if not card.raging or not attacker.reckless or attacker.fury_used:
+        return "", 0
+    if not has_raging_dice(card):
+        return "", 0
+    if not card.uses_strength(weapon):
+        return "", 0
+    count = max(0, card.rage_damage)
+    if count <= 0:
+        return "", 0
+    result = roll(f"{count * 2 if crit else count}d6", label="狂怒", rng=rng)
+    attacker.fury_used = True
+    save_combat(save, state)
+    tail = "（暴击，骰数翻倍）" if crit else ""
+    return (
+        f"狂怒：狂暴伤害 +{count} 个 d6{tail} → 额外 {result.describe()} = {result.total}",
+        max(0, result.total),
+    )
+
+
+def do_patient_defense(
+    save: Save, state: CombatState | None, ref: str, *, rng: Any = None
+) -> str:
+    """武僧「患者防御」：1 点功力 + 附赠动作，本回合做一次「回避」。"""
+    if state is None:
+        return "患者防御要在战斗里才结算（它换的是附赠动作与「回避」）"
+    card = _player_card(save, ref)
+    if card is None:
+        return f"没找到「{ref}」的角色卡，无法结算患者防御"
+    if card.profession != "monk":
+        return f"{card.name} 不是武僧，没有「患者防御」"
+    cap = card.resource_max("focus")
+    if cap <= 0:
+        return f"{card.name} 还没有功力点（武僧 2 级起有 2 点）"
+    warn = use_resource(save, state, card.user_id, "bonus")
+    if not card.use_resource("focus"):
+        return f"（{card.name} 的功力点用完了（{cap}/{cap}），短休或长休后回满）"
+    set_character(save, card)
+    actor = find_combatant(state, card.user_id, kind="player")
+    if actor is None:
+        return f"场上没有 {card.name}"
+    note = apply_condition(save, actor, ["回避"], rounds=1)
+    save_combat(save, state)
+    return (
+        f"【{card.name}】患者防御：花 1 点功力 + 附赠动作，{note}。"
+        f"剩余功力 {card.resource_left('focus')}/{cap}" + (f"\n{warn}" if warn else "")
+    )
 
 
 def do_tactic(
@@ -2480,12 +2805,31 @@ def do_tactic(
     :param state: 战斗状态；``None`` 表示不在战斗里（只给提示，不改任何东西）。
     :param trigger: 预备动作的触发条件。
     """
-    kind = normalize_tactic(action)
+    # 「卓越骰 精确攻击」这类写法：前缀识别，战技名只用来展示，结算交给 DM
+    raw = str(action or "").strip()
+    kind = ""
+    maneuver = ""
+    for word in _SUPERIORITY_WORDS:
+        if raw.startswith(word):
+            maneuver = raw[len(word) :].strip(" ：:·-")
+            kind = "卓越骰"
+            break
+    if not kind:
+        kind = normalize_tactic(raw)
     if not kind:
         return (
             f"没认出战术动作「{action}」。可用：回避（闪避 / 躲避）、"
-            "躲藏（隐藏）、预备（准备）、借机攻击、上马、下马"
+            "躲藏（隐藏）、预备（准备）、借机攻击、上马、下马、"
+            "狂暴、回气、疾风步、患者防御、鲁莽攻击、卓越骰"
         )
+    # 狂暴 / 回气**战斗外也能用**（战前开狂暴、战后回气），所以排在
+    # 「必须在战斗中」那道判定之前——它们只改角色卡，不碰战斗记账。
+    if kind == "狂暴":
+        return do_rage(save, state, ref)
+    if kind == "回气":
+        return do_second_wind(save, state, ref, rng=rng)
+    if kind == "卓越骰":
+        return do_superiority(save, state, ref, maneuver, rng=rng)
     if state is None:
         return (
             f"「{kind}」要在战斗里才由系统结算。剧情里想躲藏 / 骑乘，"
@@ -2500,6 +2844,13 @@ def do_tactic(
     if not can_act(save, actor):
         names = "、".join(combatant_conditions(save, actor)) or "倒下 / 失能"
         return f"{actor.name} 现在{names}，做不了{kind}"
+
+    if kind == "疾风步":
+        return do_flurry(save, state, ref, rng=rng)
+    if kind == "患者防御":
+        return do_patient_defense(save, state, ref, rng=rng)
+    if kind == "鲁莽攻击":
+        return do_reckless(save, state, ref)
 
     if kind == "回避":
         speed = combatant_speed(save, actor)
@@ -2772,6 +3123,17 @@ def attack(
         advantage = combine_advantage(advantage, Advantage.DISADVANTAGE)
         warn += "（骑枪打 5 尺内的目标有劣势）\n"
 
+    # 鲁莽攻击（野蛮人）：本回合它的**力量攻击有优势**——记在参战者身上，
+    # 这里自动加，不让 DM 记着「鲁莽了要记得说优势」。
+    if (
+        attacker is not None
+        and attacker.reckless
+        and is_melee
+        and card.uses_strength(weapon)
+    ):
+        advantage = combine_advantage(advantage, Advantage.ADVANTAGE)
+        warn += "（鲁莽攻击：力量攻击有优势；打它的人也有优势）\n"
+
     # 目标状态带来的优势 / 劣势（倒地、隐形、目盲、束缚……）；攻击者自己的状态
     # （中毒 / 力竭……）由角色卡的检定函数自动合并，两边相遇时自然抵消
     state_adv, state_reason = attack_advantage(
@@ -2830,7 +3192,9 @@ def attack(
         )
         if state_note:
             result.kind += state_note
-        damage_expr = str(max(1, 1 + card.modifier("str")))
+        damage_expr = str(
+            max(1, 1 + card.modifier("str") + (card.rage_damage if card.raging else 0))
+        )
         damage_type = "钝击"
         label = "徒手"
 
@@ -2862,10 +3226,25 @@ def attack(
 
     # 5e：5 尺内命中麻痹 / 昏迷的目标即暴击（伤害骰照翻倍）
     auto_crit = _auto_crit(save, target, melee=is_melee, distance=distance)
-    crit = result.nat20 or auto_crit
+    # **暴击阈值**：勇士「精通重击」19 起、15 级「高效重击」18 起（PHB 2024）。
+    # 天然 20 / 自动暴击的文案不变；靠阈值达成的要说明来源，否则 DM 看到
+    # 「19 却暴击」会以为算错了。
+    crit_at = card.crit_threshold
+    crit = result.natural >= crit_at or auto_crit
     damage, detail = roll_damage(damage_expr, crit=crit, rng=rng)
-    crit_text = "（暴击，伤害骰翻倍）" if crit else ""
+    if not crit:
+        crit_text = ""
+    elif result.nat20 or auto_crit:
+        crit_text = "（暴击，伤害骰翻倍）"
+    else:
+        crit_text = f"（暴击：掷出 {result.natural}，暴击阈值 {crit_at}，伤害骰翻倍）"
     lines.append(f"命中 {target.name}！{detail}{crit_text}")
+    fury_note, fury_bonus = _fury_extra(
+        save, state, card, attacker, weapon, is_melee=is_melee, crit=crit, rng=rng
+    )
+    if fury_bonus > 0:
+        damage += fury_bonus
+        lines.append(fury_note)
     # 击晕只对近战生效（PHB 明写「用近战攻击」）；远程想留活口只能靠叙述。
     want_ko = bool(knock_out) and is_melee
     if knock_out and not is_melee:
@@ -3066,6 +3445,16 @@ def enemy_attack(
         distance=gate.distance,
     )
     advantage = combine_advantage(advantage, state_adv)
+
+    # 鲁莽攻击（野蛮人）：到它下个回合开始前，**打它的攻击有优势**。
+    # 这条挂在参战者身上，只能由敌人的结算来读——不读就等于白鲁莽了。
+    if bool(getattr(target, "reckless", False)):
+        advantage = combine_advantage(advantage, Advantage.ADVANTAGE)
+        state_reason = (
+            f"{state_reason}；{target.name} 正在鲁莽攻击，打它有优势"
+            if state_reason
+            else f"{target.name} 正在鲁莽攻击，打它有优势"
+        )
 
     # 怪物**特性**带来的优势（集群战术 / 血腥狂怒 / 日照敏感）：
     # 书上有明文，却最容易忘——三只狗头人围上来还按普通攻击掷，压力凭空少一截。

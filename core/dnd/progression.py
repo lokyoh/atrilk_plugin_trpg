@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .spell_progression import cantrips_at, picks_at, spellbook_at
+
 __all__ = [
     "ASI_LEVELS",
     "CLASS_ASI_LEVELS",
@@ -33,6 +35,7 @@ __all__ = [
     "level_for_xp",
     "level_up",
     "next_level_threshold",
+    "spell_gain_text",
     "xp_for_cr",
     "xp_progress_text",
     "xp_to_next_level",
@@ -202,6 +205,10 @@ def level_up(card: Any) -> str:
         f"生命上限 {old_max} → {new_max}（当前生命不变）",
         f"熟练加值 +{getattr(card, 'proficiency', 0)}",
     ]
+    # 生命上限默认按**平均值**算（手册给的选项之一）；想掷骰由 DM 补一句指令。
+    lines.append(
+        "（想掷生命骰而不是取平均：用 update_character 的「掷血」字段给这一级掷一次。）"
+    )
     if card.level in asi_levels_for(getattr(card, "profession", "")):
         lines.append(
             f"Lv.{card.level} 可以选择属性提升（+2 点属性，或换成一项专长）——"
@@ -217,7 +224,33 @@ def level_up(card: Any) -> str:
         "职业技能特性 / 新法术按职业表解锁；若该职业在此等级有新特性，请 DM 用 "
         "update_character 的「特性」补上。"
     )
+    # 法术数量随等级涨（2024 职业表）：升级文本里直接算出「这一级该多几道」，
+    # 免得 DM 每次都要翻表——引擎不替玩家挑，只把差额报出来。
+    gain = spell_gain_text(getattr(card, "profession", ""), card.level)
+    if gain:
+        lines.append(gain)
     return "\n".join(lines)
+
+
+def spell_gain_text(profession: str, level: int) -> str:
+    """升级时该补几道法术 / 戏法（2024 表；没有增量返回空串）。"""
+    level = int(level or 1)
+    if level <= 1:
+        return ""
+    cantrip_gain = cantrips_at(profession, level) - cantrips_at(profession, level - 1)
+    spell_gain = picks_at(profession, level) - picks_at(profession, level - 1)
+    parts: list[str] = []
+    if cantrip_gain > 0:
+        parts.append(f"戏法 +{cantrip_gain}")
+    if spell_gain > 0:
+        book = spellbook_at(profession, level) > 0
+        parts.append(("法术书 +{}" if book else "可准备 +{}").format(spell_gain))
+    if not parts:
+        return ""
+    return (
+        "本级的法术数量：" + "、".join(parts) + "——由 DM 与玩家挑好后用 "
+        "update_character 的「法术」/「准备」字段补上。"
+    )
 
 
 def xp_progress_text(card: Any) -> str:

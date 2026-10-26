@@ -451,7 +451,7 @@ async def _continue_creation(event: MessageEvent):
         if is_levelup:
             await continue_card.finish(
                 "已跳过本次升级选择（角色卡保持原样）。"
-                "随时可以用 /跑团.改卡 子职 或 /跑团.改卡 属性加点 补上。"
+                "随时可以用 /跑团.改卡（子职 / 属性加点 / 法术）补上。"
             )
         await continue_card.finish("已取消建卡，随时发送 /跑团.建卡 重新开始。")
 
@@ -776,15 +776,19 @@ def _reset_dependents(session: CreationSession, step: CreationStep) -> list[str]
     notes.append("装备已换回新职业的默认装备，可用 /跑团.改卡 装备 重新选择")
 
     # 法术按职业区分：换职业后旧法术可能不在新职业的法术表里，统一清空重选。
+    # 准备名单一起清 —— 旧名单指向的法术已经不在卡上了，留着只会让
+    # cast_spell 对一堆不存在的东西做校验。
     cantrips, known = session.spell_picks()
     if cantrips or known:
         session.spells = []
+        session.prepared = []
         notes.append(
             f"法术已清空（{profession.cn} 可重选 戏法 {cantrips} 个 + 法术 {known} 个，"
             "可用 /跑团.改卡 法术）"
         )
     elif session.spells:
         session.spells = []
+        session.prepared = []
         notes.append(f"{profession.cn} 没有施法能力，法术已清空")
 
     # 1 级特性的选择按职业区分（圣职 / 原初职能 / 战斗风格 / 祈唤 / 专精 / 武器精通）

@@ -379,11 +379,12 @@ def _award_xp(card: DndCharacter, share: int, save_id: str = "") -> list[str]:
     """
     lines: list[str] = []
     before = card.exp
+    before_level = card.level
     card.exp = max(0, before + share)
     lines.append(f"【{card.name}】经验 {before} → {card.exp} XP（+{share}）")
     while can_level_up(card):
         lines.append(level_up(card))
-    tip = start_session(card, save_id)
+    tip = start_session(card, save_id, from_level=before_level)
     if tip:
         lines.append(tip)
     return lines
