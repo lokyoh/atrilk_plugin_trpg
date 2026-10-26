@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from .datafiles import as_texts, load_mapping
+from .datafiles import as_texts, load_mapping, load_table
 
 __all__ = [
     "ARMORS",
@@ -33,17 +33,20 @@ __all__ = [
     "WEAPONS",
     "WEAPON_CATEGORIES",
     "WEAPON_MAP",
+    "WEAPON_MASTERIES",
     "Armor",
     "ArmorCategory",
     "ItemStack",
     "Supply",
     "Weapon",
     "WeaponCategory",
+    "WeaponMastery",
     "all_supply_names",
     "armor_proficient",
     "compute_armor_class",
     "expand_packs",
     "get_armor",
+    "get_mastery",
     "get_supply",
     "get_weapon",
     "pack_contents",
@@ -98,6 +101,15 @@ class Armor:
 
 
 @dataclass(frozen=True, slots=True)
+class WeaponMastery:
+    """一个武器精通词条（PHB 2024 第六章）。"""
+
+    key: str
+    cn: str  #: 手册中文名（横扫 / 擦掠 / …）
+    desc: str = ""  #: 词条效果
+
+
+@dataclass(frozen=True, slots=True)
 class Weapon:
     """一件武器。"""
 
@@ -114,6 +126,8 @@ class Weapon:
     #: 投掷射程（``投掷（射程20/60）``）；都是 0 = 不能投掷
     thrown_normal: int = 0
     thrown_max: int = 0
+    #: 武器精通词条 key（见 :data:`WEAPON_MASTERIES`）；空 = 这把武器没有精通
+    mastery: str = ""
 
     @property
     def is_ranged(self) -> bool:
@@ -210,6 +224,7 @@ def _weapon(row: dict[str, Any]) -> Weapon:
         two_handed_damage=str(row.get("two_handed_damage", "") or ""),
         thrown_normal=int(row.get("thrown_normal", 0)),
         thrown_max=int(row.get("thrown_max", 0)),
+        mastery=str(row.get("mastery", "") or ""),
     )
 
 
@@ -242,6 +257,25 @@ WEAPON_MAP: dict[str, Weapon] = {
     **{w.key: w for w in WEAPONS},
     **{w.cn: w for w in WEAPONS},
 }
+
+#: 武器精通词条表：数值在 ``res/dnd/weapon_masteries.yaml``（顶层列表）
+WEAPON_MASTERIES: dict[str, WeaponMastery] = {}
+for _row in load_table("weapon_masteries"):
+    _m = WeaponMastery(
+        key=str(_row["key"]),
+        cn=str(_row["cn"]),
+        desc=str(_row.get("desc", "") or ""),
+    )
+    WEAPON_MASTERIES[_m.key] = _m
+    WEAPON_MASTERIES[_m.cn] = _m
+
+
+def get_mastery(value: WeaponMastery | str | None) -> WeaponMastery | None:
+    """按对象 / key / 中文名取一个武器精通词条，取不到返回 ``None``。"""
+    if isinstance(value, WeaponMastery):
+        return value
+    text = str(value or "").strip()
+    return WEAPON_MASTERIES.get(text) if text else None
 
 #: 起始「包」-> 内容物：数值在 ``res/dnd/equipment.yaml`` 的 ``packs`` 段。
 #: 只收录**容器包**（探索者背包 / 艺人包 / 学者包 / 祭司包 / 窃贼包）；

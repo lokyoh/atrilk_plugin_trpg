@@ -30,6 +30,12 @@ from .attributes import (
     proficiency_bonus,
 )
 from .background import Background, get_background
+from .class_features import (
+    ClassFeature,
+    action_surge_max,
+    attacks_per_action,
+    features_for,
+)
 from .coins import format_coins
 from .conditions import (
     ConditionEffect,
@@ -44,19 +50,24 @@ from .conditions import (
 from .equipment import (
     Armor,
     Weapon,
+    WeaponMastery,
     armor_proficient,
     compute_armor_class,
     get_armor,
+    get_mastery,
     get_weapon,
     parse_item_stack,
     weapon_proficient,
 )
+from .feats import Feat, get_feat
 from .items import get_item
 from .options import feature_option
 from .profession import DndClass, get_class
+from .progression import MAX_LEVEL
 from .race import Race, SubRace, get_race
 from .skills import Skill, get_skill
 from .spells import Spell, get_spell, max_slots, slot_text
+from .subclass import SubClass, get_subclass, resolve_subclass
 from .theme import css_vars, get_theme
 
 __all__ = [
@@ -192,7 +203,7 @@ def split_glued_items(text: str, *, minimum: int = 2) -> list[str]:
     """把「武器盾牌链甲圣徽」这种**没有分隔符的一串**按已知装备名切回几件。
 
     为什么要有这一步：玩家会照着卡上的装备名连读下来
-    （「我装备上武器盾牌链甲圣徽印章戒指精致服装」）——没有顿号、没有空格。
+    （「我装备上武器盾牌链甲圣徽高档服装香水」）——没有顿号、没有空格。
     整串当成一件收下，装备栏里就多出一条十六个字的「装备」，
     之后任何规则都认不出它，玩家只会看见自己多了一件不存在的东西。
 
@@ -233,16 +244,6 @@ def split_glued_items(text: str, *, minimum: int = 2) -> list[str]:
     if parts and len(parts) >= minimum:
         return parts
     return [body]
-
-
-#: 种族 / 亚种自带的伤害抗性（建卡时自动写进
-#: :attr:`DndCharacter.damage_resistances`）。龙裔的吐息抗性取决于自选龙种，
-#: 由 DM 在建卡后自行补一条。
-RACE_RESISTANCES: dict[tuple[str, str], tuple[str, ...]] = {
-    ("dwarf", ""): ("毒素",),  # 矮人坚韧：两个亚种都有
-    ("halfling", "stout"): ("毒素",),  # 壮足半身人
-    ("tiefling", ""): ("火焰",),  # 炼狱血脉
-}
 
 
 @dataclass(slots=True)
@@ -312,12 +313,22 @@ class DndCharacter(TrpgCharacter):
     race: str = ""  # 种族内部键
     subrace: str = ""  # 亚种键（无则空）
     profession: str = ""  # 职业内部键
+    #: 子职内部键（PHB 2024：**所有职业都在 3 级**获得子职，见 :mod:`.subclass`）。
+    #: 1~2 级的角色为空；3 级以上建卡必经 :class:`.creation.CreationStep` 的「选择子职」。
+    subclass: str = ""
     background: str = ""  # 背景内部键
+    #: 阵营（PHB 2024 第四步：守序善良 / 中立善良 / … / 绝对中立 / 无阵营）。
+    #: 纯角色扮演标记，**没有任何机械效果**（手册 2312-2347），留空不报错。
+    alignment: str = ""
     #: 掷出的属性值（未加**起源提升**），六项按属性键存放
     base_scores: dict[str, int] = field(default_factory=dict)
     #: 起源属性提升（PHB 2024：来自**背景**的三项属性，+2/+1 或 +1/+1/+1）。
-    #: 种族不提供属性加值 —— 属性 = ``base_scores`` + 本字段。
+    #: 种族不提供属性加值 —— 属性 = ``base_scores`` + 本字段 + :attr:`asi`。
     ability_boost: dict[str, int] = field(default_factory=dict)
+    #: **等级带来的属性提升**（ASI：4/8/12/16 级各一次，战士 6/14、游荡者 10 另有）。
+    #: 与背景提升分开存：两者来源不同、重做建卡某一步时不能互相污染，
+    #: 但算属性时等权相加（见 :attr:`abilities`）。
+    asi: dict[str, int] = field(default_factory=dict)
     #: 属性提升是否已按 2024 口径结算过。旧存档（2024 之前建的卡）没有这个标记，
     #: 读档时把当年并入的种族加值固化成 :attr:`ability_boost`（见 ``__post_init__``）。
     boost_applied: bool = False
@@ -348,6 +359,10 @@ class DndCharacter(TrpgCharacter):
     #: **武器精通**（野蛮人 / 战士 / 圣武士 / 游侠 / 游荡者 1 级）：武器键。
     #: 引擎目前只记录不退算（精通词条的效果由 DM 按 `equipment.yaml` 的 `武器精通` 裁定）。
     weapon_masteries: list[str] = field(default_factory=list)
+    #: **专长**（PHB 2024 第五章）。建卡时由**背景**给一项起源专长（如侍僧→魔法学徒），
+    #: 之后升级由「属性值提升 / 可选专长」追加。带括号的写法意为该专长的子选项，
+    #: 如「魔法学徒（牧师）」= 魔法学徒选牧师法表（解析见 :func:`.feats.get_feat`）。
+    feats: list[str] = field(default_factory=list)
     #: 经验值
     exp: int = 0
     #: 当前生命值；``None`` 表示未记录（视为满血）
@@ -387,6 +402,9 @@ class DndCharacter(TrpgCharacter):
     #: 已消耗的生命骰数（短休花掉的；长休按 5e 回一半，见
     #: :meth:`regain_hit_dice`）。总数 = 等级，恢复见 :meth:`restore_hit_dice`
     hit_dice_used: int = 0
+    #: **动作如潮**已用次数（战士 2 级起；上限见 :attr:`action_surge_max`）。
+    #: 短休或长休后清零（PHB 2024：每次休息之间可用 1 次，17 级起 2 次）。
+    action_surge_used: int = 0
     #: 游泳速度（尺）；水生种族（海精灵 / 崔斯特 / 蜥蜴人等）在建卡或 DM 设定后非零。
     #: 用于水下战斗——有游泳速度时水下近战武器攻击不受劣势（见 combat.attack）。
     swim_speed: int = 0
@@ -425,6 +443,9 @@ class DndCharacter(TrpgCharacter):
         self.death_saves_success = max(0, min(3, int(self.death_saves_success or 0)))
         self.death_saves_failures = max(0, min(3, int(self.death_saves_failures or 0)))
         self.stable = bool(self.stable)
+        # 专长：去重保序；阵营只是扮演标记，认不出的写法也照原样留着
+        self.feats = list(dict.fromkeys(str(f) for f in self.feats if str(f).strip()))
+        self.alignment = str(self.alignment or "").strip()
         self.knocked_out = bool(self.knocked_out)
         self.stable_recovery_hours = max(0, int(self.stable_recovery_hours or 0))
         # 法术统一存成法术 key（旧存档里可能是中文名 / 英文名）
@@ -555,8 +576,11 @@ class DndCharacter(TrpgCharacter):
         profession: DndClass | str,
         background: Background | str | None = None,
         subrace: SubRace | str | None = None,
+        subclass: SubClass | str | None = None,
+        level: int = 1,
         base_scores: dict[str, int] | None = None,
         ability_boost: dict[str, int] | None = None,
+        asi: dict[str, int] | None = None,
         score_method: str = "4d6",
         score_rolls: dict[str, list[int]] | None = None,
         skills: list[str] | None = None,
@@ -571,8 +595,14 @@ class DndCharacter(TrpgCharacter):
         feature_choices: dict[str, str] | None = None,
         expertise: list[str] | None = None,
         weapon_masteries: list[str] | None = None,
+        feats: list[str] | None = None,
+        alignment: str = "",
     ) -> DndCharacter:
-        """按建卡流程的产出一份角色卡。"""
+        """按建卡流程的产出一份角色卡。
+
+        ``feats`` 留空时按背景给的起源专长自动补（PHB 2024：每个背景固定给一项）；
+        显式传入则以传入为准（升级后追加专长走这条）。
+        """
         race_obj = get_race(race)
         sub_obj = race_obj.resolve_subrace(subrace) if subrace else None
         class_obj = get_class(profession)
@@ -586,18 +616,18 @@ class DndCharacter(TrpgCharacter):
         # 工具熟练：背景自带的（种族 / 职业的结构化工具在各自数据里补）
         tools = list(tool_proficiencies or [])
         bg_obj = get_background(background) if background else None
+        # 专长：背景固定给的一项**起源专长**（没显式传就按背景补，去重保序）
+        feat_list = list(dict.fromkeys(feats or []))
+        if bg_obj and bg_obj.feat and bg_obj.feat not in feat_list:
+            feat_list.append(bg_obj.feat)
         if bg_obj:
             for item in bg_obj.tools:
                 item = str(item).strip()
                 if item and item not in tools:
                     tools.append(item)
-        # 种族 / 亚种自带的抗性（矮人抗毒、提夫林抗火……）自动补上；
-        # 先查（种族, 亚种）组合，再回退到（种族, 空）的种族级条目
-        sub_key = sub_obj.key if sub_obj else ""
-        for item in RACE_RESISTANCES.get(
-            (race_obj.key, sub_key),
-            RACE_RESISTANCES.get((race_obj.key, ""), ()),
-        ):
+        # 种族 / 血系自带的抗性（矮人抗毒、阿斯莫抗暗蚀光耀、龙裔按龙种、
+        # 提夫林按邪魔遗赠……）自动补上——数据在 races.yaml 的 resist 字段
+        for item in (*race_obj.resist, *(sub_obj.resist if sub_obj else ())):
             if item not in resistances:
                 resistances.append(item)
         # 圣职（牧师）/ 原初职能（德鲁伊）的「守护者」选项会给额外受训
@@ -619,9 +649,12 @@ class DndCharacter(TrpgCharacter):
             race=race_obj.key,
             subrace=sub_obj.key if sub_obj else "",
             profession=class_obj.key,
+            subclass=resolve_subclass(subclass).key if subclass else "",
+            level=max(1, min(int(level or 1), MAX_LEVEL)),
             background=get_background(background).key if background else "",
             base_scores=dict(base_scores or {}),
             ability_boost=dict(ability_boost or {}),
+            asi=dict(asi or {}),
             boost_applied=True,
             score_method=score_method,
             score_rolls=dict(score_rolls or {}),
@@ -656,13 +689,22 @@ class DndCharacter(TrpgCharacter):
             feature_choices=choices,
             expertise=list(expertise or []),
             weapon_masteries=list(weapon_masteries or []),
+            feats=feat_list,
+            alignment=str(alignment or "").strip(),
         )
 
     # —— 规则对象 ——
 
     @property
     def race_obj(self) -> Race | None:
-        return get_race(self.race) if self.race else None
+        """种族对象；**认不出就返回 ``None``**（2024 重排删掉了半精灵 / 半兽人，
+        旧存档带着这些键，不能让整张卡读不出来——见 :meth:`race_text`）。"""
+        if not self.race:
+            return None
+        try:
+            return get_race(self.race)
+        except KeyError:
+            return None
 
     @property
     def subrace_obj(self) -> SubRace | None:
@@ -676,11 +718,105 @@ class DndCharacter(TrpgCharacter):
 
     @property
     def profession_obj(self) -> DndClass | None:
-        return get_class(self.profession) if self.profession else None
+        if not self.profession:
+            return None
+        try:
+            return get_class(self.profession)
+        except KeyError:
+            return None
 
     @property
     def background_obj(self) -> Background | None:
-        return get_background(self.background) if self.background else None
+        """背景对象；2024 重排删掉了民间英雄 / 化外之民，旧存档认不出时给 ``None``。"""
+        if not self.background:
+            return None
+        try:
+            return get_background(self.background)
+        except KeyError:
+            return None
+
+    @property
+    def subclass_obj(self) -> SubClass | None:
+        """子职对象；认不出给 ``None``（旧存档 / DM 手写的自由文本不该让卡崩）。"""
+        if not self.subclass:
+            return None
+        try:
+            return get_subclass(self.subclass)
+        except KeyError:
+            return None
+
+    @property
+    def subclass_text(self) -> str:
+        """子职的展示文本（没有则空串）。"""
+        sub = self.subclass_obj
+        if not sub:
+            return ""
+        return sub.cn if sub.cn != sub.short else f"{sub.cn}"
+
+    def unlocked_subclass_features(self) -> tuple[Any, ...]:
+        """按当前等级已解锁的子职特性（3 级以上才有）。"""
+        sub = self.subclass_obj
+        if not sub:
+            return ()
+        return sub.features_up_to(self.level)
+
+    def class_features(self) -> tuple[ClassFeature, ...]:
+        """按当前等级已解锁的**职业**特性（``res/dnd/class_features.yaml``）。
+
+        派生而非存卡：这样 DM 用 ``update_character`` 手写的自由文本特性不会
+        与它互相覆盖，改等级 / 改职业也会自动跟着变。
+        """
+        if not self.profession:
+            return ()
+        return features_for(self.profession, self.level)
+
+    def class_feature_names(self) -> tuple[str, ...]:
+        """已解锁职业特性的名字（去重保序，展示用）。"""
+        return tuple(dict.fromkeys(f.name for f in self.class_features()))
+
+    @property
+    def attacks_per_action(self) -> int:
+        """一个攻击动作能攻击几次（战士 5/11/20 级为 2/3/4，其余 5 级职业为 2）。"""
+        return attacks_per_action(self.profession, self.level)
+
+    @property
+    def action_surge_max(self) -> int:
+        """动作如潮每次休息之间能用几次（战士 2 级 1 次、17 级 2 次）。"""
+        return action_surge_max(self.profession, self.level)
+
+    @property
+    def action_surge_left(self) -> int:
+        """本段休息之间还能用几次动作如潮。"""
+        return max(0, self.action_surge_max - int(self.action_surge_used or 0))
+
+    def use_action_surge(self) -> bool:
+        """消耗一次动作如潮；没有剩余返回 ``False``。"""
+        if self.action_surge_left <= 0:
+            return False
+        self.action_surge_used += 1
+        return True
+
+    def restore_action_surge(self) -> bool:
+        """短休 / 长休后恢复动作如潮（有变化返回 ``True``）。"""
+        if int(self.action_surge_used or 0):
+            self.action_surge_used = 0
+            return True
+        return False
+
+    def feat_objects(self) -> tuple[Feat, ...]:
+        """已落卡的专长对象（认不出的名字跳过——DM 手写的自由文本不该让卡崩）。"""
+        found: list[Feat] = []
+        for name in self.feats:
+            try:
+                found.append(get_feat(name))
+            except KeyError:
+                continue
+        return tuple(found)
+
+    @property
+    def feats_text(self) -> str:
+        """专长的展示文本（空则空串）。"""
+        return "、".join(self.feats)
 
     @property
     def proficiency(self) -> int:
@@ -771,14 +907,17 @@ class DndCharacter(TrpgCharacter):
 
     @property
     def abilities(self) -> AbilitySet:
-        """结算**起源属性提升**后的属性。
+        """结算**起源属性提升**与**等级属性提升（ASI）**后的属性。
 
-        PHB 2024：属性提升来自**背景**（三项属性 +2/+1 或 +1/+1/+1，上限 20），
-        种族不提供属性加值。提升值存在 :attr:`ability_boost`。
+        PHB 2024：起源提升来自**背景**（三项属性 +2/+1 或 +1/+1/+1，上限 20），
+        种族不提供属性加值；升级到 4/8/12/16 级各再拿一次 ASI。两者都存成
+        「属性键 → 加点」，算属性时等权相加。
         """
         scores = AbilitySet(self.base_scores or {a.key: 10 for a in ABILITIES})
         if self.ability_boost:
             scores.apply_bonus(self.ability_boost)
+        if self.asi:
+            scores.apply_bonus(self.asi)
         return scores
 
     def modifier(self, ability: Ability | str) -> int:
@@ -831,6 +970,23 @@ class DndCharacter(TrpgCharacter):
     # —— 派生数值 ——
 
     @property
+    def hp_per_level(self) -> int:
+        """每等级的生命值上限加值（种族 + 专长）。
+
+        矮人「生命值上限 +1，此后每次升级再加 1」是 2024 的通用种族特性；
+        「健壮」专长是 +2/级。两者都按等级累乘（1 级时即已生效一次）。
+        """
+        total = 0
+        race = self.race_obj
+        if race:
+            total += race.hp_per_level
+        sub = self.subrace_obj
+        if sub is not None:
+            total += sub.hp_per_level
+        total += sum(feat.hp_per_level for feat in self.feat_objects())
+        return total
+
+    @property
     def max_hp(self) -> int:
         """生命值上限。
 
@@ -845,6 +1001,7 @@ class DndCharacter(TrpgCharacter):
             hp = profession.level1_hp + con
             average = profession.hit_die // 2 + 1
             hp += (self.level - 1) * (average + con)
+        hp += self.hp_per_level * self.level
         scale = merge_effects(self.conditions, exhaustion=self.exhaustion).hp_max_scale
         if scale < 1.0:
             hp = max(1, int(hp * scale))
@@ -1337,7 +1494,7 @@ class DndCharacter(TrpgCharacter):
         return False, f"没有{' / '.join(names)}了", ""
 
     def restore_slots(self, *, kind: str = "long") -> None:
-        """恢复法术位：长休全部恢复；短休只恢复契约魔法（邪术师）。"""
+        """恢复法术位：长休全部恢复；短休只恢复契约魔法（魔契师）。"""
         if kind == "long":
             self.spell_slots_used = {}
             return
@@ -1781,6 +1938,19 @@ class DndCharacter(TrpgCharacter):
             lines.append(f"{skill.label} {self.skill_bonus(skill):+d}")
         return lines
 
+    def weapon_mastery_entries(self) -> list[tuple[str, WeaponMastery | None]]:
+        """返回「武器中文名 -> 精通词条对象」的列表（卡面与提示用）。
+
+        武器精通特性（野蛮人 / 战士 / 圣武士 / 游侠 / 游荡者）让角色能用这些词条，
+        但引擎只记录、不自动结算，效果由 DM 按词条描述裁定。
+        """
+        out: list[tuple[str, WeaponMastery | None]] = []
+        for name in self.weapon_masteries:
+            weapon = get_weapon(name)
+            mastery = get_mastery(weapon.mastery) if weapon and weapon.mastery else None
+            out.append((name, mastery))
+        return out
+
     def summary(self) -> str:
         """角色卡摘要，用于聊天展示。"""
         race = self.race_obj
@@ -1788,8 +1958,12 @@ class DndCharacter(TrpgCharacter):
         race_text = race.cn if race else "未知种族"
         if self.subrace_obj:
             race_text += f"·{self.subrace_obj.cn}"
+        profession_text = profession.cn if profession else "无业"
+        sub = self.subclass_obj
+        if sub:
+            profession_text += f"（{sub.short}）"
         lines = [
-            f"【{self.name or '无名者'}】{race_text} {profession.cn if profession else '无业'} Lv.{self.level}",
+            f"【{self.name or '无名者'}】{race_text} {profession_text} Lv.{self.level}",
             format_ability_block(self.abilities),
             f"HP {self.hp}/{self.max_hp}  AC {self.armor_class_with_effects}  先攻 {self.initiative:+d}  熟练 {self.proficiency:+d}",
         ]
@@ -1823,14 +1997,28 @@ class DndCharacter(TrpgCharacter):
             dice_text = f"生命骰 {profession.hit_dice}"
             if self.hit_dice_used:
                 dice_text += f"（已耗 {self.hit_dice_used}，剩 {self.hit_dice_left}）"
+            if self.attacks_per_action > 1:
+                dice_text += f"　每动作攻击 {self.attacks_per_action} 次"
             lines.append(dice_text)
+        # 职业特性按等级**派生**（不存卡）：高等级角色也能看到自己会什么
+        feats = self.class_feature_names()
+        if feats:
+            shown = "、".join(feats[:8])
+            if len(feats) > 8:
+                shown += f" 等 {len(feats)} 项"
+            lines.append(f"职业特性 {shown}")
         bg = self.background_obj
         if bg:
             lines.append(f"背景 {bg.cn}")
+        # 专长以**卡上的**为准：背景给的那一项已落进 feats，升级后追加的也在这里
+        if self.feats:
+            lines.append("专长 " + self.feats_text)
         if self.languages:
             lines.append("语言 " + "、".join(self.languages))
         if self.size:
             lines.append(f"体型 {self.size}")
+        if self.alignment:
+            lines.append(f"阵营 {self.alignment}")
         if self.skill_lines():
             lines.append("技能 " + "、".join(self.skill_lines()))
         prof = []
@@ -1840,6 +2028,12 @@ class DndCharacter(TrpgCharacter):
             prof.append("武器 " + "、".join(self.weapon_proficiencies))
         if prof:
             lines.append("熟练 " + "；".join(prof))
+        if self.weapon_masteries:
+            parts = [
+                f"{name}（{m.cn}）" if m else name
+                for name, m in self.weapon_mastery_entries()
+            ]
+            lines.append("武器精通 " + "、".join(parts))
         if self.equipment or self.money:
             slots, pack = self.equipment_layout()
             # 工具熟练并入背包「工具」（用户要求）：与实体工具物品同处一列
@@ -2205,9 +2399,11 @@ class DndCharacter(TrpgCharacter):
             "race",
             "subrace",
             "profession",
+            "subclass",
             "background",
             "base_scores",
             "ability_boost",
+            "asi",
             "boost_applied",
             "score_method",
             "score_rolls",
@@ -2221,7 +2417,10 @@ class DndCharacter(TrpgCharacter):
             "feature_choices",
             "expertise",
             "weapon_masteries",
+            "feats",
+            "alignment",
             "exp",
+            "action_surge_used",
             "current_hp",
             "temp_hp",
             "conditions",

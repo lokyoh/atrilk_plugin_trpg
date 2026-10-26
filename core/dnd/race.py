@@ -43,6 +43,10 @@ class SubRace:
     weapons: tuple[str, ...] = ()
     #: 亚种给的护甲熟练项（类别名：轻甲 / 中甲 / 重甲 / 盾牌）
     armor: tuple[str, ...] = ()
+    #: 血系 / 龙种 / 邪魔遗赠给的伤害抗性（2024）
+    resist: tuple[str, ...] = ()
+    #: 每等级的生命值上限加值（2024 矮人通用特性：+1；其余种族为 0）
+    hp_per_level: int = 0
 
     @property
     def label(self) -> str:
@@ -69,6 +73,14 @@ class Race:
     weapons: tuple[str, ...] = ()
     #: 种族给的护甲熟练项（类别名）
     armor: tuple[str, ...] = ()
+    #: 固定伤害抗性（2024；如矮人毒素、阿斯莫暗蚀 / 光耀）
+    resist: tuple[str, ...] = ()
+    #: 生物类型（2024 新组件，如「类人生物」）
+    creature_type: str = "类人生物"
+    #: 黑暗视觉尺数（0 = 无）
+    darkvision: int = 0
+    #: 每等级的生命值上限加值（2024 **矮人通用特性**：+1；其余种族为 0）
+    hp_per_level: int = 0
 
     def bonus_of(self, subrace: SubRace | str | None = None) -> dict[str, int]:
         """叠加亚种后的属性加值。
@@ -122,6 +134,8 @@ def _subrace(row: dict[str, Any]) -> SubRace:
         desc=str(row.get("desc", "")),
         weapons=as_texts(row.get("weapons")),
         armor=as_texts(row.get("armor")),
+        resist=as_texts(row.get("resist")),
+        hp_per_level=int(row.get("hp_per_level", 0) or 0),
     )
 
 
@@ -134,12 +148,16 @@ def _race(row: dict[str, Any]) -> Race:
         bonus={str(k): int(v) for k, v in (row.get("bonus") or {}).items()},
         speed=int(row.get("speed", 30)),
         size=str(row.get("size", "中型")),
+        creature_type=str(row.get("creature_type", "类人生物")),
+        darkvision=int(row.get("darkvision", 0) or 0),
         traits=as_texts(row.get("traits")),
         languages=as_texts(row.get("languages")),
         subraces=tuple(_subrace(sub) for sub in as_rows(row.get("subraces"))),
         desc=str(row.get("desc", "")),
         weapons=as_texts(row.get("weapons")),
         armor=as_texts(row.get("armor")),
+        resist=as_texts(row.get("resist")),
+        hp_per_level=int(row.get("hp_per_level", 0) or 0),
     )
 
 
@@ -168,15 +186,16 @@ def race_choices() -> tuple[str, ...]:
 
 
 def race_choice_label(race: Race) -> str:
-    """种族选项文案：**亚种写在种族后面**（2026-10-24 用户要求）。
+    """种族选项文案：**血系 / 传承写在种族后面**（2024 起亚种制改为血系制）。
 
-    形如「精灵（亚种：高等精灵 / 木精灵 / 卓尔（黑暗精灵））」；没有亚种的
-    种族只写种族名。建卡选择列表与数据查询列表共用这一份，不再各写一份。
+    形如「精灵（血系：卓尔 / 高等精灵 / 木精灵）」「龙裔（龙种：黑龙 / …）」；
+    没有血系的种族（人类 / 矮人 / 半身人 / 兽人 / 阿斯莫）只写种族名。
+    建卡选择列表与数据查询列表共用这一份，不再各写一份。
     """
     if not race.subraces:
         return race.cn
     subs = " / ".join(sub.cn for sub in race.subraces)
-    return f"{race.cn}（亚种：{subs}）"
+    return f"{race.cn}（血系：{subs}）"
 
 
 def race_choice_lines() -> tuple[str, ...]:

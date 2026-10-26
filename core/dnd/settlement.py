@@ -33,6 +33,7 @@ from typing import Any
 
 from .card import DndCharacter
 from .combat import CombatState, recover_ammo
+from .levelup import start_session
 from .memory import add_memory, current_round
 from .monsters import SCALE_SUFFIX
 from .npcs import is_npc_key, tier_from_key
@@ -370,14 +371,21 @@ def _defeated_text(state: CombatState) -> str:
     return "击败：" + "、".join(rows) + "。"
 
 
-def _award_xp(card: DndCharacter, share: int) -> list[str]:
-    """给一张卡发经验并处理升级，返回给玩家看的文案。"""
+def _award_xp(card: DndCharacter, share: int, save_id: str = "") -> list[str]:
+    """给一张卡发经验并处理升级，返回给玩家看的文案。
+
+    升级后发现还欠玩家决定的事（3 级选子职、属性提升）就**当场开一个升级
+    选择会话**：提示文本拼在结算后面，玩家逐项答完自动写回角色卡。
+    """
     lines: list[str] = []
     before = card.exp
     card.exp = max(0, before + share)
     lines.append(f"【{card.name}】经验 {before} → {card.exp} XP（+{share}）")
     while can_level_up(card):
         lines.append(level_up(card))
+    tip = start_session(card, save_id)
+    if tip:
+        lines.append(tip)
     return lines
 
 
@@ -411,7 +419,7 @@ def settle_combat(
     result.items = list(loot["items"])
 
     for user_id, card in cards:
-        result.lines[user_id] = _award_xp(card, result.share)
+        result.lines[user_id] = _award_xp(card, result.share, save.save_id)
         set_character(save, card)
     if result.share:
         if result.remainder:

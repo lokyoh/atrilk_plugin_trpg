@@ -164,13 +164,22 @@ CLASSES: tuple[DndClass, ...] = tuple(_klass(row) for row in load_table("classes
 CLASS_MAP: dict[str, DndClass] = {c.key: c for c in CLASSES}
 
 
+#: 旧译名 → 职业键（2024 官译改了名，老玩家仍会写旧写法）
+CLASS_ALIASES: dict[str, str] = {
+    "邪术师": "warlock",  # 2024 官译「魔契师」
+}
+
+
 def get_class(value: DndClass | str) -> DndClass:
-    """按职业对象 / 内部键 / 中文名取出职业。"""
+    """按职业对象 / 内部键 / 中文名 / 英文名取出职业。"""
     if isinstance(value, DndClass):
         return value
     text = str(value).strip()
     if text in CLASS_MAP:
         return CLASS_MAP[text]
+    alias = CLASS_ALIASES.get(text)
+    if alias:
+        return CLASS_MAP[alias]
     for cls in CLASSES:
         if cls.cn == text or cls.en.lower() == text.lower():
             return cls

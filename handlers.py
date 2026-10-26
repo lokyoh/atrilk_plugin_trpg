@@ -78,11 +78,13 @@ from .core.dnd import (
     save_save,
     save_session,
     set_binding,
+    set_character,
     story_files,
     strip_reroll,
     wants_reroll,
 )
 from .core.dnd.clock import clock_text
+from .core.dnd.creation import session_from_card
 from .core.dnd.event_progress import event_summary
 from .core.dnd.events import load_pool
 from .core.dnd.image_render import (
@@ -443,8 +445,14 @@ async def _continue_creation(event: MessageEvent):
 
     text = event.get_plaintext().strip()
     if text.lower() in _CANCEL_WORDS:
+        is_levelup = session.purpose == "levelup"
         delete_session(user_id)
         _unmark_active(user_id)
+        if is_levelup:
+            await continue_card.finish(
+                "已跳过本次升级选择（角色卡保持原样）。"
+                "随时可以用 /跑团.改卡 子职 或 /跑团.改卡 属性加点 补上。"
+            )
         await continue_card.finish("已取消建卡，随时发送 /跑团.建卡 重新开始。")
 
     out, character = await _advance(session, text)
@@ -480,12 +488,28 @@ async def _advance(
             return f"⚠️ {e}\n\n{_reply(session)}", None
 
         try:
-            save_card(character)
+            if session.purpose == "levelup" and session.save_id:
+                # 升级发生在游戏内：新卡写回**存档**（战斗与检定读的是存档副本），
+                # 同时同步插件目录的全局卡，保证 /跑团.看卡 在局外也一致。
+                save = load_save(session.save_id)
+                if save is not None:
+                    set_character(save, character)
+                save_card(character)
+            else:
+                save_card(character)
         except Exception as e:  # 落盘失败不应让玩家以为建好了
             log.warning(f"保存角色卡失败：{str_traceback(e)}")
             return f"⚠️ 保存角色卡失败：{e}", None
 
         delete_session(session.user_id)
+        if session.purpose == "levelup":
+            return (
+                await _card_result(
+                    "✅ 升级选择完成，已写回角色卡，继续游戏吧！",
+                    character,
+                ),
+                character,
+            )
         return (
             await _card_result(
                 "🎲 角色卡已保存！\n"
@@ -627,8 +651,8 @@ async def _query_data(event: MessageEvent, args: Message = CommandArg()):
     if not raw or " " not in raw:
         await query_data_cmd.finish(
             "用法：/跑团.查 <表> <名字>\n"
-            "表：怪物 / 法术 / 种族 / 职业 / 武器 / 护甲 / 魔法物品\n"
-            "例：/跑团.查 怪物 地精武者　/跑团.查 法术 火球术"
+            "表：怪物 / 法术 / 种族 / 背景 / 职业 / 子职 / 武器 / 护甲 / 魔法物品\n"
+            "例：/跑团.查 怪物 地精武者　/跑团.查 法术 火球术　/跑团.查 子职 狂战士"
         )
     table, name = raw.split(" ", 1)
     name = name.strip()
@@ -652,8 +676,8 @@ async def _query_data(event: MessageEvent, args: Message = CommandArg()):
     text = query_data_text(table, name) if query_data_text else ""
     if not text:
         text = (
-            "没查到相关内容，换个表或名字试试（表：怪物 / 法术 / 种族 / 职业 / "
-            "武器 / 护甲 / 魔法物品）。"
+            "没查到相关内容，换个表或名字试试（表：怪物 / 法术 / 种族 / 背景 / "
+            "职业 / 武器 / 护甲 / 魔法物品）。"
         )
     await query_data_cmd.finish(text)
 
@@ -664,15 +688,20 @@ async def _query_data(event: MessageEvent, args: Message = CommandArg()):
 
 #: 可重做的建卡步骤：步骤 -> 触发词（第一个为展示名）
 _REDO_STEPS: tuple[tuple[CreationStep, tuple[str, ...]], ...] = (
+    (CreationStep.LEVEL, ("等级", "level")),
     (CreationStep.ABILITY, ("属性", "ability", "roll", "掷属性")),
     (CreationStep.RACE, ("种族", "race")),
+    (CreationStep.LANGUAGES, ("语言", "language", "languages")),
     (CreationStep.PROFESSION, ("职业", "profession", "class")),
+    (CreationStep.SUBCLASS, ("子职", "子职业", "subclass")),
     (CreationStep.BACKGROUND, ("背景", "background")),
-    (CreationStep.BOOST, ("属性提升", "背景属性提升", "boost")),
+    (CreationStep.BOOST, ("属性提升", "起源提升", "背景属性提升", "boost")),
     (CreationStep.SKILL, ("技能", "skill")),
     (CreationStep.FEATURES, ("特性", "职业特性", "feature")),
     (CreationStep.EQUIPMENT, ("装备", "装备包", "equipment")),
     (CreationStep.SPELLS, ("法术", "法术表", "spell", "spells")),
+    (CreationStep.ASI, ("属性加点", "asi", "加点")),
+    (CreationStep.ALIGNMENT, ("阵营", "alignment")),
 )
 
 #: 触发词 -> 步骤
@@ -698,41 +727,29 @@ def _resolve_step(token: str) -> CreationStep | None:
 
 
 def _session_from_card(card: DndCharacter) -> CreationSession:
-    """把已保存的角色卡还原成建卡会话，供「重做某一步」使用。
-
-    生成角色卡时，背景提供的技能 / 装备已经合并进卡里；这里再拆出来，
-    这样重做背景时不会残留旧背景的内容（``build_character`` 会重新合并）。
-    """
-    session = CreationSession(user_id=card.user_id)
-    session.system = "DND 5e"
-    session.name = card.name
-    session.base_scores = dict(card.base_scores)
-    session.boost = dict(card.ability_boost)
-    session.ability_pool = sorted(card.base_scores.values(), reverse=True)
-    session.race = card.race
-    session.subrace = card.subrace
-    session.profession = card.profession
-    session.background = card.background
-    session.feature_choices = dict(card.feature_choices)
-    session.expertise = list(card.expertise)
-    session.weapon_masteries = list(card.weapon_masteries)
-
-    background = card.background_obj
-    bg_skills = set(background.skills) if background else set()
-    bg_items = (
-        {str(parse_item_stack(item)) for item in background.equipment}
-        if background
-        else set()
-    )
-    session.skills = [k for k in card.skill_proficiencies if k not in bg_skills]
-    session.equipment = [i for i in card.equipment if i not in bg_items]
-    session.equipment_package = card.equipment_package
-    session.spells = list(card.spells)
-    return session
+    """把已保存的角色卡还原成建卡会话（实现挪到了 :func:`.creation.session_from_card`，
+    升级选择会话也用它）。"""
+    return session_from_card(card)
 
 
 def _reset_dependents(session: CreationSession, step: CreationStep) -> list[str]:
     """重做某步后清理与它冲突的下游选择，返回给玩家的提示。"""
+    if step is CreationStep.ASI:
+        # 重做「属性加点」= 把旧的等级加点全部撤掉，按次数重新分配
+        session.asi_done = 0
+        if session.asi:
+            session.asi = {}
+            return ["旧的等级加点已清空，请按提示重新分配"]
+        return []
+
+    if step is CreationStep.LEVEL:
+        # 等级变了，允许的加点次数跟着变：清空重分配，免得降级后还留着多出来的 +2
+        session.asi_done = 0
+        if session.asi:
+            session.asi = {}
+            return ["等级变了，旧的等级加点已清空，请按新等级重新分配"]
+        return []
+
     if step is not CreationStep.PROFESSION:
         return []
     profession = session.profession_obj
@@ -740,6 +757,11 @@ def _reset_dependents(session: CreationSession, step: CreationStep) -> list[str]
         return []
 
     notes: list[str] = []
+    # 子职隶属于具体职业：换职业后旧子职无效（choose_profession 已清，这里兜底提示）
+    sub = session.subclass_obj
+    if sub and sub.profession != profession.key:
+        session.subclass = ""
+        notes.append("子职已清空（不属于新职业），可用 /跑团.改卡 子职 重新选")
     allowed = set(profession.skill_pool)
     removed = [k for k in session.skills if k not in allowed]
     if removed:

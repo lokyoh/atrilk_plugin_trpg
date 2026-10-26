@@ -19,6 +19,7 @@ from ATRI.exceptions import str_traceback
 from ATRI.log import log
 
 from ...dnd.attributes import ABILITIES, get_ability
+from ...dnd.background import BACKGROUNDS, get_background
 from ...dnd.battlemap import (
     cover_bonus,
     distance_feet,
@@ -30,6 +31,7 @@ from ...dnd.battlemap import (
 )
 from ...dnd.bestiary import bestiary_text, find_bestiary
 from ...dnd.card import DndCharacter
+from ...dnd.class_features import CLASS_FEATURES, features_for
 from ...dnd.combat import (
     apply_condition,
     apply_threat_profile,
@@ -40,6 +42,7 @@ from ...dnd.combat import (
     do_tactic,
     effective_ac,
     find_combatant,
+    grant_extra_action,
     heal_combatant,
     load_combat,
     medicine_check,
@@ -51,6 +54,7 @@ from ...dnd.combat import (
     save_combat,
     stabilize_combatant,
     start_combat,
+    use_attack,
     use_resource,
 )
 from ...dnd.combat import (
@@ -79,7 +83,9 @@ from ...dnd.difficulty import (
 from ...dnd.encounter import calibrate_specs
 from ...dnd.equipment import ARMORS, SHIELDS, WEAPONS, get_armor, get_weapon
 from ...dnd.evolution import note_scene_change
+from ...dnd.feats import get_feat
 from ...dnd.items import ITEMS, format_item_list, get_item
+from ...dnd.levelup import start_session as start_levelup_session
 from ...dnd.memory import (
     MEMORY_MAX,
     add_memory,
@@ -140,6 +146,7 @@ from ...dnd.spells import (
     spells_of_level,
 )
 from ...dnd.storage import load_card, save_card
+from ...dnd.subclass import SUBCLASS_LEVEL, get_subclass, subclass_choices
 from ...dnd.world_store import (
     DOC_KIND_LABELS,
     DOC_KINDS,
@@ -398,6 +405,49 @@ class GetRuleTool(AgentTool):
         return match_rules(topic)
 
 
+def _query_class_feature(name: str) -> str:
+    """查职业等级特性（PHB 2024 第三章：12 职业 × 1~20 级）。
+
+    支持三种写法：「战士 5」（列到 5 级为止的特性）/「动作如潮」（按名字搜）/
+    留空（列每职业的全部特性名）。
+    """
+    if not name:
+        lines = []
+        for cls in CLASSES:
+            names = list(dict.fromkeys(f.name for f in features_for(cls.key, MAX_LEVEL)))
+            lines.append(f"{cls.cn}：{'、'.join(names)}")
+        return (
+            "职业特性（写「战士 5」查某级、写特性名查原文）：\n" + "\n".join(lines)
+        )
+    tokens = str(name).replace("，", " ").replace("·", " ").split()
+    if tokens and tokens[-1].isdigit():
+        level = max(1, min(int(tokens[-1]), MAX_LEVEL))
+        head = " ".join(tokens[:-1]).strip() or tokens[0]
+        try:
+            cls = get_class(head)
+        except KeyError:
+            return f"认不出职业「{head}」，写「职业 等级」如「战士 5」。"
+        feats = features_for(cls.key, level)
+        if not feats:
+            return f"{cls.cn} 没有特性数据。"
+        lines = [f"{cls.cn} Lv.{level} 已解锁的职业特性："]
+        lines.extend(
+            f"  L{f.level} {f.name}" + (f"：{f.text}" if f.text else "") for f in feats
+        )
+        return "\n".join(lines)
+    for feat in CLASS_FEATURES:
+        if name in feat.name or feat.name in name:
+            cls_cn = next(
+                (cls.cn for cls in CLASSES if cls.key == feat.profession),
+                feat.profession,
+            )
+            return (
+                f"{feat.name}（{cls_cn} L{feat.level}）"
+                + (f"：{feat.text}" if feat.text else "")
+            )
+    raise KeyError(f"没有叫「{name}」的职业特性，写特性名或「职业 等级」。")
+
+
 def _query_race(name: str) -> str:
     if not name:
         # 亚种写在种族后面（与建卡选择列表同一份文案）
@@ -421,6 +471,33 @@ def _query_race(name: str) -> str:
     return "\n".join(lines)
 
 
+def _query_background(name: str) -> str:
+    """查背景（PHB 2024 起背景是「属性提升 + 起源专长」的主要来源）。"""
+    if not name:
+        return "背景：" + "、".join(bg.cn for bg in BACKGROUNDS)
+    bg = get_background(name)
+    lines = [f"{bg.cn}（{bg.en}）"]
+    if bg.bonus:
+        lines.append(
+            f"属性提升（选一项 +2 另一项 +1，或三项各 +1）：{bg.bonus_text}"
+        )
+    if bg.skills:
+        lines.append("技能熟练：" + "、".join(get_skill(k).cn for k in bg.skills))
+    if bg.tools:
+        lines.append("工具熟练：" + "、".join(bg.tools))
+    if bg.feat:
+        try:
+            lines.append(f"起源专长：{bg.feat}——{get_feat(bg.feat).benefit_text}")
+        except KeyError:  # 数据里写了本表还没有的专长：至少把名字给出去
+            lines.append(f"起源专长：{bg.feat}")
+    if bg.equipment:
+        lines.append("起始行装：" + "、".join(bg.equipment))
+    lines.append("（语言来自第二章独立的「选择语言」步，2024 背景不给语言。）")
+    if bg.desc:
+        lines.append(bg.desc)
+    return "\n".join(lines)
+
+
 def _query_profession(name: str) -> str:
     if not name:
         return "职业：" + "、".join(c.cn for c in CLASSES)
@@ -432,10 +509,40 @@ def _query_profession(name: str) -> str:
     )
     lines.append("豁免熟练：" + "、".join(get_ability(k).cn for k in cls.saves))
     lines.append(f"可选技能（{cls.skill_count} 项）：" + "、".join(cls.skill_names()))
+    subs = subclass_choices(cls.key)
+    if subs:
+        lines.append(
+            f"子职（{SUBCLASS_LEVEL} 级选，共 {len(subs)} 个）："
+            + "、".join(s.short for s in subs)
+        )
     if cls.features:
         lines.append("1 级特性：" + "；".join(cls.features))
     if cls.desc:
         lines.append(cls.desc)
+    return "\n".join(lines)
+
+
+def _query_subclass(name: str) -> str:
+    """查子职（PHB 2024：12 职业 × 4 = 48 个，**统一 3 级**获得）。"""
+    if not name:
+        lines = []
+        for cls in CLASSES:
+            subs = subclass_choices(cls.key)
+            if not subs:
+                continue
+            lines.append(f"{cls.cn}：" + "、".join(s.short for s in subs))
+        return "子职（3 级起选，括号内为职业）：\n" + "\n".join(lines)
+    sub = get_subclass(name)
+    try:
+        head = f"{sub.cn}（{sub.en}）· {get_class(sub.profession).cn}"
+    except KeyError:  # 数据里挂着本表没有的职业：至少别让查询崩
+        head = f"{sub.cn}（{sub.en}）"
+    lines = [head, f"获得等级：{SUBCLASS_LEVEL} 级"]
+    if sub.desc:
+        lines.append(sub.desc)
+    if sub.features:
+        lines.append("特性：")
+        lines.extend(f"  L{f.level} {f.name}：{f.text}" for f in sub.features)
     return "\n".join(lines)
 
 
@@ -765,7 +872,10 @@ def _query_condition(name: str) -> str:
 #: 数据表名（含中文别名）-> 查询函数
 _DATA_TABLES = {
     "race": _query_race,
+    "background": _query_background,
     "profession": _query_profession,
+    "subclass": _query_subclass,
+    "class_feature": _query_class_feature,
     "skill": _query_skill,
     "weapon": _query_weapon,
     "armor": _query_armor,
@@ -782,9 +892,19 @@ _DATA_TABLES = {
 _DATA_ALIASES = {
     "race": "race",
     "种族": "race",
+    "background": "background",
+    "backgrounds": "background",
+    "背景": "background",
     "profession": "profession",
     "职业": "profession",
     "class": "profession",
+    "subclass": "subclass",
+    "子职": "subclass",
+    "子职业": "subclass",
+    "道途": "subclass",
+    "class_feature": "class_feature",
+    "职业特性": "class_feature",
+    "特性表": "class_feature",
     "skill": "skill",
     "技能": "skill",
     "weapon": "weapon",
@@ -909,7 +1029,8 @@ class QueryDataTool(AgentTool):
     function_name = "query_data"
     max_result_chars = 2500
     description = (
-        "查 DND 数据表（race/profession/skill/weapon/armor/monster/bestiary/item/"
+        "查 DND 数据表（race/background/profession/subclass/class_feature/skill/weapon/armor/monster/"
+        "bestiary/item/"
         "spell/condition/difficulty/rule/npc_tier/npc）或世界库文档（world/realm/"
         "province/city/place/dungeon/scene/event），table 可写中文；"
         "bestiary=图鉴名录（cr 5 按 CR 挑）；monster 按类型/栖息地/群组查或写"
@@ -959,8 +1080,10 @@ def query_data_text(table: str, name: str, context: AgentContext | None = None) 
     handler = _DATA_TABLES.get(key or "")
     if handler is None:
         return (
-            "未知数据表，可用：race / profession / skill / weapon / armor / monster / "
-            "bestiary / item / spell / condition / difficulty / rule / npc_tier / npc，"
+            "未知数据表，可用：race / background / profession / subclass / class_feature / skill / "
+            "weapon / armor / "
+            "monster / bestiary / item / spell / condition / difficulty / rule / "
+            "npc_tier / npc，"
             "或世界库文档：world / realm / province / city / place / dungeon / scene / event"
         )
     try:
@@ -1212,6 +1335,10 @@ class UpdateCharacterTool(AgentTool):
             message = f"经验值 {before} → {card.exp} XP；{xp_progress_text(card)}"
             while can_level_up(card):
                 message += "\n" + level_up(card)
+            # 升级后玩家还欠的决定（子职 / 属性加点）：开选择会话，答完自动写回
+            tip = start_levelup_session(card, save.save_id if save is not None else "")
+            if tip:
+                message += "\n" + tip
         elif field == "level":
             before = card.level
             target = max(1, _parse_int(text, card.level))
@@ -1239,6 +1366,11 @@ class UpdateCharacterTool(AgentTool):
                     f"（Lv.{EPIC_BOON_LEVEL} 是传奇恩惠等级：请挑一项传奇恩惠，"
                     "用 features 落盘 —— 不是加属性）"
                 )
+            # 升级后玩家自己还有决定要做的（子职 / 属性加点）：直接给他开
+            # 选择会话，答完自动写回，不用 DM 手动传话。
+            tip = start_levelup_session(card, save.save_id if save is not None else "")
+            if tip:
+                message += "\n" + tip
         elif field == "name":
             card.name = text
             message = f"姓名已设为 {card.name or '（空）'}"
@@ -1852,20 +1984,55 @@ class MoveTool(AgentTool):
         )
 
 
+#: 「动作如潮」的触发词（战士 2 级特性；挂在 tactic 下，不新增工具）
+_ACTION_SURGE_WORDS = {"动作如潮", "如潮", "action_surge", "action surge"}
+
+
+def _do_action_surge(context: AgentContext, save: Any, ref: str) -> str:
+    """战士「动作如潮」：消耗一次卡上资源，战斗记账给本回合 +1 动作。
+
+    资源记在**角色卡**上（``action_surge_used``，短休恢复），战斗里的
+    ``actions_max`` 由 :func:`grant_extra_action` 抬一格、下一轮自动复位。
+    """
+    card, card_save = _load_character(context, ref)
+    if card is None:
+        return f"没找到「{ref}」的角色卡，无法结算动作如潮"
+    if card.action_surge_max <= 0:
+        return f"{card.name} 没有「动作如潮」特性（只有战士 2 级起有）"
+    if not card.use_action_surge():
+        return (
+            f"（{card.name} 的动作如潮已用完"
+            f"（{card.action_surge_used}/{card.action_surge_max}），"
+            "短休或长休后恢复）"
+        )
+    target_save = card_save if card_save is not None else save
+    if target_save is not None:
+        set_character(target_save, card)
+    else:
+        save_card(card)
+    note = grant_extra_action(save, load_combat(save), card.user_id or ref)
+    return (
+        f"⚡ {card.name} 使用动作如潮！本回合获得 1 个额外动作"
+        f"（剩余 {card.action_surge_left} 次，下一次短休恢复）"
+        + (f"\n{note}" if note else "")
+    )
+
+
 class TacticTool(AgentTool):
-    """战术动作：回避 / 躲藏 / 预备 / 借机攻击 / 上下坐骑（PHB 2024 第一章）。"""
+    """战术动作：回避 / 躲藏 / 预备 / 借机攻击 / 上下坐骑 / 动作如潮（PHB 2024）。"""
 
     function_name = "tactic"
     description = (
         "战术动作，系统掷骰并落状态：回避（到下回合开始被打劣势、敏捷豁免优势）、"
         "躲藏（隐匿 DC15，成功即隐形，出手就暴露）、预备（记下触发条件，触发时用反应）、"
-        "借机攻击（用反应打一次近战）、上马 / 下马（花一半速度）"
+        "借机攻击（用反应打一次近战）、上马 / 下马（花一半速度）、"
+        "动作如潮（战士：本回合 +1 个动作，短休恢复）"
     )
     args = (
         ToolArg(
             "action",
             "str",
-            "回避（=闪避/躲避）/ 躲藏（=隐藏）/ 预备（=准备）/ 借机攻击 / 上马 / 下马",
+            "回避（=闪避/躲避）/ 躲藏（=隐藏）/ 预备（=准备）/ 借机攻击 / 上马 / 下马 / 动作如潮",
         ),
         ToolArg("player", "str", "谁在做：角色名或 user_id；单人可留空"),
         ToolArg("target", "str", "借机攻击写打谁；上马写坐骑名"),
@@ -1885,11 +2052,14 @@ class TacticTool(AgentTool):
         if save is None:
             return "当前没有存档，无法结算战术动作"
         ref = str(player or "").strip() or str(context.user_id or "")
+        action_text = str(action or "").strip()
+        if action_text in _ACTION_SURGE_WORDS:
+            return _do_action_surge(context, save, ref)
         return do_tactic(
             save,
             load_combat(save),
             ref,
-            str(action or ""),
+            action_text,
             target=str(target or ""),
             trigger=str(trigger or ""),
         )
@@ -1947,9 +2117,15 @@ class AttackTool(AgentTool):
             knock_out=str(knock_out or "").strip()
             in {"是", "击晕", "活口", "yes", "y", "true"},
         )
-        # 行动经济（软提示）：真正掷过攻击才记一次「动作」；超支只提醒，不拦截。
+        # 行动经济（软提示）：真正掷过攻击才记账。
+        # 额外攻击（战士 5/11/20、野蛮人/武僧/圣武士/游侠 5 级）让同一个攻击动作
+        # 连打多次而不重复消耗动作；连打额度用尽才要新动作（动作如潮给的那个）。
+        # 副手攻击（双武器）消耗的是附赠动作，不是动作。
         if f"【{card.name}】" in text:
-            note = use_resource(save, state, card.user_id, "action")
+            if off_hand:
+                note = use_resource(save, state, card.user_id, "bonus")
+            else:
+                note = use_attack(save, state, card.user_id, card.attacks_per_action)
             if note:
                 text += f"\n{note}"
         return text

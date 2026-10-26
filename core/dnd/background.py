@@ -1,7 +1,9 @@
 """DND 5e 背景数据。
 
 背景在建卡时提供：**三项属性的提升**（PHB 2024 起，属性加值只来自背景，种族不再给）、
-两项技能熟练、若干工具 / 语言熟练、以及一段起始装备。
+**一项起源专长**、两项技能熟练、一项工具熟练、以及一段起始行装。
+
+2024 背景**不给语言**（语言来自第二章独立的「选择语言」步），工具也**只有一项**。
 
 **数值在 ``res/dnd/backgrounds.yaml``**，这里只留类型与查询函数。
 """
@@ -34,10 +36,11 @@ class Background:
     #: PHB 2024「属性值提升」的三项属性（内部键）。玩家从中选一项 +2、另一项 +1，
     #: 或三项各 +1（合计 +3，单项不得推到 20 以上）。
     bonus: tuple[str, ...] = ()
-    languages: int = 0  # 可自选的语言数量
-    tools: tuple[str, ...] = ()  # 工具熟练
-    equipment: tuple[str, ...] = ()  # 起始装备
-    feature: str = ""  # 背景特性
+    #: 2024 起背景固定给的一项**起源专长**（第五章 4099）。带括号的是要一并定下
+    #: 子选项的专长，如「魔法学徒（牧师）」= 魔法学徒选牧师法表。
+    feat: str = ""
+    tools: tuple[str, ...] = ()  # 工具熟练（2024 起**只有一项**）
+    equipment: tuple[str, ...] = ()  # 起始行装
     desc: str = ""
 
     @property
@@ -63,10 +66,9 @@ def _background(row: dict[str, Any]) -> Background:
         en=str(row["en"]),
         skills=as_texts(row.get("skills")),
         bonus=as_texts(row.get("bonus")),
-        languages=int(row.get("languages", 0)),
+        feat=str(row.get("feat", "")),
         tools=as_texts(row.get("tools")),
         equipment=as_texts(row.get("equipment")),
-        feature=str(row.get("feature", "")),
         desc=str(row.get("desc", "")),
     )
 

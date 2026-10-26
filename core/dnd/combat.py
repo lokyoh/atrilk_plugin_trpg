@@ -141,6 +141,7 @@ __all__ = [
     "enemy_target",
     "find_combatant",
     "forget_defeat",
+    "grant_extra_action",
     "heal_combatant",
     "is_dead",
     "is_dying",
@@ -170,6 +171,7 @@ __all__ = [
     "threat_text",
     "tick_regeneration",
     "update_enemy",
+    "use_attack",
     "use_resource",
     "vision_obscurement",
     "wake_knocked_out",
@@ -210,10 +212,18 @@ class Combatant:
     note: str = ""  #: 附注，如「被推下悬崖」
     npc: str = ""  #: 具名 NPC：名单上的名字（空 = 杂兵，打完即散）
     #: 本回合的行动经济记账（只对玩家有意义，软提示用）
-    action_used: bool = False  #: 已用过动作
+    action_used: bool = False  #: 已用过动作（镜像：``actions_used >= 1``）
     bonus_used: bool = False  #: 已用过附赠动作
     reaction_used: bool = False  #: 已用过反应
     moved: bool = False  #: 本回合移动过
+    #: **本回合已用掉的动作数**（0~2：动作如潮给 +1 上限）。``action_used`` 是
+    #: 它的布尔镜像，供老存档与渲染直接读。
+    actions_used: int = 0
+    #: 本回合动作上限（1 = 常规；用「动作如潮」后变 2，到下一轮复位）
+    actions_max: int = 1
+    #: **本回合当前动作内已经发动的攻击次数**（额外攻击用：一个攻击动作
+    #: 可以连打 :attr:`DndCharacter.attacks_per_action` 次，不重复消耗动作）
+    attacks_made: int = 0
     #: 棋盘坐标（0 基，``-1`` 表示还没放到棋盘上——老存档的战斗没有地图）
     x: int = -1
     y: int = -1
@@ -269,6 +279,10 @@ class Combatant:
         self.moved = False
         self.move_used = 0
         self.readied = ""
+        # 额外攻击 / 动作如潮的记账也按轮复位（动作如潮的**次数**在卡上，短休才回）
+        self.actions_used = 0
+        self.actions_max = 1
+        self.attacks_made = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -287,6 +301,9 @@ class Combatant:
             "bonus_used": self.bonus_used,
             "reaction_used": self.reaction_used,
             "moved": self.moved,
+            "actions_used": self.actions_used,
+            "actions_max": self.actions_max,
+            "attacks_made": self.attacks_made,
             "x": self.x,
             "y": self.y,
             "speed": self.speed,
@@ -320,6 +337,9 @@ class Combatant:
             bonus_used=bool(data.get("bonus_used", False)),
             reaction_used=bool(data.get("reaction_used", False)),
             moved=bool(data.get("moved", False)),
+            actions_used=max(0, _int_or(data.get("actions_used"), 0)),
+            actions_max=max(1, _int_or(data.get("actions_max"), 1)),
+            attacks_made=max(0, _int_or(data.get("attacks_made"), 0)),
             x=_int_or(data.get("x"), -1),
             y=_int_or(data.get("y"), -1),
             # 0 是合法速度（被定住 / 速度被吸干），只有缺失才兜底 30
@@ -932,6 +952,10 @@ def use_resource(save: Save, state: CombatState | None, ref: str, resource: str)
     **软提示**：超支不拦截，只在返回文本里提醒 DM。返回空串 = 首次使用（或不在
     战斗中、找不到该玩家、资源名不认识）；返回提示文本 = 这项资源本回合已经用过了
     （记账由本函数负责落盘）。
+
+    动作按**次数**记（:attr:`Combatant.actions_used` / ``actions_max``）：
+    「动作如潮」把本回合上限抬到 2；攻击的多段攻击不在这里记 —— 那是
+    :func:`use_attack` 的职责（同一动作连打不重复消耗动作）。
     """
     if state is None:
         return ""
@@ -945,6 +969,17 @@ def use_resource(save: Save, state: CombatState | None, ref: str, resource: str)
         combatant.moved = True
         save_combat(save, state)
         return ""
+    if key == "action":
+        if combatant.actions_used < combatant.actions_max:
+            combatant.actions_used += 1
+            combatant.action_used = True
+            save_combat(save, state)
+            return ""
+        return (
+            f"（提示：{combatant.name} 本回合的动作已用完"
+            f"（{combatant.actions_used}/{combatant.actions_max}）"
+            "——有「动作如潮」就先用了它再打；你裁定允许的额外行动也照叙述）"
+        )
     flag = f"{key}_used"
     if key not in TURN_RESOURCES or not hasattr(combatant, flag):
         return ""
@@ -955,6 +990,76 @@ def use_resource(save: Save, state: CombatState | None, ref: str, resource: str)
             "若是同一动作的多段攻击（额外攻击等）或你裁定允许的额外行动，忽略即可）"
         )
     setattr(combatant, flag, True)
+    save_combat(save, state)
+    return ""
+
+
+def use_attack(
+    save: Save, state: CombatState | None, ref: str, attacks_per_action: int = 1
+) -> str:
+    """记一次**攻击**：额外攻击的连打不重复消耗动作，超出才要新动作。
+
+    - ``attacks_made < attacks_per_action``：还在同一个攻击动作里连打 ——
+      第一次消耗 1 个动作，之后只累加 ``attacks_made``；
+    - 连打额度用尽但本回合还有动作（动作如潮）：再消耗 1 个动作、重新起算；
+    - 都没有了：返回软提示，不拦截。
+    """
+    if state is None:
+        return ""
+    combatant = find_combatant(state, ref, kind="player")
+    if combatant is None:
+        return ""
+    per_action = max(1, int(attacks_per_action or 1))
+    if combatant.attacks_made < per_action:
+        if combatant.attacks_made == 0:
+            if combatant.actions_used >= combatant.actions_max:
+                return (
+                    f"（提示：{combatant.name} 本回合的动作已用完"
+                    f"（{combatant.actions_used}/{combatant.actions_max}）"
+                    "——有「动作如潮」就先用了它再打）"
+                )
+            combatant.actions_used += 1
+            combatant.action_used = True
+        combatant.attacks_made += 1
+        save_combat(save, state)
+        return ""
+    if combatant.actions_used < combatant.actions_max:
+        combatant.actions_used += 1
+        combatant.action_used = True
+        combatant.attacks_made = 1
+        save_combat(save, state)
+        if per_action > 1:
+            return (
+                f"（提示：{combatant.name} 的额外攻击已打满 {per_action} 次，"
+                "这次又消耗了 1 个动作）"
+            )
+        return ""  # 没有额外攻击的职业：每次攻击本来就是新动作，不用提醒
+    if per_action > 1:
+        return (
+            f"（提示：{combatant.name} 本回合的动作已用完"
+            f"（{combatant.actions_used}/{combatant.actions_max}）"
+            f"，额外攻击（{per_action} 次/动作）也打满了）"
+        )
+    return (
+        f"（提示：{combatant.name} 本回合的动作已用完"
+        f"（{combatant.actions_used}/{combatant.actions_max}）——"
+        "有「动作如潮」就先用了它再打）"
+    )
+
+
+def grant_extra_action(save: Save, state: CombatState | None, ref: str) -> str:
+    """给某名玩家本回合 +1 个动作（战士「动作如潮」）。
+
+    每回合最多用一次由**角色卡**的资源管（:meth:`DndCharacter.use_action_surge`，
+    短休恢复）；这里只把战斗记账的本回合上限抬一格，下一轮 :meth:`Combatant.reset_turn`
+    自动复位。
+    """
+    if state is None:
+        return ""
+    combatant = find_combatant(state, ref, kind="player")
+    if combatant is None:
+        return ""
+    combatant.actions_max += 1
     save_combat(save, state)
     return ""
 
