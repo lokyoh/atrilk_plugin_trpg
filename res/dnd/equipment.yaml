@@ -3,7 +3,7 @@
 
 armors:
 - key: padded
-  cn: 棉甲
+  cn: 布甲
   category: 轻甲
   base_ac: 11
   stealth_disadvantage: true
@@ -74,7 +74,7 @@ armors:
   stealth_disadvantage: true
   weight: 60
 - key: plate
-  cn: 全身板甲
+  cn: 板甲
   category: 重甲
   base_ac: 18
   max_dex_bonus: 0
@@ -101,6 +101,7 @@ weapons:
 - key: club
   cn: 棍棒
   category: 简易近战
+  mastery: slow
   damage: 1d4
   damage_type: 钝击
   properties:
@@ -108,6 +109,7 @@ weapons:
 - key: dagger
   cn: 匕首
   category: 简易近战
+  mastery: nick
   damage: 1d4
   damage_type: 穿刺
   properties:
@@ -119,6 +121,7 @@ weapons:
 - key: greatclub
   cn: 巨棒
   category: 简易近战
+  mastery: push
   damage: 1d8
   damage_type: 钝击
   properties:
@@ -126,6 +129,7 @@ weapons:
 - key: handaxe
   cn: 手斧
   category: 简易近战
+  mastery: vex
   damage: 1d6
   damage_type: 挥砍
   properties:
@@ -136,6 +140,7 @@ weapons:
 - key: javelin
   cn: 标枪
   category: 简易近战
+  mastery: slow
   damage: 1d6
   damage_type: 穿刺
   properties:
@@ -145,6 +150,7 @@ weapons:
 - key: light_hammer
   cn: 轻锤
   category: 简易近战
+  mastery: nick
   damage: 1d4
   damage_type: 钝击
   properties:
@@ -155,11 +161,13 @@ weapons:
 - key: mace
   cn: 硬头槌
   category: 简易近战
+  mastery: sap
   damage: 1d6
   damage_type: 钝击
 - key: quarterstaff
   cn: 长棍
   category: 简易近战
+  mastery: topple
   damage: 1d6
   damage_type: 钝击
   properties:
@@ -168,6 +176,7 @@ weapons:
 - key: sickle
   cn: 镰刀
   category: 简易近战
+  mastery: nick
   damage: 1d4
   damage_type: 挥砍
   properties:
@@ -175,6 +184,7 @@ weapons:
 - key: spear
   cn: 矛
   category: 简易近战
+  mastery: sap
   damage: 1d6
   damage_type: 穿刺
   properties:
@@ -187,6 +197,7 @@ weapons:
 - key: light_crossbow
   cn: 轻弩
   category: 简易远程
+  mastery: slow
   damage: 1d8
   damage_type: 穿刺
   properties:
@@ -198,6 +209,7 @@ weapons:
 - key: dart
   cn: 飞镖
   category: 简易远程
+  mastery: vex
   damage: 1d4
   damage_type: 穿刺
   properties:
@@ -208,6 +220,7 @@ weapons:
 - key: shortbow
   cn: 短弓
   category: 简易远程
+  mastery: vex
   damage: 1d6
   damage_type: 穿刺
   properties:
@@ -218,6 +231,7 @@ weapons:
 - key: sling
   cn: 投石索
   category: 简易远程
+  mastery: slow
   damage: 1d4
   damage_type: 钝击
   properties:
@@ -228,6 +242,7 @@ weapons:
 - key: battleaxe
   cn: 战斧
   category: 军用近战
+  mastery: topple
   damage: 1d8
   damage_type: 挥砍
   properties:
@@ -236,11 +251,13 @@ weapons:
 - key: flail
   cn: 链枷
   category: 军用近战
+  mastery: sap
   damage: 1d8
   damage_type: 钝击
 - key: glaive
   cn: 长柄刀
   category: 军用近战
+  mastery: graze
   damage: 1d10
   damage_type: 挥砍
   properties:
@@ -250,6 +267,7 @@ weapons:
 - key: greataxe
   cn: 巨斧
   category: 军用近战
+  mastery: sweep
   damage: 1d12
   damage_type: 挥砍
   properties:
@@ -258,6 +276,7 @@ weapons:
 - key: greatsword
   cn: 巨剑
   category: 军用近战
+  mastery: graze
   damage: 2d6
   damage_type: 挥砍
   properties:
@@ -266,6 +285,7 @@ weapons:
 - key: halberd
   cn: 戟
   category: 军用近战
+  mastery: sweep
   damage: 1d10
   damage_type: 挥砍
   properties:
@@ -275,6 +295,7 @@ weapons:
 - key: lance
   cn: 骑枪
   category: 军用近战
+  mastery: topple
   damage: 1d12
   damage_type: 穿刺
   properties:
@@ -283,6 +304,7 @@ weapons:
 - key: longsword
   cn: 长剑
   category: 军用近战
+  mastery: sap
   damage: 1d8
   damage_type: 挥砍
   properties:
@@ -291,6 +313,7 @@ weapons:
 - key: maul
   cn: 巨锤
   category: 军用近战
+  mastery: topple
   damage: 2d6
   damage_type: 钝击
   properties:
@@ -299,11 +322,13 @@ weapons:
 - key: morningstar
   cn: 钉头锤
   category: 军用近战
+  mastery: sap
   damage: 1d8
   damage_type: 穿刺
 - key: pike
   cn: 长矛
   category: 军用近战
+  mastery: push
   damage: 1d10
   damage_type: 穿刺
   properties:
@@ -313,6 +338,7 @@ weapons:
 - key: rapier
   cn: 细剑
   category: 军用近战
+  mastery: vex
   damage: 1d8
   damage_type: 穿刺
   properties:
@@ -320,6 +346,7 @@ weapons:
 - key: scimitar
   cn: 弯刀
   category: 军用近战
+  mastery: nick
   damage: 1d6
   damage_type: 挥砍
   properties:
@@ -328,6 +355,7 @@ weapons:
 - key: shortsword
   cn: 短剑
   category: 军用近战
+  mastery: vex
   damage: 1d6
   damage_type: 穿刺
   properties:
@@ -336,6 +364,7 @@ weapons:
 - key: trident
   cn: 三叉戟
   category: 军用近战
+  mastery: topple
   damage: 1d6
   damage_type: 穿刺
   properties:
@@ -347,11 +376,13 @@ weapons:
 - key: warpick
   cn: 战镐
   category: 军用近战
+  mastery: sap
   damage: 1d8
   damage_type: 穿刺
 - key: warhammer
   cn: 战锤
   category: 军用近战
+  mastery: push
   damage: 1d8
   damage_type: 钝击
   properties:
@@ -360,6 +391,7 @@ weapons:
 - key: whip
   cn: 鞭子
   category: 军用近战
+  mastery: slow
   damage: 1d4
   damage_type: 挥砍
   properties:
@@ -369,6 +401,7 @@ weapons:
 - key: blowgun
   cn: 吹箭筒
   category: 军用远程
+  mastery: vex
   damage: 1
   damage_type: 穿刺
   properties:
@@ -379,6 +412,7 @@ weapons:
 - key: hand_crossbow
   cn: 手弩
   category: 军用远程
+  mastery: vex
   damage: 1d6
   damage_type: 穿刺
   properties:
@@ -390,6 +424,7 @@ weapons:
 - key: heavy_crossbow
   cn: 重弩
   category: 军用远程
+  mastery: push
   damage: 1d10
   damage_type: 穿刺
   properties:
@@ -402,6 +437,7 @@ weapons:
 - key: longbow
   cn: 长弓
   category: 军用远程
+  mastery: slow
   damage: 1d8
   damage_type: 穿刺
   properties:
@@ -420,6 +456,29 @@ weapons:
   - 投掷
   thrown_normal: 5
   thrown_max: 15
+- key: musket
+  cn: 滑膛枪
+  category: 军用远程
+  mastery: slow
+  damage: 1d12
+  damage_type: 穿刺
+  properties:
+  - 弹药
+  - 装填
+  - 双手
+  ranged_normal: 40
+  ranged_max: 120
+- key: pistol
+  cn: 手枪
+  category: 军用远程
+  mastery: vex
+  damage: 1d10
+  damage_type: 穿刺
+  properties:
+  - 弹药
+  - 装填
+  ranged_normal: 30
+  ranged_max: 90
 
 # 起始「包」的内容物（5e2014「冒险用品」）。
 # ⚠️ 整段用品数据转录自 2014 快速参考，属「已知未对齐项」（口径见 res/rule.md）。

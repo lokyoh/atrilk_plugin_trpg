@@ -121,7 +121,7 @@
   cn: 心灵碎片
   en: Mind Sliver
   level: 0
-  school: 附魔
+  school: 惑控
   classes:
   - sorcerer
   - warlock
@@ -186,7 +186,7 @@
   cn: 恶言相加
   en: Vicious Mockery
   level: 0
-  school: 附魔
+  school: 惑控
   classes:
   - bard
   range_text: 60 尺
@@ -200,7 +200,7 @@
   cn: 神导术
   en: Guidance
   level: 0
-  school: 预言
+  school: 预言术
   classes:
   - cleric
   - druid
@@ -249,7 +249,7 @@
   cn: 真实打击
   en: True Strike
   level: 0
-  school: 预言
+  school: 预言术
   classes:
   - bard
   - sorcerer
@@ -517,7 +517,7 @@
   cn: 猎人印记
   en: Hunter's Mark
   level: 1
-  school: 预言
+  school: 预言术
   classes:
   - ranger
   casting_time: 1 附赠动作
@@ -532,7 +532,7 @@
   cn: 恶咒
   en: Hex
   level: 1
-  school: 附魔
+  school: 惑控
   classes:
   - warlock
   casting_time: 1 附赠动作
@@ -576,7 +576,7 @@
   cn: 祝福
   en: Bless
   level: 1
-  school: 附魔
+  school: 惑控
   classes:
   - cleric
   - paladin
@@ -590,7 +590,7 @@
   cn: 灾祸
   en: Bane
   level: 1
-  school: 附魔
+  school: 惑控
   classes:
   - bard
   - cleric
@@ -658,7 +658,7 @@
   cn: 睡眠
   en: Sleep
   level: 1
-  school: 附魔
+  school: 惑控
   classes:
   - bard
   - sorcerer
@@ -689,7 +689,7 @@
   cn: 魅惑人类
   en: Charm Person
   level: 1
-  school: 附魔
+  school: 惑控
   classes:
   - bard
   - druid
@@ -707,7 +707,7 @@
   cn: 命令术
   en: Command
   level: 1
-  school: 附魔
+  school: 惑控
   classes:
   - bard
   - cleric
@@ -819,7 +819,7 @@
   cn: 侦测魔法
   en: Detect Magic
   level: 1
-  school: 预言
+  school: 预言术
   classes:
   - bard
   - cleric
@@ -891,7 +891,7 @@
   cn: 不谐低语
   en: Dissonant Whispers
   level: 1
-  school: 附魔
+  school: 惑控
   classes:
   - bard
   range_text: 60 尺
@@ -904,7 +904,7 @@
   cn: 塔莎狂笑
   en: Tasha's Hideous Laughter
   level: 1
-  school: 附魔
+  school: 惑控
   classes:
   - bard
   - wizard
@@ -1040,7 +1040,7 @@
   cn: 心灵尖刺
   en: Mind Spike
   level: 2
-  school: 附魔
+  school: 惑控
   classes:
   - sorcerer
   - warlock
@@ -1144,7 +1144,7 @@
   cn: 定身人类
   en: Hold Person
   level: 2
-  school: 附魔
+  school: 惑控
   classes:
   - bard
   - cleric
@@ -1220,7 +1220,7 @@
   cn: 探测思想
   en: Detect Thoughts
   level: 2
-  school: 预言
+  school: 预言术
   classes:
   - bard
   - sorcerer
@@ -1341,7 +1341,7 @@
   cn: 真言领域
   en: Zone of Truth
   level: 2
-  school: 附魔
+  school: 惑控
   classes:
   - bard
   - cleric

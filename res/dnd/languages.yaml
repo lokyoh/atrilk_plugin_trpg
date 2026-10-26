@@ -1,0 +1,80 @@
+# 语言表（PHB 2024 第二章 2133-2160「标准语言」与「稀有语言」）
+#
+# 每个角色至少懂三门：通用语（人人都懂，不在这张表里）+ 从标准语言表**自选或掷骰**
+# 两门。稀有语言不进自选池，只有特定特性（血系 / 职业 / 专长）才会给。
+#
+# 2024 起背景**不给语言**（第四章 3143-3155 背景组件只有 属性值/起源专长/技能/工具/行装），
+# 语言来自独立的「选择语言」步；种族仍可自带（人类多一门自选）。
+
+- key: common_sign
+  cn: 通用手语
+  tier: standard
+  origin: 印记城
+- key: draconic
+  cn: 龙语
+  tier: standard
+  origin: 龙
+- key: dwarvish
+  cn: 矮人语
+  tier: standard
+  origin: 矮人
+- key: elvish
+  cn: 精灵语
+  tier: standard
+  origin: 精灵
+- key: giant
+  cn: 巨人语
+  tier: standard
+  origin: 巨人
+- key: gnomish
+  cn: 侏儒语
+  tier: standard
+  origin: 侏儒
+- key: goblin
+  cn: 地精语
+  tier: standard
+  origin: 类地精
+- key: halfling
+  cn: 半身人语
+  tier: standard
+  origin: 半身人
+- key: orc
+  cn: 兽人语
+  tier: standard
+  origin: 兽人
+- key: abyssal
+  cn: 深渊
+  tier: rare
+  origin: 深渊的恶魔
+- key: celestial
+  cn: 天界语
+  tier: rare
+  origin: 天族
+- key: deep_speech
+  cn: 深潜语
+  tier: rare
+  origin: 异怪
+- key: druidic
+  cn: 德鲁伊语
+  tier: rare
+  origin: 德鲁伊结社
+- key: infernal
+  cn: 炼狱
+  tier: rare
+  origin: 九狱的魔鬼
+- key: primordial
+  cn: 原初语
+  tier: rare
+  origin: 元素
+- key: sylvan
+  cn: 木族语
+  tier: rare
+  origin: 妖精荒野
+- key: thieves_cant
+  cn: 盗贼黑话
+  tier: rare
+  origin: 各种犯罪公会
+- key: undercommon
+  cn: 地底通用语
+  tier: rare
+  origin: 幽暗地域

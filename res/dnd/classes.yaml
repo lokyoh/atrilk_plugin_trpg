@@ -490,7 +490,7 @@
   cantrips: 4
   spells_known: 2
 - key: warlock
-  cn: 邪术师
+  cn: 魔契师
   en: Warlock
   hit_die: 8
   primary:

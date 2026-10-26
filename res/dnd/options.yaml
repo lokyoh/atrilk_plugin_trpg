@@ -73,20 +73,146 @@ fighting_styles:
   cn: 守护
   desc: 持盾时用反应让对 5 尺内他人的攻击有劣势，直到你的下回合开始
 
-# 魔契师 1 级·魔能祈唤（只收无先决的 5 条；有等级 / 法术先决的祈唤要满足条件才能选）
+# 魔契师·魔能祈唤（XPHB 全部 28 条；prereq.level = 所需魔契师等级，
+# prereq.feature = 需要先选的另一个祈唤 key，prereq.spell = 需要的法术说明文字）。
+# 1 级建卡只能选「无等级要求」的 5 条（见 options.available_invocations）。
 eldritch_invocations:
 - key: armor_of_shadows
   cn: 幽影护甲
-  desc: 可以不消耗法术位对自己施放「法师护甲」
+  desc: 可不消耗法术位对自己施放「法师护甲」
 - key: eldritch_mind
   cn: 魔能意志
   desc: 为维持专注所做的体质豁免具有优势
 - key: pact_of_the_blade
   cn: 刃之魔契
-  desc: 附赠动作召出契约武器；用它攻击可用魅力代替力量 / 敏捷，并可作法器
+  desc: 咒唤契约武器（简易 / 军用近战武器或建立连结的魔法武器），用它攻击可用魅力代替力量 / 敏捷，并可作施法法器
 - key: pact_of_the_chain
   cn: 链之魔契
-  desc: 无需法术位施展「寻获魔宠」，魔宠可选小魔鬼 / 伪龙等特殊形态
+  desc: 习得「寻获魔宠」且无需法术位，魔宠可选小魔鬼等特异形态；可让魔宠借你的攻击动作攻击
 - key: pact_of_the_tome
   cn: 书之魔契
-  desc: 长休后召出书册：三道自选戏法 + 两道带仪式标签的一环法术
+  desc: 召出书册，选择三道戏法与两道带仪式标签的一环法术（可来自任意职业列表），书在身上即常备这些法术
+- key: agonizing_blast
+  cn: 苦痛魔爆
+  desc: 你使用的魔能爆每个伤害骰都加上你的魅力调整值；可多次选择，每次选一道不同且造成伤害的戏法
+  prereq:
+    level: 2
+    spell: 一道能造成伤害的魔契师戏法
+- key: devils_sight
+  cn: 魔鬼视界
+  desc: 你在光照和黑暗中都有 120 尺的黑暗视觉（无论魔法与否）
+  prereq:
+    level: 2
+- key: eldritch_spear
+  cn: 魔能长枪
+  desc: 你已知的、射程至少 10 尺且造成伤害的戏法，其射程增加等于魔契师等级 30 倍的尺数；可多次选择
+  prereq:
+    level: 2
+    spell: 一道射程至少 10 尺且造成伤害的魔契师戏法
+- key: fiendish_vigor
+  cn: 邪魔活力
+  desc: 可不消耗法术位施展「假生命」，且自动取最大值
+  prereq:
+    level: 2
+- key: lessons_of_the_first_ones
+  cn: 原初之一的教习
+  desc: 从亘古存在处习得一项起源专长；可多次选择，每次选不同专长
+  prereq:
+    level: 2
+- key: mask_of_many_faces
+  cn: 千面之脸
+  desc: 可不消耗法术位施展「易容术」
+  prereq:
+    level: 2
+- key: misty_visions
+  cn: 迷雾幻影
+  desc: 可不消耗法术位施展「朦胧术」
+  prereq:
+    level: 2
+- key: otherworldly_leap
+  cn: 超凡跳跃
+  desc: 可以自身为目标不消耗法术位施展「跳跃术」
+  prereq:
+    level: 2
+- key: repelling_blast
+  cn: 斥力魔爆
+  desc: 你已知的、需攻击检定的戏法，命中大型或更小生物时可将其推离至多 10 尺；可多次选择
+  prereq:
+    level: 2
+    spell: 一道通过攻击检定造成伤害的魔契师戏法
+- key: ascendant_step
+  cn: 星移步法
+  desc: 可不消耗法术位对自己施放「星界投影」
+  prereq:
+    level: 9
+- key: eldritch_smite
+  cn: 魔能斩
+  desc: 每回合一次，用契约武器命中时消耗一枚法术位造成额外力场伤害，并可令目标失能
+  prereq:
+    level: 5
+    feature: pact_of_the_blade
+- key: gaze_of_two_minds
+  cn: 共视感官
+  desc: 触碰一个自愿生物建立感官连接，以它的感官观察（距离不超过 60 尺时可在其位置施法）
+  prereq:
+    level: 5
+- key: gift_of_the_depths
+  cn: 深海赠礼
+  desc: 可在水下呼吸，并获得等于熟练加值的游泳速度；还可不消耗法术位施展一次「水中呼吸」
+  prereq:
+    level: 5
+- key: investment_of_the_chain_master
+  cn: 链主赋能
+  desc: 为魔宠灌注魔能：40 尺飞行或游泳速度、可指令其动作、伤害类型转光耀 / 暗蚀、用你的豁免 DC
+  prereq:
+    level: 5
+    feature: pact_of_the_chain
+- key: master_of_myriad_forms
+  cn: 万形之主
+  desc: 可不消耗法术位对自己施展「变化术」
+  prereq:
+    level: 5
+- key: one_with_shadows
+  cn: 融身入影
+  desc: 身处光照或黑暗中时，可不消耗法术位对自己施展「隐形术」
+  prereq:
+    level: 5
+- key: thirsting_blade
+  cn: 饥渴魔刃
+  desc: 获得「额外攻击」（仅用契约武器），回合内攻击动作可攻击两次而非一次
+  prereq:
+    level: 5
+    feature: pact_of_the_blade
+- key: gift_of_the_protectors
+  cn: 守护馈赠
+  desc: 影之书出现新页，写下名字的生物降到 0 血但未死时魔法地变为 1 血
+  prereq:
+    level: 9
+    feature: pact_of_the_tome
+- key: lifedrinker
+  cn: 饮命者
+  desc: 每回合一次，用契约武器命中时造成额外暗蚀 / 心灵 / 光耀伤害，并消耗生命骰恢复生命
+  prereq:
+    level: 9
+    feature: pact_of_the_blade
+- key: visions_of_distant_realms
+  cn: 穹宇尽视
+  desc: 可不消耗法术位施展「远见术」
+  prereq:
+    level: 9
+- key: whispers_of_the_grave
+  cn: 坟墓低语
+  desc: 可不消耗法术位施展「通晓逝者」
+  prereq:
+    level: 7
+- key: devouring_blade
+  cn: 灭世魔刃
+  desc: 由「饥渴魔刃」提供的额外攻击次数变为两次而非一次
+  prereq:
+    level: 12
+    feature: thirsting_blade
+- key: witch_sight
+  cn: 巫术视界
+  desc: 30 尺内可见位于「隐形」「星界投影」「变身」等效应中的生物 / 物件，并看穿它们
+  prereq:
+    level: 15

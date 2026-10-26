@@ -1,8 +1,16 @@
 # 背景表（建卡第 2 步：确定起源）
-# 一条一个背景：属性提升（三项）、技能熟练、工具、语言数、起始装备与背景特性。
+# 一条一个背景：属性提升（三项）、起源专长、两项技能熟练、一项工具、起始行装。
 #
 # ``bonus`` 是 PHB 2024 的「属性值提升」三项属性（手册第二章 2085「属性值与背景」表）：
 # 玩家在其中选一项 +2、另一项 +1，或三项各 +1（上限 20）。种族**不再**提供属性加值。
+#
+# ``feat`` 是 2024 起背景固定给的**一项起源专长**（第五章 4099）——不是 2014 那种
+# flavor 的「背景特性」文案。带括号的是需要同时定下子选项的专长
+# （如「魔法学徒（牧师）」= 魔法学徒选牧师法表）。
+#
+# 2024 背景**不给语言**（第四章 3143-3155 背景组件只有 属性值/起源专长/技能/工具/行装）；
+# 语言来自第二章独立的「选择语言」步（2129-2163：通用语 + 从标准语言表选 / 掷 2 门）。
+# 工具每人**只给一项**（可以是「一种工匠工具」这类让玩家自选的说法）。
 
 - key: acolyte
   cn: 侍僧
@@ -11,18 +19,39 @@
   - int
   - wis
   - cha
+  feat: 魔法学徒（牧师）
   skills:
   - insight
   - religion
-  languages: 2
+  tools:
+  - 书法工具
   equipment:
-  - 圣徽
   - 祈祷书
-  - 5 支香
-  - 祭祀法衣
-  - 15 金币
-  feature: 信仰庇护：同信仰的神殿会为你提供庇护与协助。
+  - 书法工具
+  - 圣徽
+  - 羊皮纸（10 张）
+  - 法袍
+  - 8 金币
   desc: 在神殿中长大，熟稔教义与仪式。
+- key: guild_artisan
+  cn: 工匠
+  en: Artisan
+  bonus:
+  - str
+  - dex
+  - int
+  feat: 工匠
+  skills:
+  - investigation
+  - persuasion
+  tools:
+  - 一种工匠工具
+  equipment:
+  - 工匠工具
+  - 小包（2 个）
+  - 旅行服装
+  - 32 金币
+  desc: 2024 由「行会工匠」改名而来；手艺精湛，靠双手吃饭也靠手艺说话。
 - key: charlatan
   cn: 骗子
   en: Charlatan
@@ -30,17 +59,17 @@
   - dex
   - con
   - cha
+  feat: 熟习
   skills:
   - deception
   - sleight_of_hand
   tools:
-  - 伪装工具
-  - 伪造工具
+  - 文书伪造工具
   equipment:
-  - 精致服装
-  - 伪装工具
+  - 文书伪造工具
+  - 戏服
+  - 高档服装
   - 15 金币
-  feature: 假身份：你经营着一个经得起查验的虚假身份。
   desc: 擅长编造身份，靠一张嘴行走江湖。
 - key: criminal
   cn: 罪犯
@@ -49,38 +78,152 @@
   - dex
   - con
   - int
+  feat: 警觉
   skills:
-  - deception
+  - sleight_of_hand
   - stealth
   tools:
-  - 一种赌博工具
   - 盗贼工具
   equipment:
+  - 匕首（2 把）
+  - 盗贼工具
   - 撬棍
-  - 深色普通服装
-  - 15 金币
-  feature: 地下人脉：你能联系到犯罪网络中的熟人。
+  - 小包（2 个）
+  - 旅行服装
+  - 16 金币
   desc: 与地下世界打过交道，知道规矩也懂得门路。
-- key: folk_hero
-  cn: 民间英雄
-  en: Folk Hero
+- key: entertainer
+  cn: 艺人
+  en: Entertainer
+  bonus:
+  - str
+  - dex
+  - cha
+  feat: 音乐家
+  skills:
+  - acrobatics
+  - performance
+  tools:
+  - 一种乐器
+  equipment:
+  - 乐器
+  - 戏服（2 套）
+  - 镜子
+  - 香水
+  - 旅行服装
+  - 11 金币
+  desc: 舞台是你的战场，掌声是你的报酬。
+- key: farmer
+  cn: 农民
+  en: Farmer
   bonus:
   - str
   - con
   - wis
+  feat: 健壮
   skills:
   - animal_handling
+  - nature
+  tools:
+  - 木匠工具
+  equipment:
+  - 镰刀
+  - 木匠工具
+  - 医疗包
+  - 铁壶
+  - 铲子
+  - 旅行服装
+  - 30 金币
+  desc: 在田里长大，看天吃饭，也懂得修补与照料。
+- key: guard
+  cn: 警卫
+  en: Guard
+  bonus:
+  - str
+  - int
+  - wis
+  feat: 警觉
+  skills:
+  - athletics
+  - perception
+  tools:
+  - 一种赌博工具
+  equipment:
+  - 矛
+  - 轻弩
+  - 弩矢（20 支）
+  - 一种赌博工具
+  - 附盖提灯
+  - 镣铐
+  - 箭袋
+  - 旅行服装
+  - 12 金币
+  desc: 守过城门或巡逻过街巷，知道什么时候该多看一眼。
+- key: guide
+  cn: 向导
+  en: Guide
+  bonus:
+  - dex
+  - con
+  - wis
+  feat: 魔法学徒（德鲁伊）
+  skills:
+  - stealth
   - survival
   tools:
-  - 一种工匠工具
-  - 载具（陆运）
+  - 制图工具
   equipment:
-  - 工匠工具
-  - 铁锅
-  - 普通服装
-  - 10 金币
-  feature: 平民认同：普通百姓愿意为你提供藏身之处与帮助。
-  desc: 出身平凡，却因一事被乡里视为英雄。
+  - 短弓
+  - 箭矢（20 支）
+  - 制图工具
+  - 铺盖
+  - 箭袋
+  - 帐篷
+  - 旅行服装
+  - 3 金币
+  desc: 荒野里的路你都记在心里，也画在图上。
+- key: hermit
+  cn: 隐士
+  en: Hermit
+  bonus:
+  - con
+  - wis
+  - cha
+  feat: 医疗师
+  skills:
+  - medicine
+  - religion
+  tools:
+  - 草药工具
+  equipment:
+  - 长棍
+  - 草药工具
+  - 铺盖
+  - 书籍
+  - 油灯
+  - 燃油（3 瓶）
+  - 旅行服装
+  - 16 金币
+  desc: 离群索居多年，对世界有独到的理解。
+- key: merchant
+  cn: 商人
+  en: Merchant
+  bonus:
+  - con
+  - int
+  - cha
+  feat: 幸运
+  skills:
+  - animal_handling
+  - persuasion
+  tools:
+  - 领航工具
+  equipment:
+  - 领航工具
+  - 小包（2 个）
+  - 旅行服装
+  - 22 金币
+  desc: 跑过商路，货物和人情都算得清清楚楚。
 - key: noble
   cn: 贵族
   en: Noble
@@ -88,18 +231,17 @@
   - str
   - int
   - cha
+  feat: 熟习
   skills:
   - history
   - persuasion
-  languages: 1
   tools:
   - 一种赌博工具
   equipment:
-  - 精致服装
-  - 印章戒指
-  - 族谱卷轴
-  - 25 金币
-  feature: 特权地位：人们会默认你有权有势，愿意接见你。
+  - 一种赌博工具
+  - 高档服装
+  - 香水
+  - 29 金币
   desc: 含着金汤匙出生，懂得权术与礼仪。
 - key: sage
   cn: 智者
@@ -108,18 +250,61 @@
   - con
   - int
   - wis
+  feat: 魔法学徒（法师）
   skills:
   - arcana
   - history
-  languages: 2
+  tools:
+  - 书法工具
   equipment:
-  - 墨水笔
-  - 小刀
-  - 死去的师长的信件
-  - 普通服装
-  - 10 金币
-  feature: 研究者：遇到无从得知的知识时，你常能回忆起相关线索。
+  - 长棍
+  - 书法工具
+  - 书籍
+  - 羊皮纸（8 张）
+  - 法袍
+  - 8 金币
   desc: 把一生投入书卷，知识就是你的武器。
+- key: sailor
+  cn: 水手
+  en: Sailor
+  bonus:
+  - str
+  - dex
+  - wis
+  feat: 酒馆斗殴者
+  skills:
+  - acrobatics
+  - perception
+  tools:
+  - 领航工具
+  equipment:
+  - 匕首
+  - 领航工具
+  - 绳索
+  - 旅行服装
+  - 20 金币
+  desc: 在甲板上讨生活，风浪与港口的酒馆都不陌生。
+- key: scribe
+  cn: 抄写员
+  en: Scribe
+  bonus:
+  - dex
+  - int
+  - wis
+  feat: 熟习
+  skills:
+  - investigation
+  - perception
+  tools:
+  - 书法工具
+  equipment:
+  - 书法工具
+  - 高档服装
+  - 油灯
+  - 燃油
+  - 羊皮纸
+  - 23 金币
+  desc: 与文书为伍，读得懂字缝里的意思。
 - key: soldier
   cn: 士兵
   en: Soldier
@@ -127,98 +312,41 @@
   - str
   - dex
   - con
+  feat: 凶蛮打手
   skills:
   - athletics
   - intimidation
   tools:
   - 一种赌博工具
-  - 载具（陆运）
   equipment:
-  - 军阶徽记
-  - 战利品
-  - 骰子
-  - 普通服装
-  - 10 金币
-  feature: 军阶：你在军队中的身份仍具影响力。
+  - 矛
+  - 短弓
+  - 箭矢（20 支）
+  - 一种赌博工具
+  - 医疗包
+  - 箭袋
+  - 旅行服装
+  - 14 金币
   desc: 在军中度过青春，懂得纪律与服从。
-- key: outlander
-  cn: 化外之民
-  en: Outlander
+- key: wayfarer
+  cn: 流浪者
+  en: Wayfarer
   bonus:
   - dex
-  - con
   - wis
-  skills:
-  - athletics
-  - survival
-  languages: 1
-  tools:
-  - 一种乐器
-  equipment:
-  - 旅人服装
-  - 狩猎陷阱
-  - 动物战利品
-  - 10 金币
-  feature: 漂泊者：你总能找到食物与水源，也能记住走过的路。
-  desc: 在荒野中长大，城市对你而言才是异乡。
-- key: entertainer
-  cn: 艺人
-  en: Entertainer
-  bonus:
-  - str
-  - dex
   - cha
-  skills:
-  - acrobatics
-  - performance
-  tools:
-  - 伪装工具
-  - 一种乐器
-  equipment:
-  - 乐器
-  - 倾慕者的信物
-  - 戏服
-  - 15 金币
-  feature: 万众瞩目：在有人群的地方你总能找到演出机会。
-  desc: 舞台是你的战场，掌声是你的报酬。
-- key: guild_artisan
-  cn: 行会工匠
-  en: Guild Artisan
-  bonus:
-  - str
-  - dex
-  - int
+  feat: 幸运
   skills:
   - insight
-  - persuasion
-  languages: 1
+  - stealth
   tools:
-  - 一种工匠工具
+  - 盗贼工具
   equipment:
-  - 工匠工具
-  - 行会介绍信
-  - 旅人服装
-  - 15 金币
-  feature: 行会成员：行会会为你提供食宿、庇护与政治支持。
-  desc: 手艺精湛，受行会庇护也受行会约束。
-- key: hermit
-  cn: 隐士
-  en: Hermit
-  bonus:
-  - con
-  - wis
-  - cha
-  skills:
-  - medicine
-  - religion
-  languages: 1
-  tools:
-  - 草药工具
-  equipment:
-  - 卷轴匣
-  - 冬被
-  - 草药工具
-  - 普通服装
-  - 5 金币
-  feature: 发现：独居期间你获得了一个重要而独特的发现。
-  desc: 离群索居多年，对世界有独到的理解。
+  - 匕首（2 把）
+  - 盗贼工具
+  - 一种赌博工具
+  - 铺盖
+  - 小包（2 个）
+  - 旅行服装
+  - 16 金币
+  desc: 一直在路上，陌生人反而比故乡更让你自在。
