@@ -150,6 +150,11 @@
   desc: 神祇在人间的代言者，既能治疗也能惩戒。
   casting: wis
   caster_kind: full
+  # ⚠️ 兜底用：2024 的准备数是职业表里的固定值（见 res/dnd/spell_progression.yaml），
+  # 这里只有那张表查不到时才回退到 2014 的「等级 × level_factor + 属性调整值」。
+  prepared:
+    ability: wis
+    level_factor: 1
   cantrips: 3
   spells_known: 4
 - key: druid
@@ -199,6 +204,11 @@
   desc: 自然的守护者，能化身为兽、呼唤风雨。
   casting: wis
   caster_kind: full
+  # ⚠️ 兜底用：2024 的准备数是职业表里的固定值（见 res/dnd/spell_progression.yaml），
+  # 这里只有那张表查不到时才回退到 2014 的「等级 × level_factor + 属性调整值」。
+  prepared:
+    ability: wis
+    level_factor: 1
   cantrips: 2
   spells_known: 4
 - key: fighter
@@ -339,6 +349,10 @@
   desc: 誓言束缚的圣战士，兼具武勇与神恩。
   casting: cha
   caster_kind: half
+  # ⚠️ 兜底用（2024 的固定值见 spell_progression.yaml）
+  prepared:
+    ability: cha
+    level_factor: 0.5
   spells_known: 2
 - key: ranger
   cn: 游侠
@@ -580,5 +594,9 @@
   desc: 以理性解剖魔法，把世界写成公式。
   casting: int
   caster_kind: full
+  # ⚠️ 兜底用（2024 法师 1 级准备 4 个、法术书 6 条，见 spell_progression.yaml）
+  prepared:
+    ability: int
+    level_factor: 1
   cantrips: 3
   spells_known: 6

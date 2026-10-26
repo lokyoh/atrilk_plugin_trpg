@@ -1,0 +1,54 @@
+# 职业资源表（PHB 2024 第三章：各职业表右侧的数值列）
+# 来源：5etools class-*.json 的 classTableGroups（classSource == XPHB）。
+# 由 scripts/extract_class_resources.py 生成；每个字段是 20 个数字（1~20 级）。
+# 法术数量**不在这张表**（见 spell_progression.yaml）。
+- key: barbarian
+  name: 野蛮人
+  values:
+    rage_uses: [2, 2, 3, 3, 3, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 6, 6, 6, 6]
+    rage_damage: [2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4]
+    weapon_mastery: [2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+- key: bard
+  name: 吟游诗人
+  values:
+    bardic_die: [6, 6, 6, 6, 8, 8, 8, 8, 8, 10, 10, 10, 10, 10, 12, 12, 12, 12, 12, 12]
+- key: cleric
+  name: 牧师
+  values:
+    channel_divinity: [0, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4]
+- key: druid
+  name: 德鲁伊
+  values:
+    wild_shape: [0, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4]
+- key: fighter
+  name: 战士
+  values:
+    second_wind: [2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+    weapon_mastery: [3, 3, 3, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6]
+- key: monk
+  name: 武僧
+  values:
+    martial_arts_die: [6, 6, 6, 6, 8, 8, 8, 8, 8, 8, 10, 10, 10, 10, 10, 10, 12, 12, 12, 12]
+    focus: [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    unarmored_move: [0, 10, 10, 10, 10, 15, 15, 15, 15, 20, 20, 20, 20, 25, 25, 25, 25, 30, 30, 30]
+- key: paladin
+  name: 圣武士
+  values:
+    channel_divinity: [0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+- key: ranger
+  name: 游侠
+  values:
+    favored_enemy: [2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6]
+- key: rogue
+  name: 游荡者
+  values:
+    sneak_attack: [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10]
+- key: sorcerer
+  name: 术士
+  values:
+    sorcery: [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+- key: warlock
+  name: 魔契师
+  values:
+    pact_slots: [1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4]
+    pact_slot_level: [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]

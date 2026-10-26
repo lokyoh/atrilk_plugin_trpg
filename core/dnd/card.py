@@ -36,6 +36,13 @@ from .class_features import (
     attacks_per_action,
     features_for,
 )
+from .class_resources import (
+    RECOVERY,
+    RECOVERY_CN,
+    RESOURCE_CN,
+    spendable_at,
+    value_at,
+)
 from .coins import format_coins
 from .conditions import (
     ConditionEffect,
@@ -66,8 +73,18 @@ from .profession import DndClass, get_class
 from .progression import MAX_LEVEL
 from .race import Race, SubRace, get_race
 from .skills import Skill, get_skill
+from .spell_progression import prepared_at
 from .spells import Spell, get_spell, max_slots, slot_text
 from .subclass import SubClass, get_subclass, resolve_subclass
+from .subclass_grants import (
+    crit_threshold as _crit_threshold,
+)
+from .subclass_grants import (
+    subclass_spendable,
+)
+from .subclass_grants import (
+    superiority as _superiority,
+)
 from .theme import css_vars, get_theme
 
 __all__ = [
@@ -402,9 +419,18 @@ class DndCharacter(TrpgCharacter):
     #: 已消耗的生命骰数（短休花掉的；长休按 5e 回一半，见
     #: :meth:`regain_hit_dice`）。总数 = 等级，恢复见 :meth:`restore_hit_dice`
     hit_dice_used: int = 0
-    #: **动作如潮**已用次数（战士 2 级起；上限见 :attr:`action_surge_max`）。
-    #: 短休或长休后清零（PHB 2024：每次休息之间可用 1 次，17 级起 2 次）。
-    action_surge_used: int = 0
+    #: **已准备的法术**（T11：准备制职业每次长休后从自己的法术里挑）。
+    #: 空 = 还没管理准备（旧卡 / DM 没记），此时施法**不校验**——宁可松，
+    #: 也不要让已有的卡突然放不出法术。
+    prepared_spells: list[str] = field(default_factory=list)
+    #: 每级**掷出的生命骰**（等级 -> 骰值，不含体质调整值）；没掷的等级取平均值。
+    #: 升级默认走平均值，想掷骰由 :meth:`roll_hit_die` 补记（B9）。
+    hp_rolls: dict[int, int] = field(default_factory=dict)
+    #: **可消耗职业资源的已用次数**：``{资源键: 已用}``（键见
+    #: :data:`~.class_resources.SPENDABLE` —— 狂暴 / 回气 / 功力 / 引导神力 /
+    #: 荒野形态 / 术法点 / 宿敌 / 动作如潮）。上限按等级查
+    #: ``res/dnd/class_resources.yaml``，休息时按各自的恢复口径清零。
+    resources: dict[str, int] = field(default_factory=dict)
     #: 游泳速度（尺）；水生种族（海精灵 / 崔斯特 / 蜥蜴人等）在建卡或 DM 设定后非零。
     #: 用于水下战斗——有游泳速度时水下近战武器攻击不受劣势（见 combat.attack）。
     swim_speed: int = 0
@@ -465,6 +491,13 @@ class DndCharacter(TrpgCharacter):
             if str(item).strip()
         ]
         self.concentrating = str(self.concentrating or "").strip()
+        # 职业资源已用次数：键去空、值取非负整数；**上限收缩时（降级 / 洗职业）
+        # 不静默截断**——截断会让「休息后还剩几次」凭空变多。
+        self.resources = {
+            str(k): max(0, int(v or 0))
+            for k, v in (self.resources or {}).items()
+            if str(k).strip() and int(v or 0) > 0
+        }
         # 生命骰消耗不能超过等级、也不能为负
         self.hit_dice_used = max(0, min(self.level, int(self.hit_dice_used or 0)))
         self.hunger_days = max(0, int(self.hunger_days or 0))
@@ -506,6 +539,10 @@ class DndCharacter(TrpgCharacter):
                 str(x).strip() for x in (self.weapon_masteries or []) if str(x).strip()
             )
         )
+        # 生命骰记录：JSON 读回来的键是字符串，不转回整数就查不到（会静默退回平均值）
+        self.hp_rolls = {
+            int(k): int(v) for k, v in (self.hp_rolls or {}).items() if int(v or 0) > 0
+        }
         # 起源属性提升：只留非零项、键规范化（旧存档见 from_dict 的迁移）
         self.ability_boost = {
             get_ability(k).key: int(v)
@@ -780,6 +817,15 @@ class DndCharacter(TrpgCharacter):
         return attacks_per_action(self.profession, self.level)
 
     @property
+    def action_surge_used(self) -> int:
+        """已用掉几次动作如潮（**存在通用 ``resources`` 里**，这里只做别名）。"""
+        return int(self.resources.get("action_surge", 0) or 0)
+
+    @action_surge_used.setter
+    def action_surge_used(self, value: int) -> None:
+        self.resources["action_surge"] = max(0, int(value or 0))
+
+    @property
     def action_surge_max(self) -> int:
         """动作如潮每次休息之间能用几次（战士 2 级 1 次、17 级 2 次）。"""
         return action_surge_max(self.profession, self.level)
@@ -787,21 +833,123 @@ class DndCharacter(TrpgCharacter):
     @property
     def action_surge_left(self) -> int:
         """本段休息之间还能用几次动作如潮。"""
-        return max(0, self.action_surge_max - int(self.action_surge_used or 0))
+        return max(0, self.action_surge_max - self.action_surge_used)
 
     def use_action_surge(self) -> bool:
         """消耗一次动作如潮；没有剩余返回 ``False``。"""
-        if self.action_surge_left <= 0:
-            return False
-        self.action_surge_used += 1
-        return True
+        return self.use_resource("action_surge")
 
     def restore_action_surge(self) -> bool:
         """短休 / 长休后恢复动作如潮（有变化返回 ``True``）。"""
-        if int(self.action_surge_used or 0):
+        if self.action_surge_used:
             self.action_surge_used = 0
             return True
         return False
+
+    # —— 职业资源（狂暴 / 回气 / 功力 / 引导神力……）——
+
+    def spendable_resources(self) -> dict[str, int]:
+        """当前等级**可消耗资源**的上限（含动作如潮与子职给的卓越骰；只列非 0 的）。
+
+        职业表（``class_resources.yaml``）之外还有两类来自别处：动作如潮是
+        ``class_features.yaml`` 的 grants 标记，卓越骰是**子职**给的
+        （:func:`~.subclass_grants.subclass_spendable`）—— 一并并进来，
+        好让 :meth:`resource_max` / :meth:`use_resource` / :meth:`restore_resources`
+        对所有资源一视同仁。
+        """
+        out = dict(spendable_at(self.profession, self.level))
+        out.update(subclass_spendable(self))
+        return out
+
+    def resource_max(self, field: str) -> int:
+        """某项职业资源的上限（0 = 这个职业 / 等级没有它）。"""
+        key = str(field or "").strip()
+        return int(self.spendable_resources().get(key, 0))
+
+    def resource_left(self, field: str) -> int:
+        """某项职业资源还剩几次。"""
+        key = str(field or "").strip()
+        return max(0, self.resource_max(key) - int(self.resources.get(key, 0) or 0))
+
+    def use_resource(self, field: str, amount: int = 1) -> bool:
+        """消耗 ``amount`` 次某项职业资源；不够就**一点不扣**并返回 ``False``。"""
+        key = str(field or "").strip()
+        need = max(1, int(amount or 1))
+        if self.resource_left(key) < need:
+            return False
+        self.resources[key] = int(self.resources.get(key, 0) or 0) + need
+        return True
+
+    def restore_resources(self, *, short: bool = False) -> list[str]:
+        """休息后恢复职业资源，返回**有变化**的条目（供休息回执逐条列出）。
+
+        口径照 2024 各特性原话，见 :data:`~.class_resources.RECOVERY`：
+        短休全部恢复的（回气 / 动作如潮 / 功力）直接清零；短休只回 1 次的
+        （狂暴 / 引导神力 / 荒野形态）减一；只有长休才回的点数（术法点 / 宿敌）
+        短休不动。长休**全部清零**，不用再区分。
+        """
+        notes: list[str] = []
+        for name, cap in self.spendable_resources().items():
+            used = int(self.resources.get(name, 0) or 0)
+            if used <= 0:
+                continue
+            if not short:
+                recovered = used  # 长休：全部清零，不用再看口径
+            else:
+                policy = RECOVERY.get(name, "long")
+                if policy == "short_all":
+                    recovered = used
+                elif policy == "short_one":
+                    recovered = 1
+                else:
+                    recovered = 0  # 术法点 / 宿敌：短休不回
+            if recovered <= 0:
+                continue
+            self.resources[name] = max(0, used - recovered)
+            label = RESOURCE_CN.get(name, name)
+            notes.append(f"{label}恢复 {recovered}（{self.resource_left(name)}/{cap}）")
+        return notes
+
+    @property
+    def rage_damage(self) -> int:
+        """狂暴伤害加值（野蛮人 1 级 +2、9 级 +3、16 级 +4；非野蛮人 0）。"""
+        return value_at(self.profession, self.level, "rage_damage")
+
+    @property
+    def raging(self) -> bool:
+        """是否处于狂暴状态（状态表里的「狂暴」，见 :mod:`.conditions`）。"""
+        return "狂暴" in self.conditions
+
+    @property
+    def crit_threshold(self) -> int:
+        """攻击检定掷到几点即暴击（默认 20；勇士 19，15 级起 18）。
+
+        子职标记在 :func:`~.subclass_grants.crit_threshold`；未命中天然 1 的
+        处理不受影响（天然 1 永远算失手）。
+        """
+        return _crit_threshold(self)
+
+    @property
+    def superiority_dice(self) -> tuple[int, int]:
+        """卓越骰 ``(个数, 骰面)``；没有这个子职特性返回 ``(0, 0)``。"""
+        return _superiority(self)
+
+    def resources_text(self, *, used: bool = False, policy: bool = True) -> str:
+        """资源概览：默认写上限与恢复口径，``used=True`` 时写「剩余/上限」。
+
+        :param policy: 是否附上恢复口径（卡面摘要不要，查询 / 建卡回执要）。
+        """
+        parts: list[str] = []
+        for name, cap in self.spendable_resources().items():
+            label = RESOURCE_CN.get(name, name)
+            if used:
+                parts.append(f"{label} {self.resource_left(name)}/{cap}")
+            elif policy:
+                note = RECOVERY_CN.get(RECOVERY.get(name, "long"), "")
+                parts.append(f"{label} {cap}（{note}）" if note else f"{label} {cap}")
+            else:
+                parts.append(f"{label} {cap}")
+        return "、".join(parts)
 
     def feat_objects(self) -> tuple[Feat, ...]:
         """已落卡的专长对象（认不出的名字跳过——DM 手写的自由文本不该让卡崩）。"""
@@ -990,7 +1138,9 @@ class DndCharacter(TrpgCharacter):
     def max_hp(self) -> int:
         """生命值上限。
 
-        1 级取生命骰最大值 + 体质调整值；之后每级取生命骰平均值（向上取整）+ 体质调整值。
+        1 级取生命骰最大值 + 体质调整值；之后每级取生命骰平均值（向上取整）+ 体质调整值，
+        **掷过生命骰的等级用掷出的值**（见 :meth:`roll_hit_die`）。
+        ⚠️ 每级增量**至少 +1**（PHB 2024：体质调整值为负也不会让升级倒扣生命）。
         （2024 起力竭不再减半生命上限——那是对应 2014 第 4 级的效果。）
         """
         profession = self.profession_obj
@@ -1000,12 +1150,70 @@ class DndCharacter(TrpgCharacter):
         else:
             hp = profession.level1_hp + con
             average = profession.hit_die // 2 + 1
-            hp += (self.level - 1) * (average + con)
+            for level in range(2, int(self.level) + 1):
+                rolled = int(self.hp_rolls.get(level, 0) or 0)
+                gain = (rolled + con) if rolled else (average + con)
+                hp += max(1, gain)
         hp += self.hp_per_level * self.level
         scale = merge_effects(self.conditions, exhaustion=self.exhaustion).hp_max_scale
         if scale < 1.0:
             hp = max(1, int(hp * scale))
         return max(1, hp)
+
+    def roll_hit_die(self, level: int, *, rng: Any = None) -> tuple[int, int]:
+        """为某一级掷生命骰（B9：升级可以掷，不必取平均值）。
+
+        :param level: 要掷的等级（2 级以上才有意义）
+        :return: ``(掷出的骰值, 该级实际增加的 HP)`` —— 实际增量还要加体质调整值，
+            且**至少 +1**；掷出的骰值记进 :attr:`hp_rolls`，生命上限随之重算。
+        """
+        level = max(2, int(level or 2))
+        profession = self.profession_obj
+        die = int(getattr(profession, "hit_die", 8) or 8)
+        result = roll(f"1d{die}", label="生命骰", rng=rng)
+        self.hp_rolls[level] = int(result.total)
+        con = self.modifier("con")
+        return int(result.total), max(1, int(result.total) + con)
+
+    @property
+    def is_prepared_caster(self) -> bool:
+        """是否需要每日准备法术（2024：**所有**施法职业都是准备制）。"""
+        profession = self.profession_obj
+        return bool(profession and profession.is_prepared_caster)
+
+    def prepared_limit(self) -> int:
+        """这个等级能准备几个法术（不含戏法）。
+
+        2024 的准备数是职业表里查的固定值（法师 1 级 4 个、20 级 25 个），
+        **不再用「等级 + 属性调整值」**；表里查不到才回退旧公式（旧存档 / 旧数据）。
+        """
+        profession = self.profession_obj
+        if not profession or not profession.is_prepared_caster:
+            return 0
+        table = prepared_at(profession.key, self.level)
+        if table:
+            return table
+        return profession.prepared_count(
+            self.level, self.modifier(profession.prepared_ability or profession.casting)
+        )
+
+    def prepared_text(self) -> str:
+        """准备情况的展示文本（未管理 / 已准备 N 个）。"""
+        if not self.is_prepared_caster:
+            return ""
+        if not self.prepared_spells:
+            return f"未记录准备（可准备 {self.prepared_limit()} 个）"
+        return f"已准备 {len(self.prepared_spells)}/{self.prepared_limit()}：" + "、".join(
+            get_spell(s).cn if get_spell(s) else str(s) for s in self.prepared_spells
+        )
+
+    def rolled_hp_text(self) -> str:
+        """掷过生命骰的等级（展示用，如「Lv.5 掷 4」）。"""
+        if not self.hp_rolls:
+            return ""
+        return "、".join(
+            f"Lv.{lv} 掷 {v}" for lv, v in sorted(self.hp_rolls.items())
+        )
 
     @property
     def hp(self) -> int:
@@ -1297,6 +1505,10 @@ class DndCharacter(TrpgCharacter):
             ability_mod = self.modifier("str")
         # 战斗风格「箭术」：远程武器攻击检定 +2（不要求熟练）
         style_bonus = self._ranged_style_bonus(weapon_obj)
+        # 捕网（2024 已归入冒险用品，不再是武器表的一员）：它的特殊规则是
+        # **攻击检定不加熟练加值**，与有没有军用武器熟练无关。
+        if weapon_obj.key == "net":
+            return ability_mod + fatigue + style_bonus
         if not self.has_weapon_proficiency(weapon_obj):
             return ability_mod + fatigue + style_bonus
         return self.proficiency + ability_mod + fatigue + style_bonus
@@ -1310,16 +1522,42 @@ class DndCharacter(TrpgCharacter):
         )
         return int(style.ranged_attack_bonus) if style is not None else 0
 
+    def uses_strength(self, weapon: Weapon | str | None) -> bool:
+        """这次攻击是否**用力量**打（狂暴伤害与狂怒的判据，PHB 2024）。
+
+        徒手打击用力量；远程武器用敏捷；灵巧武器取力量 / 敏捷较高者 ——
+        所以灵巧武器只有在**力量不低于敏捷**时才算「用力量」。
+        """
+        weapon_obj = get_weapon(weapon) if weapon is not None else None
+        if weapon_obj is None:
+            return True  # 徒手打击
+        if weapon_obj.is_ranged:
+            return False
+        if weapon_obj.is_finesse:
+            return self.modifier("str") >= self.modifier("dex")
+        return True
+
     def damage_bonus(self, weapon: Weapon | str) -> int:
-        """伤害加值（与攻击加值的属性选择一致）。"""
+        """伤害加值（与攻击加值的属性选择一致）。
+
+        **狂暴伤害**（野蛮人）只加在**用力量**的攻击上（PHB 2024：武器或徒手
+        都算），所以远程武器不加、灵巧武器只有在力量不低于敏捷时才加 ——
+        两者正是「这一击用的是力量」的判据，见 :meth:`uses_strength`。
+        """
         weapon_obj = get_weapon(weapon)
         if weapon_obj is None:
             return 0
         if weapon_obj.is_ranged:
             return self.modifier("dex")
         if weapon_obj.is_finesse:
-            return max(self.modifier("str"), self.modifier("dex"))
-        return self.modifier("str")
+            bonus = max(self.modifier("str"), self.modifier("dex"))
+            if self.raging and self.uses_strength(weapon_obj):
+                bonus += self.rage_damage
+            return bonus
+        bonus = self.modifier("str")
+        if self.raging:
+            bonus += self.rage_damage
+        return bonus
 
     # —— 法术 ——
 
@@ -1899,8 +2137,12 @@ class DndCharacter(TrpgCharacter):
         return resolve_damage(amount, damage_type, entries, magical=magical)
 
     def resistances_text(self) -> str:
-        """抗性表文本；没有抗性返回空串。"""
-        return resistances_text(self.damage_resistances)
+        """抗性表文本（固定抗性 + **状态带来的抗性**，如狂暴的物理抗性）。"""
+        entries = list(self.damage_resistances)
+        for item in merge_effects(self.conditions).resistances:
+            if item not in entries:
+                entries.append(item)
+        return resistances_text(entries)
 
     # —— 状态 ——
 
@@ -1914,6 +2156,26 @@ class DndCharacter(TrpgCharacter):
     def effect(self) -> ConditionEffect:
         """当前状态合并后的机械效果。"""
         return merge_effects(self.conditions, exhaustion=self.exhaustion)
+
+    def add_condition(self, name: str) -> str:
+        """挂一个状态（写法先规范化、去重），返回落卡的那个名字。
+
+        规范名之外的自由文本也照留 —— DM 常写「被藤蔓缠住」这种没有机械效果
+        的状态，抹掉反而丢信息。
+        """
+        normalized = normalize_conditions([name])
+        label = normalized[0] if normalized else str(name or "").strip()
+        if label and label not in self.conditions:
+            self.conditions.append(label)
+        return label
+
+    def drop_condition(self, name: str) -> bool:
+        """摘掉一个状态（有变化返回 ``True``）。"""
+        normalized = normalize_conditions([name])
+        label = normalized[0] if normalized else str(name or "").strip()
+        before = len(self.conditions)
+        self.conditions = [c for c in self.conditions if c != label]
+        return len(self.conditions) != before
 
     def speed(self) -> int:
         """当前速度（含状态修正：力竭每级 -5 尺（2024）、束缚 / 擒抱归零；
@@ -1978,6 +2240,9 @@ class DndCharacter(TrpgCharacter):
             )
             lines.append(f"法术位 {self.spell_slots_text()}")
             lines.extend(self.spell_display_lines())
+            # 准备制职业要能看出今天准备了什么（T11）
+            if self.prepared_text():
+                lines.append("准备法术 " + self.prepared_text())
         if self.conditions or self.exhaustion:
             status = list(self.conditions)
             if self.exhaustion:
@@ -2000,6 +2265,11 @@ class DndCharacter(TrpgCharacter):
             if self.attacks_per_action > 1:
                 dice_text += f"　每动作攻击 {self.attacks_per_action} 次"
             lines.append(dice_text)
+        # 职业资源（狂暴 / 回气 / 功力 / 引导神力……）：有已用的才显示「剩余/上限」，
+        # 没用过时显示上限即可——避免每张卡都挂一串 0。
+        if self.spendable_resources():
+            spent = any(self.resources.get(k, 0) for k in self.spendable_resources())
+            lines.append("资源 " + self.resources_text(used=spent, policy=False))
         # 职业特性按等级**派生**（不存卡）：高等级角色也能看到自己会什么
         feats = self.class_feature_names()
         if feats:
@@ -2420,7 +2690,9 @@ class DndCharacter(TrpgCharacter):
             "feats",
             "alignment",
             "exp",
-            "action_surge_used",
+            "resources",
+            "hp_rolls",
+            "prepared_spells",
             "current_hp",
             "temp_hp",
             "conditions",
@@ -2446,6 +2718,12 @@ class DndCharacter(TrpgCharacter):
             "stable_recovery_hours",
         }
         restored = cls(**{k: v for k, v in data.items() if k in known})
+        # 口径迁移（2026-10-27）：动作如潮从**独立字段**并进通用 ``resources``
+        # （狂暴 / 回气 / 功力……共用一套）。旧存档里那一格搬到新位置，
+        # 否则战士一读档就白拿一次动作如潮。
+        legacy_surge = data.get("action_surge_used")
+        if legacy_surge and not restored.resources.get("action_surge"):
+            restored.action_surge_used = int(legacy_surge)
         # ⚠️ 口径迁移（2026-10-25）：PHB 2024 起属性提升来自背景、种族不给加值。
         # 2024 之前建的卡当年把种族加值即时并进了属性，存档里又带着当时的派生快照
         # ``abilities``——用它反推出「起源提升」，换口径后这些卡的属性一点不变。

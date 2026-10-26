@@ -448,6 +448,11 @@ weapons:
   ranged_max: 600
 - key: net
   cn: 捕网
+  # ⚠️ 2024 把捕网移到了冒险用品（6951 / 7228），不再是武器表的一员；
+  # 这里保留在武器数据里是为了让「命中即束缚」的结算能取到它
+  # （战斗里按 key=net 走特殊分支，见 combat.py）。`category` 只是沿用武器
+  # 数据结构的分类、**不代表军用武器熟练能覆盖它**：攻击检定不加熟练加值，
+  # 见 card.attack_bonus 里对 key == "net" 的分支。
   category: 军用远程
   damage: "—"
   damage_type: ""

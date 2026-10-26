@@ -72,6 +72,30 @@ class DndClass:
     #: **武器精通**可选几件武器（PHB 2024：野蛮人 2 / 战士 3 / 圣武士 2 / 游侠 2 / 游荡者 2；
     #: 0 = 这个职业 1 级没有武器精通）
     mastery_count: int = 0
+    #: **准备制**施法者的准备数公式（PHB 2024：牧师 / 德鲁伊 / 圣武士 / 法师）。
+    #: ``ability`` 用哪项属性、``level_factor`` 是等级系数（圣武士是 0.5）。
+    #: 空 = 已知制（吟游诗人 / 术士 / 魔契师 / 游侠），不需要准备。
+    prepared_ability: str = ""
+    prepared_level_factor: float = 1.0
+
+    @property
+    def is_prepared_caster(self) -> bool:
+        """是否需要「每日准备法术」。
+
+        ⚠️ **2024 起所有施法职业都是准备制**（手册第七章「职业的准备法术」表）——
+        旧书里「吟游诗人 / 术士 / 魔契师 / 游侠 是已知法术型」的说法作废，
+        它们只是**只能升级时换**、且一次换一个。
+        """
+        return self.is_caster
+
+    def prepared_count(self, level: int, ability_mod: int) -> int:
+        """**2014 的旧公式**（等级 × 系数 + 属性调整值）——只作数据缺失时的兜底。
+
+        2024 的准备数是职业表里查的固定值，见 :mod:`core.dnd.spell_progression`。
+        """
+        if not self.prepared_ability:
+            return 0
+        return max(1, int(int(level) * self.prepared_level_factor) + int(ability_mod))
 
     @property
     def level1_hp(self) -> int:
@@ -133,6 +157,7 @@ def _package(row: dict[str, Any]) -> EquipmentChoice:
 
 def _klass(row: dict[str, Any]) -> DndClass:
     """一个职业（``res/dnd/classes.yaml`` 的一项）。"""
+    prepared = row.get("prepared") or {}
     return DndClass(
         key=str(row["key"]),
         cn=str(row["cn"]),
@@ -155,6 +180,8 @@ def _klass(row: dict[str, Any]) -> DndClass:
         armor_proficiencies=as_texts(row.get("armor_proficiencies")),
         weapon_proficiencies=as_texts(row.get("weapon_proficiencies")),
         mastery_count=int(row.get("mastery_count", 0) or 0),
+        prepared_ability=str(prepared.get("ability", "") or ""),
+        prepared_level_factor=float(prepared.get("level_factor", 1) or 1),
     )
 
 
