@@ -77,10 +77,19 @@ from .spell_progression import prepared_at
 from .spells import Spell, get_spell, max_slots, slot_text
 from .subclass import SubClass, get_subclass, resolve_subclass
 from .subclass_grants import (
+    bloodied_regen as _bloodied_regen,
+)
+from .subclass_grants import (
     crit_threshold as _crit_threshold,
 )
 from .subclass_grants import (
+    death_save_marks as _death_save_marks,
+)
+from .subclass_grants import (
+    subclass_extra_attack,
+    subclass_resistances,
     subclass_spendable,
+    ward_granted,
 )
 from .subclass_grants import (
     superiority as _superiority,
@@ -285,7 +294,9 @@ class DeathSaveOutcome:
     def describe(self) -> str:
         """给 DM / 玩家看的一句话说明。"""
         if self.outcome == "revived":
-            return f"d20={self.roll} → 天然 20！恢复 1 点生命并清醒（死亡豁免清零）"
+            # 18 起的「视同天然 20」（勇士 18 级）也走这一支，点数要照实写
+            how = "天然 20" if self.roll == 20 else f"掷出 {self.roll}（视同天然 20）"
+            return f"d20={self.roll} → {how}！恢复 1 点生命并清醒（死亡豁免清零）"
         label = {
             "stable": "第 3 次成功：伤势稳定",
             "dead": "第 3 次失败：死亡",
@@ -386,6 +397,10 @@ class DndCharacter(TrpgCharacter):
     current_hp: int | None = None
     #: 临时生命值
     temp_hp: int = 0
+    #: 防护师「奥术守御」结界：**当前**生命值；``ward_cap`` 是这一次结界的上限
+    #: （0 = 还没建 / 长休后已消失）。受伤时**抗性结算之后**由它先吸收。
+    ward: int = 0
+    ward_cap: int = 0
     #: 当前状态（中毒、倒地、力竭等自由文本）
     conditions: list[str] = field(default_factory=list)
     #: 力竭等级（0~6）
@@ -813,8 +828,59 @@ class DndCharacter(TrpgCharacter):
 
     @property
     def attacks_per_action(self) -> int:
-        """一个攻击动作能攻击几次（战士 5/11/20 级为 2/3/4，其余 5 级职业为 2）。"""
-        return attacks_per_action(self.profession, self.level)
+        """一个攻击动作能攻击几次（战士 5/11/20 级为 2/3/4，其余 5 级职业为 2）。
+
+        **子职也能给**（勇气学院 6 级「额外攻击」），两个来源取大者 —— 子职那
+        条不会叠加，只是把吟游诗人从 1 次抬到 2 次。
+        """
+        return max(
+            attacks_per_action(self.profession, self.level),
+            subclass_extra_attack(self),
+        )
+
+    # —— 防护师「奥术守御」结界 ——
+
+    @property
+    def has_ward(self) -> bool:
+        """有没有「奥术守御」（防护师 3 级；别的子职没有这个机制）。"""
+        return ward_granted(self)
+
+    @property
+    def ward_max(self) -> int:
+        """结界能有多少点（法师等级的两倍 + 智力调整值）；没有这个子职给 0。"""
+        if not self.has_ward:
+            return 0
+        return max(0, 2 * int(self.level or 0) + self.modifier("int"))
+
+    def create_ward(self) -> int:
+        """创建结界（**长休后才能再建**）：返回结界当前点数。"""
+        if not self.has_ward:
+            return 0
+        self.ward_cap = self.ward_max
+        self.ward = self.ward_cap
+        return self.ward
+
+    def restore_ward(self, slot_level: int = 0) -> int:
+        """消耗法术位施展防护学派法术（或花附赠动作）时回 `环阶 × 2` 点。
+
+        结界还没建（``ward_cap == 0``）就顺手建一个；已建的只回血、不重建
+        （原文：结界一经创建，直至长休都无法再次被创建）。
+        """
+        if not self.has_ward:
+            return 0
+        if self.ward_cap <= 0:
+            return self.create_ward()
+        gain = 2 * max(0, int(slot_level or 0))
+        self.ward = min(self.ward_cap, self.ward + gain)
+        return self.ward
+
+    def ward_absorb(self, amount: int) -> int:
+        """结界替角色吃掉多少伤害（**在抗性结算之后**）；返回被吸收的点数。"""
+        if self.ward <= 0 or amount <= 0:
+            return 0
+        absorbed = min(self.ward, amount)
+        self.ward -= absorbed
+        return absorbed
 
     @property
     def action_surge_used(self) -> int:
@@ -1374,9 +1440,16 @@ class DndCharacter(TrpgCharacter):
         - **天然 20**：恢复 1 点生命并清醒（进度清零）；
         - **天然 1**：失败 +2；
         - 3 次成功 = 稳定；3 次失败 = 死亡。
+
+        **勇士 18 级「生还者」**改两条：掷骰**有优势**，且掷到 18~20 都按「天然 20」
+        处理（回 1 血清醒）—— 阈值从子职标记读，没有就是只有 20。
         """
-        value = roll_d20(rng=rng)[1]
-        if value == 20:
+        advantage, threshold = _death_save_marks(self)
+        value = roll_d20(
+            Advantage.ADVANTAGE if advantage else Advantage.NORMAL, rng=rng
+        )[1]
+        # 「掷到 18~20 都算天然 20」：阈值来自子职标记（0 = 只有 20）
+        if value == 20 or (threshold > 0 and value >= threshold):
             self.current_hp = 1
             self.clear_death_state()
             return DeathSaveOutcome(value, "revived", 0, 0)
@@ -1404,6 +1477,24 @@ class DndCharacter(TrpgCharacter):
         self.clear_death_state()
         self.current_hp = None if int(hp) <= 0 else max(1, min(int(hp), self.max_hp))
         return f"已清醒，生命 {self.hp}/{self.max_hp}"
+
+    def survivor_regen(self) -> int:
+        """勇士 18 级「英气风发」：回合开始时**浴血**且还有血，回 `5 + 体质`。
+
+        「浴血」= 生命值不超过上限的一半；已倒地 / 已阵亡 / 没到等级都返回 0
+        （那时该走的是死亡豁免，不是这条）。
+        """
+        if not _bloodied_regen(self):
+            return 0
+        if self.is_downed or self.is_dead or self.hp <= 0:
+            return 0
+        if self.hp > self.max_hp // 2:
+            return 0
+        gain = max(0, 5 + self.modifier("con"))
+        healed = min(gain, self.max_hp - self.hp)
+        if healed > 0:
+            self.current_hp = self.hp + healed
+        return healed
 
     def death_save_text(self) -> str:
         """生存状态文本；没倒地时返回空串。"""
@@ -2126,23 +2217,26 @@ class DndCharacter(TrpgCharacter):
     ) -> tuple[int, str]:
         """按抗性表结算伤害（抗性减半 / 免疫归零 / 易伤翻倍）。
 
-        抗性 = 角色卡上的固定抗性（种族等）+ 当前状态带来的抗性（狂暴的物理抗性）。
+        抗性 = 角色卡上的固定抗性（种族等）+ **子职给的常驻抗性**
+        （战争领域 17 级）+ 当前状态带来的抗性（狂暴的物理抗性）。
 
         :param magical: 这一击是不是魔法的（见 :func:`~.conditions.resolve_damage`）。
         """
+        return resolve_damage(
+            amount, damage_type, self._resistance_entries(), magical=magical
+        )
+
+    def _resistance_entries(self) -> list[str]:
+        """全部生效的抗性条目：固定 + 子职 + 状态（去重保序）。"""
         entries = list(self.damage_resistances)
-        for item in merge_effects(self.conditions).resistances:
+        for item in (*subclass_resistances(self), *merge_effects(self.conditions).resistances):
             if item not in entries:
                 entries.append(item)
-        return resolve_damage(amount, damage_type, entries, magical=magical)
+        return entries
 
     def resistances_text(self) -> str:
-        """抗性表文本（固定抗性 + **状态带来的抗性**，如狂暴的物理抗性）。"""
-        entries = list(self.damage_resistances)
-        for item in merge_effects(self.conditions).resistances:
-            if item not in entries:
-                entries.append(item)
-        return resistances_text(entries)
+        """抗性表文本（固定抗性 + 子职给的 + **状态带来的**，如狂暴的物理抗性）。"""
+        return resistances_text(self._resistance_entries())
 
     # —— 状态 ——
 
@@ -2231,6 +2325,8 @@ class DndCharacter(TrpgCharacter):
         ]
         if self.temp_hp:
             lines.append(f"临时 HP {self.temp_hp}")
+        if self.ward_cap:
+            lines.append(f"奥术守御 {self.ward}/{self.ward_cap}")
         if self.death_save_text():
             lines.append("生存状态 " + self.death_save_text())
         if self.is_caster:
@@ -2695,6 +2791,8 @@ class DndCharacter(TrpgCharacter):
             "prepared_spells",
             "current_hp",
             "temp_hp",
+            "ward",
+            "ward_cap",
             "conditions",
             "exhaustion",
             "rations",

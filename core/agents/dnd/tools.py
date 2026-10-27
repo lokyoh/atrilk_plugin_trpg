@@ -155,6 +155,7 @@ from ...dnd.spells import (
 )
 from ...dnd.storage import load_card, save_card
 from ...dnd.subclass import SUBCLASS_LEVEL, get_subclass, subclass_choices
+from ...dnd.subclass_grants import heal_marks
 from ...dnd.world_store import (
     DOC_KIND_LABELS,
     DOC_KINDS,
@@ -164,7 +165,7 @@ from ...dnd.world_store import (
     read_doc,
 )
 from ...trpg.check import roll_check
-from ...trpg.dice import Advantage, DiceError, roll
+from ...trpg.dice import Advantage, DiceError, parse_dice, roll
 from ..thinking import AgentContext, AgentFinishError, AgentTool, ToolArg
 from .rules import match_rules
 
@@ -422,11 +423,11 @@ def _query_class_feature(name: str) -> str:
     if not name:
         lines = []
         for cls in CLASSES:
-            names = list(dict.fromkeys(f.name for f in features_for(cls.key, MAX_LEVEL)))
+            names = list(
+                dict.fromkeys(f.name for f in features_for(cls.key, MAX_LEVEL))
+            )
             lines.append(f"{cls.cn}：{'、'.join(names)}")
-        return (
-            "职业特性（写「战士 5」查某级、写特性名查原文）：\n" + "\n".join(lines)
-        )
+        return "职业特性（写「战士 5」查某级、写特性名查原文）：\n" + "\n".join(lines)
     tokens = str(name).replace("，", " ").replace("·", " ").split()
     if tokens and tokens[-1].isdigit():
         level = max(1, min(int(tokens[-1]), MAX_LEVEL))
@@ -449,9 +450,8 @@ def _query_class_feature(name: str) -> str:
                 (cls.cn for cls in CLASSES if cls.key == feat.profession),
                 feat.profession,
             )
-            return (
-                f"{feat.name}（{cls_cn} L{feat.level}）"
-                + (f"：{feat.text}" if feat.text else "")
+            return f"{feat.name}（{cls_cn} L{feat.level}）" + (
+                f"：{feat.text}" if feat.text else ""
             )
     raise KeyError(f"没有叫「{name}」的职业特性，写特性名或「职业 等级」。")
 
@@ -486,9 +486,7 @@ def _query_background(name: str) -> str:
     bg = get_background(name)
     lines = [f"{bg.cn}（{bg.en}）"]
     if bg.bonus:
-        lines.append(
-            f"属性提升（选一项 +2 另一项 +1，或三项各 +1）：{bg.bonus_text}"
-        )
+        lines.append(f"属性提升（选一项 +2 另一项 +1，或三项各 +1）：{bg.bonus_text}")
     if bg.skills:
         lines.append("技能熟练：" + "、".join(get_skill(k).cn for k in bg.skills))
     if bg.tools:
@@ -568,16 +566,65 @@ def _query_subclass(name: str) -> str:
         lines.append(sub.desc)
     # 引擎真会算的那几条单独点出来，免得 DM 以为全靠自己记
     engine: list[str] = []
-    crits = [f"L{f.level} 起 {f.crit_at}（{f.name}）" for f in sub.features if f.crit_at]
+    crits = [
+        f"L{f.level} 起 {f.crit_at}（{f.name}）" for f in sub.features if f.crit_at
+    ]
     if crits:
         engine.append("暴击阈值：" + "、".join(crits))
     if sub.superiority:
         growth = "、".join(
-            f"L{lv} {count}d{die}" for lv, (count, die) in sorted(sub.superiority.items())
+            f"L{lv} {count}d{die}"
+            for lv, (count, die) in sorted(sub.superiority.items())
         )
         engine.append(f"卓越骰（短休回满）：{growth}")
-    if any(f.raging_dice for f in sub.features):
-        engine.append("狂怒：狂暴中鲁莽攻击每回合首次命中加骰（引擎自动结算）")
+    firsts = []
+    for feat in sub.features:
+        mark = feat.first_hit
+        if mark is None:
+            continue
+        dice = str(mark.dice or "")
+        if mark.at:
+            dice += "→" + mark.at[max(mark.at)]  # 按等级成长（哀惧灵袭 11 级 1d6）
+        firsts.append(f"L{feat.level} {feat.name} {dice}（{mark.kind}）")
+    if firsts:
+        engine.append("每回合首次命中加骰：" + "、".join(firsts))
+    heals = [
+        {
+            "生命门徒": "每个目标 +2+环阶",
+            "神佑医者": "自己同回",
+            "极效治疗": "治疗骰取满",
+        }[f.name]
+        for f in sub.features
+        if f.heal_bonus or f.heal_self or f.heal_max
+    ]
+    if heals:
+        engine.append("治疗加成：" + "、".join(heals))
+    attacks = [
+        f"L{f.level} 每动作 {f.extra_attack} 次" for f in sub.features if f.extra_attack
+    ]
+    if attacks:
+        engine.append("额外攻击：" + "、".join(attacks))
+    if any(f.ward for f in sub.features):
+        engine.append(
+            "奥术守御：施展防护学派法术时建结界（上限 = 等级×2 + 智力），"
+            "抗性结算后由结界先吸收，长休后消失"
+        )
+    resists = [f"L{f.level} {'/'.join(f.resist)}" for f in sub.features if f.resist]
+    if resists:
+        engine.append("常驻抗性：" + "、".join(resists))
+    survivor = [f for f in sub.features if f.death_save_advantage or f.bloodied_regen]
+    if survivor:
+        feat = survivor[0]
+        bits = []
+        if feat.death_save_advantage:
+            bits.append(
+                f"死亡豁免优势，掷到 {feat.death_save_at}~20 都当天然 20"
+                if feat.death_save_at
+                else "死亡豁免优势"
+            )
+        if feat.bloodied_regen:
+            bits.append("回合开始浴血时回 5 + 体质")
+        engine.append(f"L{feat.level} 生还：" + "，".join(bits))
     if engine:
         lines.append("引擎结算：" + "；".join(engine))
     if sub.features:
@@ -1439,9 +1486,7 @@ class UpdateCharacterTool(AgentTool):
             target_level = max(2, _parse_int(text, card.level))
             before = card.max_hp
             rolled, gain = card.roll_hit_die(target_level)
-            die = int(
-                getattr(card.profession_obj, "hit_die", 8) or 8
-            )
+            die = int(getattr(card.profession_obj, "hit_die", 8) or 8)
             message = (
                 f"Lv.{target_level} 掷生命骰 1d{die} → {rolled}，该级生命 +{gain}"
                 f"（生命上限 {before} → {card.max_hp}）"
@@ -2729,6 +2774,12 @@ def _spell_damage(
     )
 
 
+def _is_self(target: Any, card: Any) -> bool:
+    """这个治疗目标是不是施法者本人（角色卡 / 参战者两种形态都认）。"""
+    uid = getattr(target, "user_id", "") or getattr(target, "cid", "")
+    return bool(uid) and str(uid) == str(getattr(card, "user_id", ""))
+
+
 def _spell_heal(save, state, target: Any, amount: int, *, temp: bool = False) -> str:
     """对目标结算法术治疗（``temp`` 为真时给临时生命，不叠加只取高者）。"""
     amount = max(0, int(amount))
@@ -2856,10 +2907,23 @@ class CastSpellTool(AgentTool):
             else:
                 upcast = ""
             slot_note = f"　法术位 {card.spell_slots_text()}{upcast}"
+            # 防护师「奥术守御」：消耗法术位施展**防护学派**法术时回「环阶 × 2」点
+            # （结界还没建就顺手建一个；建过之后只回血、不重建）
+            if card.has_ward and str(spell_obj.school or "").strip() == "防护":
+                fresh = card.ward_cap <= 0
+                ward = card.restore_ward(slot_level)
+                set_character(save, card)
+                ward_note = (
+                    f"　奥术守御：结界 {ward}/{card.ward_cap}"
+                    f"（{'新建' if fresh else f'回复 {2 * slot_level}'}）"
+                )
+            else:
+                ward_note = ""
         else:
             slot_note = "　（戏法，不消耗法术位）"
+            ward_note = ""
 
-        lines = [f"【{card.name}】施展 {spell_obj.label()}{slot_note}"]
+        lines = [f"【{card.name}】施展 {spell_obj.label()}{slot_note}{ward_note}"]
         if spell_obj.concentration:
             # 登记专注（5e 同时只能维持一个，新的会顶替旧的）
             _kept, conc_note = card.start_concentration(spell_obj)
@@ -2898,17 +2962,52 @@ class CastSpellTool(AgentTool):
                     f"治疗：{spell_obj.heal}——由你按效果裁决（可用 update_character 改生命值）。"
                 )
                 return warn + "\n".join(lines)
-            result = roll(expr)
-            amount = result.total + (casting_mod if add_mod else 0)
-            note = result.describe()
+            # 生命领域那三条（数据里有标记才生效）：骰子取满 / 每个目标 +2+环阶 /
+            # 治了别人自己也回 2+环阶。都是纯数字，最容易在念咒时漏掉。
+            life_bonus, life_self, life_max = heal_marks(card)
+            if life_max:
+                try:
+                    dice = parse_dice(expr)
+                    flat = dice.count * dice.faces + dice.modifier
+                except DiceError:
+                    flat = None
+                if flat is None:
+                    result = roll(expr)
+                    amount = result.total + (casting_mod if add_mod else 0)
+                    note = result.describe()
+                else:
+                    amount = flat + (casting_mod if add_mod else 0)
+                    note = f"{expr} 取满 = {flat}（极效治疗）"
+            else:
+                result = roll(expr)
+                amount = result.total + (casting_mod if add_mod else 0)
+                note = result.describe()
             if add_mod:
                 note += f" + 施法属性 {casting_mod:+d}"
+            # 生命门徒：只算**消耗法术位**的那次（戏法环阶为 0，不吃这条）
+            if life_bonus and slot_level > 0:
+                amount += 2 + slot_level
+                note += f" + 生命门徒 {2 + slot_level}"
             lines.append(f"治疗量 {amount}（{note}）")
             if not targets:
                 lines.append("没有指定目标，请在 target 里写治疗对象。")
                 return warn + "\n".join(lines)
             for item in targets:
                 lines.append("· " + _spell_heal(save, state, item, amount, temp=temp))
+            # 神佑医者：治的是别人，施法者自己也回一份
+            if (
+                life_self
+                and slot_level > 0
+                and any(not _is_self(item, card) for item in targets)
+            ):
+                healed = min(2 + slot_level, max(0, card.max_hp - card.hp))
+                if healed:
+                    card.current_hp = card.hp + healed
+                    set_character(save, card)
+                lines.append(
+                    f"神佑医者：{card.name} 也回复 {healed}"
+                    f"（剩 {card.hp}/{card.max_hp}）"
+                )
             return warn + "\n".join(lines)
 
         # —— 非战斗效果 ——
@@ -3217,6 +3316,11 @@ class RestTool(AgentTool):
                 was_down = card.is_downed
                 card.current_hp = None
                 card.temp_hp = 0
+                # 防护师结界：长休后消失（下次施展防护法术才能再建）
+                if card.ward or card.ward_cap:
+                    card.ward = 0
+                    card.ward_cap = 0
+                    notes.append("奥术守御结界消失（再施展防护法术时重建）")
                 # ⚠️ **2024 起长休恢复力竭不再要求进食饮水**（那是 2014 口径）：
                 # 完成长休就减 1 级。
                 # 减力竭排在挨饿判定**之前**——一天结束时的饥饿检定会把刚睡回来的

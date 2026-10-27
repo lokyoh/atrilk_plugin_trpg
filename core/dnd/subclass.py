@@ -7,8 +7,9 @@
 这里只留类型与查询函数。
 
 子职特性的效果文本是**给 DM 看的规则原文**；少数几条有明确数值、战斗里非记账不可的，
-数据里打了结算标记（``crit_at`` / ``superiority_die`` / ``raging_dice``），
-由 :mod:`.subclass_grants` 读取 —— 48 个子职里只有 3 个动了这几条，
+数据里打了结算标记（``crit_at`` 暴击阈值、``first_hit`` 每回合首次命中的额外伤害、
+``heal_*`` 治疗加成、子职层的 ``superiority`` 卓越骰成长表），
+由 :mod:`.subclass_grants` 读取 —— 48 个子职里只有 5 个动了这几条，
 其余仍由 DM 按 ``text`` 裁定（统一结算会算出大量例外）。
 """
 
@@ -23,6 +24,7 @@ __all__ = [
     "SUBCLASSES",
     "SUBCLASS_LEVEL",
     "SUBCLASS_MAP",
+    "FirstHit",
     "SubClass",
     "SubclassFeature",
     "get_subclass",
@@ -36,20 +38,55 @@ SUBCLASS_LEVEL = 3
 
 
 @dataclass(frozen=True, slots=True)
+class FirstHit:
+    """「每回合首次命中的额外伤害」标记（狂怒 / 神性之怒 / 哀惧灵袭同一套）。
+
+    - ``dice``：骰式，``"1d4"`` / ``"1d6"``；写 ``"rage"`` 是特例 ——
+      取该角色「狂暴伤害」加值个 d6（狂战士狂怒）；
+    - ``at``：按等级覆盖骰子（哀惧灵袭 11 级 1d4 → 1d6）；
+    - ``plus``：附加的固定值，``"level/2"`` = 职业等级的一半向下取整（神性之怒）；
+    - ``kind``：伤害类型（``同武器`` / ``心灵`` / ``光耀或暗蚀``）；
+    - ``needs``：触发前置，可选 ``rage``（狂暴中）、``reckless``（本回合鲁莽过）、
+      ``strength``（这一击用力量）、``melee``（近战）、``weapon``（用武器，徒手不算）。
+    """
+
+    dice: str = ""
+    at: dict[int, str] = field(default_factory=dict)
+    plus: str = ""
+    kind: str = ""
+    needs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SubclassFeature:
     """子职的一个特性（带解锁等级）。
 
-    后两个字段是**结算标记**（数据里可选，没有就按 0 / False）：
+    后半的字段是**结算标记**（数据里可选，没有就按 0 / False / None）：
 
     - ``crit_at``：攻击检定掷到几点即暴击（勇士 19 / 18；0 = 只在天然 20）；
-    - ``raging_dice``：狂怒 —— 狂暴中鲁莽攻击首次命中额外掷狂暴伤害个 d6。
+    - ``first_hit``：每回合首次命中的额外伤害（见 :class:`FirstHit`);
+    - ``heal_bonus`` / ``heal_self`` / ``heal_max``：生命领域那三条治疗加成；
+    - ``extra_attack``：子职给的**额外攻击**（一个攻击动作能打几次；勇气学院 6 级 2 次）；
+    - ``ward``：防护师「奥术守御」结界（有这条才在施放防护法术时建 / 回结界）；
+    - ``resist``：子职给的**常驻抗性**（战争领域 17 级：钝击 / 穿刺 / 挥砍）；
+    - ``death_save_advantage`` / ``death_save_at`` / ``bloodied_regen``：勇士 18 级
+      「生还者」三条（死亡豁免优势、掷到几点就算天然 20、浴血时回合开始回血）。
     """
 
     level: int
     name: str
     text: str = ""
     crit_at: int = 0
-    raging_dice: bool = False
+    first_hit: FirstHit | None = None
+    heal_bonus: bool = False
+    heal_self: bool = False
+    heal_max: bool = False
+    extra_attack: int = 0
+    ward: bool = False
+    resist: tuple[str, ...] = ()
+    death_save_advantage: bool = False
+    death_save_at: int = 0
+    bloodied_regen: bool = False
 
     def label(self) -> str:
         """「L3 狂怒」这样的短标签。"""
@@ -92,13 +129,47 @@ class SubClass:
         return "\n".join(f"L{f.level} {f.name}：{f.text}".rstrip("：") for f in pool)
 
 
+def _first_hit(raw: Any) -> FirstHit | None:
+    """``first_hit`` 块 → :class:`FirstHit`；没写就是 None。"""
+    if not isinstance(raw, dict):
+        return None
+    dice = str(raw.get("dice", "") or "")
+    if not dice:
+        return None
+    at: dict[int, str] = {}
+    for level, value in (raw.get("at") or {}).items():
+        try:
+            at[int(level)] = str(value)
+        except (TypeError, ValueError):
+            continue
+    needs = tuple(str(x).strip() for x in (raw.get("needs") or ()) if str(x).strip())
+    return FirstHit(
+        dice=dice,
+        at=at,
+        plus=str(raw.get("plus", "") or ""),
+        kind=str(raw.get("kind", "") or ""),
+        needs=needs,
+    )
+
+
 def _feature(row: dict[str, Any]) -> SubclassFeature:
     return SubclassFeature(
         level=int(row.get("level", 0)),
         name=str(row.get("name", "")),
         text=str(row.get("text", "")),
         crit_at=int(row.get("crit_at", 0) or 0),
-        raging_dice=bool(row.get("raging_dice", False)),
+        first_hit=_first_hit(row.get("first_hit")),
+        heal_bonus=bool(row.get("heal_bonus", False)),
+        heal_self=bool(row.get("heal_self", False)),
+        heal_max=bool(row.get("heal_max", False)),
+        extra_attack=int(row.get("extra_attack", 0) or 0),
+        ward=bool(row.get("ward", False)),
+        resist=tuple(
+            str(x).strip() for x in (row.get("resist") or ()) if str(x).strip()
+        ),
+        death_save_advantage=bool(row.get("death_save_advantage", False)),
+        death_save_at=int(row.get("death_save_at", 0) or 0),
+        bloodied_regen=bool(row.get("bloodied_regen", False)),
     )
 
 

@@ -97,7 +97,7 @@ from .save_store import (
     save_dir,
     set_character,
 )
-from .subclass_grants import has_raging_dice
+from .subclass_grants import first_hit, first_hit_dice
 from .tactics import (
     HIDE_DC,
     LIGHT_LEVELS,
@@ -1260,6 +1260,15 @@ def _walk(
                         other.regen_suppressed = False
             state.round = round_no
             combatant.reset_turn()
+            # 「英气风发」（勇士 18 级）：回合开始时浴血且还有血就回 5 + 体质
+            if card is not None:
+                gain = card.survivor_regen()
+                if gain > 0:
+                    set_character(save, card)
+                    state.pending.append(
+                        f"❤️ {card.name} 英气风发：回复 {gain}"
+                        f"（剩 {card.hp}/{card.max_hp}）"
+                    )
         return enemies, combatant
     return enemies, None
 
@@ -2148,6 +2157,10 @@ def apply_damage(
         incoming, res_note = card.apply_resistance(
             incoming, damage_type, magical=magical
         )
+        # 防护师「奥术守御」：结界在**抗性之后**替你吃伤害，结界空了才轮到生命值
+        ward_absorbed = card.ward_absorb(incoming)
+        if ward_absorbed:
+            incoming -= ward_absorbed
         before = card.hp
         card.current_hp = max(0, card.hp - incoming)
         notes = [f"{target.name} 剩余 {card.hp}/{card.max_hp}"]
@@ -2155,6 +2168,10 @@ def apply_damage(
             notes.append(f"临时生命吸收 {absorbed}")
         if res_note:
             notes.append(res_note)
+        if ward_absorbed:
+            notes.append(f"奥术守御吸收 {ward_absorbed}（结界剩 {card.ward}）")
+            if card.ward <= 0:
+                notes.append("结界耗尽（长休前无法再建，只能靠防护法术回血）")
         if before <= 0 and incoming > 0:
             # 已经倒地（濒危 / 稳定）又挨打：死亡豁免失败 +1（暴击 +2），达上限即死
             if incoming >= card.max_hp:
@@ -2713,7 +2730,15 @@ def do_superiority(
     )
 
 
-def _fury_extra(
+def _double_dice(expr: str) -> str:
+    """暴击时把**骰子个数**翻倍（固定加值不翻倍）：``2d6+3`` → ``4d6+3``。"""
+    match = re.match(r"^(\d+)d(\d+)(.*)$", str(expr or ""))
+    if not match:
+        return expr
+    return f"{int(match.group(1)) * 2}d{match.group(2)}{match.group(3)}"
+
+
+def _first_hit_extra(
     save: Save,
     state: CombatState,
     card: DndCharacter,
@@ -2724,29 +2749,49 @@ def _fury_extra(
     crit: bool,
     rng: Any = None,
 ) -> tuple[str, int]:
-    """狂战士「狂怒」的额外伤害：返回 ``(说明, 点数)``，不触发时给 ``("", 0)``。
+    """「每回合首次命中的额外伤害」：返回 ``(说明, 点数)``，不触发给 ``("", 0)``。
 
-    条件照原文：**狂暴中** + 本回合用了**鲁莽攻击** + **基于力量的攻击**
-    首次命中 + 每回合只一次 —— 四样缺一不可，所以判定都摆在这里，
-    调用点只看点数。
+    三条子职特性共用这一套（狂战士狂怒 / 狂热者神性之怒 / 妖精漫游者哀惧灵袭），
+    差别只在骰式与前置条件，都写在 :class:`~.subclass.FirstHit` 里 ——
+    判据全摆在这里，调用点只看点数。
+
+    **每回合只一次**：记在 ``attacker.fury_used`` 上，回合结束随 ``reset_turn`` 清。
     """
-    if attacker is None or not is_melee:
+    entry = first_hit(card)
+    if entry is None or attacker is None:
         return "", 0
-    if not card.raging or not attacker.reckless or attacker.fury_used:
+    mark, feat = entry
+    needs = set(mark.needs)
+    if "melee" in needs and not is_melee:
         return "", 0
-    if not has_raging_dice(card):
+    # 「用武器命中」——徒手打击不算武器（哀惧灵袭明写「用一把武器」）
+    if "weapon" in needs and weapon is None:
         return "", 0
-    if not card.uses_strength(weapon):
+    if "strength" in needs and not card.uses_strength(weapon):
         return "", 0
-    count = max(0, card.rage_damage)
-    if count <= 0:
+    if "rage" in needs and not card.raging:
         return "", 0
-    result = roll(f"{count * 2 if crit else count}d6", label="狂怒", rng=rng)
+    if "reckless" in needs and not attacker.reckless:
+        return "", 0
+    if attacker.fury_used:
+        return "", 0
+    expr = first_hit_dice(mark, card.level, rage_damage=card.rage_damage)
+    if not expr:
+        return "", 0
+    rolled = _double_dice(expr) if crit else expr
+    result = roll(rolled, label=feat.name, rng=rng)
     attacker.fury_used = True
     save_combat(save, state)
     tail = "（暴击，骰数翻倍）" if crit else ""
+    kind = str(mark.kind or "").strip()
+    # 类型由玩家选的那种要提醒一句，否则 DM 会默认成引擎挑的那个
+    kind_text = {
+        "同武器": "（伤害类型同武器）",
+        "光耀或暗蚀": "（光耀 / 暗蚀由你选）",
+        "心灵": "（心灵伤害）",
+    }.get(kind, f"（{kind}）" if kind else "")
     return (
-        f"狂怒：狂暴伤害 +{count} 个 d6{tail} → 额外 {result.describe()} = {result.total}",
+        f"{feat.name}：{rolled}{kind_text}{tail} → 额外 {result.describe()} = {result.total}",
         max(0, result.total),
     )
 
@@ -3239,7 +3284,7 @@ def attack(
     else:
         crit_text = f"（暴击：掷出 {result.natural}，暴击阈值 {crit_at}，伤害骰翻倍）"
     lines.append(f"命中 {target.name}！{detail}{crit_text}")
-    fury_note, fury_bonus = _fury_extra(
+    fury_note, fury_bonus = _first_hit_extra(
         save, state, card, attacker, weapon, is_melee=is_melee, crit=crit, rng=rng
     )
     if fury_bonus > 0:
