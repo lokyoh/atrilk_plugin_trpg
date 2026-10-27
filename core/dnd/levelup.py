@@ -77,7 +77,17 @@ def start_session(
     会话复用建卡的存储与续接管线（``sessions/<user_id>.json`` + 常驻响应器），
     从第一个待办步骤开始：中间不需要的步骤由 :meth:`CreationSession.advance`
     自动跳过；全部答完后按建卡的收尾逻辑写回角色卡（有存档写回存档）。
+
+    ⚠️ **兼职卡不自动开会话**：这套管线假定「一个职业一条法术数量曲线」，
+    兼职时子职 / 新法术该按**这次升级的那个职业**算，会话里没有这个上下文，
+    硬问会把另一职业的数字套上去。兼职卡的这三件事由 DM 用 ``update_character``
+    的「子职 职业:子职名」/「资源」/「法术」逐项落盘（返回一句提示）。
     """
+    if getattr(card, "is_multiclass", False):
+        return (
+            "（兼职卡不自动开升级选择会话：子职用 update_character 的"
+            "「子职 职业:子职名」，属性加点与这一级的新法术也请用 update_character 补。）"
+        )
     session = _session_for(card, from_level)
     todo = [step for step in _ORDER if session.levelup_step_needed(step)]
     if not todo:

@@ -97,7 +97,7 @@ from .save_store import (
     save_dir,
     set_character,
 )
-from .subclass_grants import first_hit, first_hit_dice
+from .subclass_grants import first_hit_dice, first_hit_entry, initiative_advantage
 from .tactics import (
     HIDE_DC,
     LIGHT_LEVELS,
@@ -1589,7 +1589,7 @@ def start_combat(
         if card is None:
             continue
         player_name = card.name or str(user_id)
-        # 2024：遭突袭者先攻检定劣势
+        # 2024：遭突袭者先攻检定劣势；子职给的先攻优势（勇士 / 刺客）与之抵消
         init_adv = (
             Advantage.DISADVANTAGE
             if _is_surprised(
@@ -1597,6 +1597,8 @@ def start_combat(
             )
             else Advantage.NORMAL
         )
+        if initiative_advantage(card):
+            init_adv = combine_advantage(init_adv, Advantage.ADVANTAGE)
         order.append(
             Combatant(
                 cid=str(user_id),
@@ -2124,6 +2126,7 @@ def apply_damage(
     magical: bool = False,
     burst: bool = False,
     knock_out: bool = False,
+    spell: bool = False,
     rng: Any = None,
 ) -> str:
     """对参战者造成伤害并落盘。
@@ -2142,6 +2145,7 @@ def apply_damage(
         时无限递归（自爆不再触发自爆）。
     :param knock_out: **击晕**（PHB 2024）：这次伤害若会把目标打到 0 血，
         改为留 1 点生命并陷入昏迷。只有**近战**能做到——调用方负责校验。
+    :param spell: 这次伤害是不是**法术**造成的（防护师 14 级的法术抗性认它）。
     """
     amount = max(0, int(amount))
     if target.kind == "player":
@@ -2157,6 +2161,11 @@ def apply_damage(
         incoming, res_note = card.apply_resistance(
             incoming, damage_type, magical=magical
         )
+        # 防护师 14 级「法术抗性」：法术造成的伤害减半（来源减免，不是类型减免）
+        if spell:
+            incoming, spell_note = card.resist_spell_damage(incoming)
+        else:
+            spell_note = ""
         # 防护师「奥术守御」：结界在**抗性之后**替你吃伤害，结界空了才轮到生命值
         ward_absorbed = card.ward_absorb(incoming)
         if ward_absorbed:
@@ -2168,6 +2177,8 @@ def apply_damage(
             notes.append(f"临时生命吸收 {absorbed}")
         if res_note:
             notes.append(res_note)
+        if spell_note:
+            notes.append(spell_note)
         if ward_absorbed:
             notes.append(f"奥术守御吸收 {ward_absorbed}（结界剩 {card.ward}）")
             if card.ward <= 0:
@@ -2757,10 +2768,10 @@ def _first_hit_extra(
 
     **每回合只一次**：记在 ``attacker.fury_used`` 上，回合结束随 ``reset_turn`` 清。
     """
-    entry = first_hit(card)
+    entry = first_hit_entry(card)
     if entry is None or attacker is None:
         return "", 0
-    mark, feat = entry
+    mark, feat, class_level = entry
     needs = set(mark.needs)
     if "melee" in needs and not is_melee:
         return "", 0
@@ -2775,7 +2786,7 @@ def _first_hit_extra(
         return "", 0
     if attacker.fury_used:
         return "", 0
-    expr = first_hit_dice(mark, card.level, rage_damage=card.rage_damage)
+    expr = first_hit_dice(mark, class_level, rage_damage=card.rage_damage)
     if not expr:
         return "", 0
     rolled = _double_dice(expr) if crit else expr

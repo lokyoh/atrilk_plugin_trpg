@@ -744,6 +744,11 @@ class CreationSession:
     profession: str = ""
     #: 子职内部键（3 级以上开卡必选，见 :mod:`.subclass`）
     subclass: str = ""
+    #: **兼职**：每一级所属的职业键（下标 0 = 1 级）。空 = 单职业，
+    #: 改卡 / 升级会话要原样搬回去，否则一次改卡就把兼职抹成单职业。
+    level_classes: list[str] = field(default_factory=list)
+    #: 每个职业各自的子职（职业键 → 子职键），同上
+    subclasses: dict[str, str] = field(default_factory=dict)
     background: str = ""
     skills: list[str] = field(default_factory=list)
     equipment_package: str = ""
@@ -799,6 +804,8 @@ class CreationSession:
             "subrace": self.subrace,
             "profession": self.profession,
             "subclass": self.subclass,
+            "level_classes": list(self.level_classes),
+            "subclasses": dict(self.subclasses),
             "background": self.background,
             "skills": list(self.skills),
             "equipment_package": self.equipment_package,
@@ -854,6 +861,10 @@ class CreationSession:
             subrace=data.get("subrace", ""),
             profession=data.get("profession", ""),
             subclass=data.get("subclass", ""),
+            level_classes=list(data.get("level_classes", [])),
+            subclasses={
+                str(k): str(v) for k, v in data.get("subclasses", {}).items()
+            },
             background=data.get("background", ""),
             skills=list(data.get("skills", [])),
             equipment_package=data.get("equipment_package", ""),
@@ -2248,6 +2259,9 @@ def session_from_card(card: DndCharacter) -> CreationSession:
     session.subrace = card.subrace
     session.profession = card.profession
     session.subclass = card.subclass
+    # 兼职构成与各职业的子职：改卡时原样搬回去（不搬就等于把兼职抹掉）
+    session.level_classes = list(card.level_classes)
+    session.subclasses = dict(card.subclasses)
     session.background = card.background
     session.feature_choices = dict(card.feature_choices)
     session.expertise = list(card.expertise)
@@ -2347,6 +2361,11 @@ def build_character(session: CreationSession) -> DndCharacter:
         alignment=session.alignment,
         money=money,
     )
+    # 兼职：等级序列与各职业子职原样写回（单职业卡两个字段都是空的）
+    card.level_classes = list(session.level_classes)
+    card.subclasses = dict(session.subclasses)
+    if card.subclasses and card.profession in card.subclasses:
+        card.subclass = card.subclasses[card.profession]
     # 经验 / 准备列表：**从卡还原的会话（改卡 / 升级）按卡上原样写回**。
     # 新建卡才用「刚好达到该等级」的阈值打底——用阈值覆盖已有卡会吃掉玩家
     # 攒的超额经验；同理，按建卡规则重推准备列表会覆盖 DM 定好的名单。

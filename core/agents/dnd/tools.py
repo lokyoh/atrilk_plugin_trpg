@@ -99,6 +99,7 @@ from ...dnd.memory import (
 from ...dnd.monster_index import index_text
 from ...dnd.monster_rules import rules_of, save_advantage
 from ...dnd.monsters import MONSTERS, get_monster, monster_names
+from ...dnd.multiclass import advance, hit_die_for_level
 from ...dnd.npcs import (
     NPC_KEY_PREFIX,
     NPC_TIERS,
@@ -154,8 +155,13 @@ from ...dnd.spells import (
     spells_of_level,
 )
 from ...dnd.storage import load_card, save_card
-from ...dnd.subclass import SUBCLASS_LEVEL, get_subclass, subclass_choices
-from ...dnd.subclass_grants import heal_marks
+from ...dnd.subclass import (
+    SUBCLASS_LEVEL,
+    get_subclass,
+    resolve_subclass,
+    subclass_choices,
+)
+from ...dnd.subclass_grants import heal_marks, spell_defense
 from ...dnd.world_store import (
     DOC_KIND_LABELS,
     DOC_KINDS,
@@ -1285,6 +1291,7 @@ class UpdateCharacterTool(AgentTool):
             "level / name / notes / features / tags / spells / equipment / "
             "inspiration（英雄激励，至多 1 个）/ attune（同调）/ "
             "准备（准备制职业的今日法术表）/ 掷血（升级掷生命骰）/ "
+            "兼职（新职业加等级，写「法师=3」设到该级）/ 子职（写「职业:子职」）/ "
             "资源（狂暴·回气·功力·术法点…的手工增减）",
         ),
         ToolArg(
@@ -1451,6 +1458,14 @@ class UpdateCharacterTool(AgentTool):
             before = card.level
             target = max(1, _parse_int(text, card.level))
             card.level = min(MAX_LEVEL, target)
+            # 兼职卡：等级序列跟着伸缩（降级砍尾、升级补在主职业上；要换职业用「兼职」）
+            if card.level_classes:
+                order = list(card.level_classes)
+                if len(order) > card.level:
+                    order = order[: card.level]
+                else:
+                    order.extend([card.profession] * (card.level - len(order)))
+                card.level_classes = order
             floor = LEVEL_XP_THRESHOLDS[min(card.level, MAX_LEVEL) - 1]
             if card.level < before:
                 # 降级时把经验一起下调，否则会出现「3 级但 50000 经验」的自相矛盾
@@ -1481,12 +1496,89 @@ class UpdateCharacterTool(AgentTool):
             )
             if tip:
                 message += "\n" + tip
+        elif field in {"兼职", "multiclass", "副职业"}:
+            # 兼职（PHB 2024）：给一个新职业加等级。写法：
+            #   兼职 法师        → 法师 +1 级
+            #   兼职 法师=3      → 法师**设到** 3 级（只补差额，不是再加 3 级）
+            name, _, count = text.partition("=")
+            wanted = _parse_int(count, 1) if count.strip() else 0
+            profession_text = name.strip()
+            if not profession_text:
+                message = (
+                    f"【{card.name}】现在 {card.class_text}；要兼职请写「兼职 职业名」"
+                    "（可写「兼职 法师=3」直接设到某级）"
+                )
+            else:
+                cls = None
+                try:
+                    cls = get_class(profession_text)
+                except KeyError:
+                    message = f"没有这个职业：{profession_text}"
+                if cls is not None:
+                    existing = card.class_level(cls.key)
+                    # 「=N」是目标等级：只补差额（重复发同一条指令不会翻倍涨级）
+                    delta = (wanted - existing) if wanted > 0 else 1
+                    if delta <= 0:
+                        message = (
+                            f"{cls.cn} 已经是 {existing} 级了（总等级 Lv.{card.level}）。"
+                            "要降级请用「等级」字段改总等级。"
+                        )
+                    else:
+                        before = card.level
+                        message = advance(card, cls.key, levels=delta)
+                        if card.level != before:
+                            # 升级要给玩家开选择会话（子职 / 加点 / 新法术）
+                            tip = start_levelup_session(
+                                card,
+                                save.save_id if save is not None else "",
+                                from_level=before,
+                            )
+                            if tip:
+                                message += "\n" + tip
+        elif field in {"子职", "subclass", "subclass_set"}:
+            # 兼职卡每个职业各有一个子职：写法「法师:防护师」；单职业直接写子职名
+            who, sep, sub_text = text.partition(":")
+            if not sep:
+                who, sep, sub_text = text.partition("：")
+            if not sep:
+                who, sub_text = "", text
+            prof = who.strip()
+            sub = resolve_subclass(sub_text.strip()) if sub_text.strip() else None
+            if sub is None:
+                message = (
+                    f"没认出子职「{sub_text.strip()}」，可用 /跑团.查 子职 看全表"
+                    if sub_text.strip()
+                    else "要清空子职请写「子职 清空」"
+                )
+            else:
+                target = prof or card.profession
+                cls = None
+                try:
+                    cls = get_class(target)
+                except KeyError:
+                    message = f"没有这个职业：{target}"
+                if cls is not None:
+                    if sub.profession != cls.key:
+                        message = (
+                            f"{sub.cn} 是 {get_class(sub.profession).cn} 的子职，"
+                            f"不能挂在 {cls.cn} 上"
+                        )
+                    elif card.class_level(cls.key) < SUBCLASS_LEVEL:
+                        message = (
+                            f"{cls.cn} 才 {card.class_level(cls.key)} 级，"
+                            f"到 {SUBCLASS_LEVEL} 级才有子职"
+                        )
+                    else:
+                        card.subclasses = {**card.subclasses, cls.key: sub.key}
+                        if cls.key == card.profession:
+                            card.subclass = sub.key
+                        message = f"{cls.cn} 的子职设为「{sub.cn}」"
         elif field in {"掷血", "掷生命骰", "hp_roll", "生命骰"}:
             # B9：升级不必取平均值 —— 掷一次生命骰，结果记在卡上（按等级）
             target_level = max(2, _parse_int(text, card.level))
             before = card.max_hp
+            die = hit_die_for_level(card, target_level)
             rolled, gain = card.roll_hit_die(target_level)
-            die = int(getattr(card.profession_obj, "hit_die", 8) or 8)
             message = (
                 f"Lv.{target_level} 掷生命骰 1d{die} → {rolled}，该级生命 +{gain}"
                 f"（生命上限 {before} → {card.max_hp}）"
@@ -1613,7 +1705,7 @@ class UpdateCharacterTool(AgentTool):
             return (
                 "不支持的字段，可用：hp / temp_hp / conditions / concentrating / "
                 "死亡豁免 / exhaustion / exp / level / name / notes / features / "
-                "掷血（掷生命骰）/ tags / spells / equipment / "
+                "掷血（掷生命骰）/ tags / spells / equipment / 兼职 / 子职 / "
                 "inspiration（英雄激励）/ attune（同调）"
             )
 
@@ -2651,12 +2743,27 @@ def _target_save(
     # 掩护（PHB 2024 掩护表）：半掩护 / 四分之三掩护给**敏捷豁免** +2 / +5，
     # 目标躲在掩体后吐息 / 火球都吃得到；没有棋盘或没位置时恒为 0。
     cover = cover_bonus(state, target) if state is not None and ability == "dex" else 0
+    # 防护师 14 级：抵抗**法术**的豁免有优势（``magical`` 为真才是法术 / 魔法效应）
     if isinstance(target, DndCharacter):
-        return target.check_save(ability, dc, cover=cover)
+        save_adv, _resist = spell_defense(target)
+        return target.check_save(
+            ability,
+            dc,
+            cover=cover,
+            advantage=Advantage.ADVANTAGE if (magical and save_adv) else Advantage.NORMAL,
+        )
     if getattr(target, "kind", "") == "player":
         card = get_character(save, target.cid)
         if card is not None:
-            return card.check_save(ability, dc, cover=cover)
+            save_adv, _resist = spell_defense(card)
+            return card.check_save(
+                ability,
+                dc,
+                cover=cover,
+                advantage=(
+                    Advantage.ADVANTAGE if (magical and save_adv) else Advantage.NORMAL
+                ),
+            )
     conds = combatant_conditions(save, target)
     effect = merge_effects(conds)
     monster = resolve_monster(target.monster)
@@ -2741,7 +2848,8 @@ def _spell_damage(
     """对目标结算法术伤害（玩家写回角色卡，战斗外用角色卡）。
 
     与战斗内伤害保持同一套规则：临时生命 → 抗性 / 免疫 / 易伤 → 扣血 →
-    0 血倒地昏迷 → 受伤后掷专注维持豁免。
+    0 血倒地昏迷 → 受伤后掷专注维持豁免。这里的伤害**一律算法术来源**
+    （防护师 14 级的「法术抗性」认这个标记）。
     """
     amount = max(0, int(amount))
     if isinstance(target, DndCharacter):
@@ -2749,6 +2857,8 @@ def _spell_damage(
         target.temp_hp -= absorbed
         incoming = amount - absorbed
         incoming, res_note = target.apply_resistance(incoming, damage_type)
+        # 防护师 14 级「法术抗性」：类型抗性之后再按「来源」减半
+        incoming, spell_note = target.resist_spell_damage(incoming)
         before = target.hp
         target.current_hp = max(0, target.hp - incoming)
         note = f"{target.name} 剩余 {target.hp}/{target.max_hp}"
@@ -2756,6 +2866,8 @@ def _spell_damage(
             note += f"（临时生命吸收 {absorbed}）"
         if res_note:
             note += f"（{res_note}）"
+        if spell_note:
+            note += f"（{spell_note}）"
         if before <= 0 and incoming > 0:
             note += "（" + target.add_death_failure(2 if crit else 1) + "）"
         elif target.hp <= 0:
@@ -2770,7 +2882,7 @@ def _spell_damage(
         set_character(save, target)
         return note + "。"
     return combat_damage(
-        save, state, target, amount, damage_type=damage_type, crit=crit
+        save, state, target, amount, damage_type=damage_type, crit=crit, spell=True
     )
 
 
@@ -2950,7 +3062,9 @@ class CastSpellTool(AgentTool):
         if unknown:
             lines.append("（没找到这些目标：" + "、".join(unknown) + "）")
 
-        casting_mod = card.modifier(card.casting_ability) if card.casting_ability else 0
+        # 兼职时法术按**所属职业**的施法属性算（4 级游侠 / 3 级术士：游侠法术用感知）
+        spell_ability = card.casting_ability_for(spell_obj) or card.casting_ability
+        casting_mod = card.modifier(spell_ability) if spell_ability else 0
 
         # —— 治疗类 ——
         if spell_obj.heal and not spell_obj.damage and not spell_obj.attack:
@@ -3065,7 +3179,7 @@ class CastSpellTool(AgentTool):
 
         # —— 法术攻击 ——
         if spell_obj.attack:
-            lines.append(f"法术攻击 {card.spell_attack_bonus:+d}")
+            lines.append(f"法术攻击 {card.spell_attack_bonus_for(spell_obj):+d}")
             # 戏法按**角色等级**成长（PHB 两版相同：17 级的火焰箭是 4d10）
             damage_expr = spell_obj.damage_expr(
                 casting_mod, level=card.level, slot_level=slot_level
@@ -3094,6 +3208,7 @@ class CastSpellTool(AgentTool):
                     ac,
                     label=f"{spell_obj.cn}攻击",
                     advantage=adv,
+                    bonus=card.spell_attack_bonus_for(spell_obj),
                 )
                 lines.append(f"· {_target_name(item)}：{result.describe()}（AC {ac}）")
                 if t_reason:
@@ -3147,7 +3262,7 @@ class CastSpellTool(AgentTool):
             return warn + "\n".join(lines)
 
         # —— 目标豁免 ——
-        dc = card.spell_save_dc
+        dc = card.spell_save_dc_for(spell_obj)
         lines.append(f"法术豁免 DC {dc}（{spell_obj.save_text}）")
         damage = 0
         detail = ""

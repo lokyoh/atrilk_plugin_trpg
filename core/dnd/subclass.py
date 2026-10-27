@@ -70,7 +70,10 @@ class SubclassFeature:
     - ``ward``：防护师「奥术守御」结界（有这条才在施放防护法术时建 / 回结界）；
     - ``resist``：子职给的**常驻抗性**（战争领域 17 级：钝击 / 穿刺 / 挥砍）；
     - ``death_save_advantage`` / ``death_save_at`` / ``bloodied_regen``：勇士 18 级
-      「生还者」三条（死亡豁免优势、掷到几点就算天然 20、浴血时回合开始回血）。
+      「生还者」三条（死亡豁免优势、掷到几点就算天然 20、浴血时回合开始回血）；
+    - ``initiative_advantage``：先攻掷骰有优势（勇士 L3 运动健将、刺客 L3 暗杀）；
+    - ``spell_save_advantage`` / ``spell_resistance``：防护师 14 级「法术抗性」
+      两条（对抗法术的豁免有优势、法术造成的伤害减半）。
     """
 
     level: int
@@ -87,6 +90,9 @@ class SubclassFeature:
     death_save_advantage: bool = False
     death_save_at: int = 0
     bloodied_regen: bool = False
+    initiative_advantage: bool = False
+    spell_save_advantage: bool = False
+    spell_resistance: bool = False
 
     def label(self) -> str:
         """「L3 狂怒」这样的短标签。"""
@@ -170,6 +176,9 @@ def _feature(row: dict[str, Any]) -> SubclassFeature:
         death_save_advantage=bool(row.get("death_save_advantage", False)),
         death_save_at=int(row.get("death_save_at", 0) or 0),
         bloodied_regen=bool(row.get("bloodied_regen", False)),
+        initiative_advantage=bool(row.get("initiative_advantage", False)),
+        spell_save_advantage=bool(row.get("spell_save_advantage", False)),
+        spell_resistance=bool(row.get("spell_resistance", False)),
     )
 
 

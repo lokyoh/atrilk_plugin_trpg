@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .multiclass import advance
 from .spell_progression import cantrips_at, picks_at, spellbook_at
 
 __all__ = [
@@ -32,6 +33,7 @@ __all__ = [
     "MAX_LEVEL",
     "asi_levels_for",
     "can_level_up",
+    "card_is_multiclass",
     "level_for_xp",
     "level_up",
     "next_level_threshold",
@@ -172,16 +174,20 @@ def can_level_up(card: Any) -> bool:
     return int(getattr(card, "exp", 0) or 0) >= threshold
 
 
-def level_up(card: Any) -> str:
+def level_up(card: Any, into: str = "") -> str:
     """把角色卡升一级并返回给 DM 看的说明文本。
+
+    :param into: 这一级加在**哪个职业**（职业键 / 中文名）。留空 = 主职业。
+        兼职时由 DM 指定（``update_character`` 的「兼职」或升级选择里挑）；
+        加进新职业会先过兼职先决（见 :mod:`.multiclass`）。
 
     规则要点：
 
     - 等级 +1；**生命上限**由 :attr:`DndCharacter.max_hp` 按新等级自动重算
-      （1 级取生命骰最大值，之后每级取生命骰平均值 + 体质调整值）；
+      （1 级取生命骰最大值，之后每级取**那一级所属职业**的生命骰平均值 + 体质调整值）；
       **当前生命值不变**（升级不回血）。
-    - 熟练加值、法术位上限都按等级自动重算，无需额外处理。
-    - **属性提升（ASI）**按职业给等级（战士 6 / 14、游荡者 10 额外有一次）；
+    - 熟练加值、法术位上限都按**总等级**自动重算，无需额外处理。
+    - **属性提升（ASI）**按**该职业**的等级给（战士 6 / 14、游荡者 10 额外有一次）；
       **19 级是传奇恩惠**，两者都只在提示里点出来，具体选择由 DM 裁决。
     """
     level = int(getattr(card, "level", 1) or 1)
@@ -197,11 +203,29 @@ def level_up(card: Any) -> str:
         return f"经验不足，还差 {need} XP 才能升到 {level + 1} 级。"
 
     old_max = int(getattr(card, "max_hp", 0) or 0)
-    card.level = level + 1
+    into_key = str(into or "").strip()
+    if not into_key and card_is_multiclass(card):
+        # 兼职卡没有指定职业：默认加在**等级最高**的那个（并列取起始职业），
+        # 并在下面把「要改加别的职业怎么做」写清楚——引擎不替玩家做这个决定。
+        levels = getattr(card, "class_levels", {}) or {}
+        into_key = max(levels, key=lambda key: (levels[key], key == card.profession))
+    profession = into_key or str(getattr(card, "profession", "") or "")
+    explicit = bool(into_key) or card_is_multiclass(card) or bool(
+        getattr(card, "level_classes", None)
+    )
+    if explicit and profession:
+        # 兼职：往指定职业上记一级（改的是序列，总等级跟着走）
+        note = advance(card, profession)
+        if note.startswith(("兼职先决", "没有这个职业")) or "加不进去" in note:
+            return note
+        card.level = len(card.level_classes)
+    else:
+        card.level = level + 1
     new_max = int(getattr(card, "max_hp", 0) or 0)
     # 当前生命值不因升级而增加（5e 规则：升级不回血）；未记录时视为满血。
     lines = [
-        f"【{getattr(card, 'name', '') or '角色'}】升级！Lv.{level} → Lv.{card.level}",
+        f"【{getattr(card, 'name', '') or '角色'}】升级！Lv.{level} → Lv.{card.level}"
+        + (f"（{card.class_text}）" if card_is_multiclass(card) else ""),
         f"生命上限 {old_max} → {new_max}（当前生命不变）",
         f"熟练加值 +{getattr(card, 'proficiency', 0)}",
     ]
@@ -209,9 +233,15 @@ def level_up(card: Any) -> str:
     lines.append(
         "（想掷生命骰而不是取平均：用 update_character 的「掷血」字段给这一级掷一次。）"
     )
-    if card.level in asi_levels_for(getattr(card, "profession", "")):
+    if card_is_multiclass(card):
         lines.append(
-            f"Lv.{card.level} 可以选择属性提升（+2 点属性，或换成一项专长）——"
+            f"兼职卡：这一级记在 {profession}（等级最高的职业）。要改加到别的职业就先 "
+            "update_character 的「level」把等级减回 1 级，再用「兼职 职业名」加回去。"
+        )
+    class_level_now = card.class_level(profession) if profession else card.level
+    if class_level_now in asi_levels_for(profession):
+        lines.append(
+            f"Lv.{class_level_now} 可以选择属性提升（+2 点属性，或换成一项专长）——"
             "请 DM 询问玩家的选择后再用 update_character 落盘。"
         )
     elif card.level == EPIC_BOON_LEVEL:
@@ -226,10 +256,16 @@ def level_up(card: Any) -> str:
     )
     # 法术数量随等级涨（2024 职业表）：升级文本里直接算出「这一级该多几道」，
     # 免得 DM 每次都要翻表——引擎不替玩家挑，只把差额报出来。
-    gain = spell_gain_text(getattr(card, "profession", ""), card.level)
+    gain = spell_gain_text(profession, class_level_now)
     if gain:
         lines.append(gain)
     return "\n".join(lines)
+
+
+def card_is_multiclass(card: Any) -> bool:
+    """是不是兼职卡（不 import card，避免循环依赖）。"""
+    levels = getattr(card, "class_levels", None)
+    return isinstance(levels, dict) and len(levels) > 1
 
 
 def spell_gain_text(profession: str, level: int) -> str:

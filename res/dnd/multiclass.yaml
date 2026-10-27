@@ -1,0 +1,40 @@
+# 兼职：进入每个新职业能拿到的熟练（PHB 2024 各职业「作为兼职角色」块）。
+# 与 classes.yaml 一样用**中文名**，因为这些东西最后是写成角色卡上的文本。
+#
+# armor: 护甲 / 盾牌类别名（轻甲 / 中甲 / 重甲 / 盾牌）
+# weapons: 武器类别（简易武器 / 军用武器）
+# skills: 数字 = 从该职业的**技能池**里再选几个（具体选哪项由 DM / 玩家定）
+# tools: 直接给的工具名（吟游诗人的乐器按「任意乐器」记一条，具体乐器由玩家挑）
+#
+# 没有列出的职业（武僧 / 术士 / 法师）兼职时**不额外给熟练**，但条目仍保留，
+# 免得「表里缺一行」被当成漏数据。
+- key: barbarian
+  armor: [盾牌]
+  weapons: [军用武器]
+- key: bard
+  armor: [轻甲]
+  skills: 1
+  tools: [任意乐器]
+- key: cleric
+  armor: [轻甲, 中甲, 盾牌]
+- key: druid
+  armor: [轻甲, 盾牌]
+- key: fighter
+  armor: [轻甲, 中甲, 盾牌]
+  weapons: [军用武器]
+- key: monk
+- key: paladin
+  armor: [轻甲, 中甲, 盾牌]
+  weapons: [军用武器]
+- key: ranger
+  armor: [轻甲, 中甲, 盾牌]
+  weapons: [军用武器]
+  skills: 1
+- key: rogue
+  armor: [轻甲]
+  skills: 1
+  tools: [盗贼工具]
+- key: sorcerer
+- key: warlock
+  armor: [轻甲]
+- key: wizard

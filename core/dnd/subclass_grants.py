@@ -32,8 +32,11 @@ __all__ = [
     "features_of",
     "first_hit",
     "first_hit_dice",
+    "first_hit_entry",
     "has_raging_dice",
     "heal_marks",
+    "initiative_advantage",
+    "spell_defense",
     "subclass_extra_attack",
     "subclass_resistances",
     "subclass_spendable",
@@ -50,12 +53,34 @@ def _subclass_of(card: Any) -> Any:
     return resolve_subclass(key) if key else None
 
 
+def _subclass_pairs(card: Any) -> list[tuple[Any, int]]:
+    """``[(子职, 该职业的等级)]`` —— 兼职时每个职业各算各的。"""
+    levels = getattr(card, "class_levels", None)
+    if not isinstance(levels, dict) or not levels:
+        sub = _subclass_of(card)
+        return [(sub, int(getattr(card, "level", 0) or 0))] if sub else []
+    pairs: list[tuple[Any, int]] = []
+    for profession, level in levels.items():
+        key = ""
+        if hasattr(card, "subclass_for"):
+            key = str(card.subclass_for(profession) or "")
+        if not key and profession == str(getattr(card, "profession", "") or ""):
+            key = str(getattr(card, "subclass", "") or "")
+        sub = resolve_subclass(key) if key else None
+        if sub is not None:
+            pairs.append((sub, int(level)))
+    return pairs
+
+
 def features_of(card: Any) -> tuple[SubclassFeature, ...]:
-    """角色卡当前**已解锁**的子职特性（没有子职 / 认不出子职 → 空元组）。"""
-    sub = _subclass_of(card)
-    if sub is None:
-        return ()
-    return sub.features_up_to(int(getattr(card, "level", 0) or 0))
+    """角色卡当前**已解锁**的子职特性（没有子职 / 认不出子职 → 空元组）。
+
+    兼职时合并**每个职业各自的子职**，各按自己职业的等级解锁。
+    """
+    out: list[SubclassFeature] = []
+    for sub, level in _subclass_pairs(card):
+        out.extend(sub.features_up_to(level))
+    return tuple(out)
 
 
 def crit_threshold(card: Any) -> int:
@@ -75,12 +100,12 @@ def superiority(card: Any) -> tuple[int, int]:
     """卓越骰 ``(个数, 骰面)``；没有这个子职特性返回 ``(0, 0)``。
 
     数值来自子职的成长表（:attr:`SubClass.superiority`）：战斗大师 3 级 4d8、
-    7 级 5 枚、10 级 d10、15 级 6 枚、18 级 d12。
+    7 级 5 枚、10 级 d10、15 级 6 枚、18 级 d12。兼职时按**战斗大师那个职业**的等级。
     """
-    sub = _subclass_of(card)
-    if sub is None:
-        return 0, 0
-    return sub.superiority_at(int(getattr(card, "level", 0) or 0))
+    for sub, level in _subclass_pairs(card):
+        if sub.superiority:
+            return sub.superiority_at(level)
+    return 0, 0
 
 
 def has_raging_dice(card: Any) -> bool:
@@ -93,19 +118,28 @@ def has_raging_dice(card: Any) -> bool:
     return bool(entry and "reckless" in entry[0].needs)
 
 
-def first_hit(card: Any) -> tuple[FirstHit, SubclassFeature] | None:
-    """「每回合首次命中的额外伤害」``(标记, 特性)``；没有返回 None。
+def first_hit_entry(card: Any) -> tuple[FirstHit, SubclassFeature, int] | None:
+    """「每回合首次命中的额外伤害」``(标记, 特性, 该职业的等级)``；没有返回 None。
 
     多条同时生效时取**等级最高**的那条（同一子职不会给两条，但等级覆盖靠它）。
+    第三个返回值是**子职所属职业的等级** —— 兼职时骰式要按它算（狂战士 5 级的
+    「2 个狂暴骰」不能拿总等级去套）。
     """
-    best: tuple[int, FirstHit, SubclassFeature] | None = None
-    for feat in features_of(card):
-        mark = feat.first_hit
-        if mark is None:
-            continue
-        if best is None or feat.level >= best[0]:
-            best = (feat.level, mark, feat)
-    return (best[1], best[2]) if best else None
+    best: tuple[int, FirstHit, SubclassFeature, int] | None = None
+    for sub, class_level in _subclass_pairs(card):
+        for feat in sub.features_up_to(class_level):
+            mark = feat.first_hit
+            if mark is None:
+                continue
+            if best is None or feat.level >= best[0]:
+                best = (feat.level, mark, feat, int(class_level))
+    return (best[1], best[2], best[3]) if best else None
+
+
+def first_hit(card: Any) -> tuple[FirstHit, SubclassFeature] | None:
+    """「每回合首次命中的额外伤害」``(标记, 特性)``；没有返回 None。"""
+    entry = first_hit_entry(card)
+    return (entry[0], entry[1]) if entry else None
 
 
 def first_hit_dice(mark: FirstHit, level: int, *, rage_damage: int = 0) -> str:
@@ -170,6 +204,20 @@ def death_save_marks(card: Any) -> tuple[bool, int]:
 def bloodied_regen(card: Any) -> bool:
     """有没有「英气风发」：回合开始时若**浴血**且还有血，回 `5 + 体质`。"""
     return any(bool(feat.bloodied_regen) for feat in features_of(card))
+
+
+def initiative_advantage(card: Any) -> bool:
+    """先攻掷骰有没有优势（勇士 L3 运动健将、刺客 L3 暗杀的「先攻」那条）。"""
+    return any(bool(feat.initiative_advantage) for feat in features_of(card))
+
+
+def spell_defense(card: Any) -> tuple[bool, bool]:
+    """防护师 14 级「法术抗性」：``(对抗法术的豁免有优势, 法术伤害减半)``。"""
+    save_adv = resist = False
+    for feat in features_of(card):
+        save_adv = save_adv or bool(feat.spell_save_advantage)
+        resist = resist or bool(feat.spell_resistance)
+    return save_adv, resist
 
 
 def ward_granted(card: Any) -> bool:

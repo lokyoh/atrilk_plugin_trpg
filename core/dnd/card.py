@@ -68,6 +68,27 @@ from .equipment import (
 )
 from .feats import Feat, get_feat
 from .items import get_item
+from .multiclass import (
+    casting_ability_for as _casting_ability_for,
+)
+from .multiclass import (
+    class_levels as _class_levels,
+)
+from .multiclass import (
+    classes_text as _classes_text,
+)
+from .multiclass import (
+    hit_die_for_level as _hit_die_for_level,
+)
+from .multiclass import (
+    is_multiclass as _is_multiclass,
+)
+from .multiclass import (
+    spell_slots as _multiclass_slots,
+)
+from .multiclass import (
+    subclass_for as _subclass_for,
+)
 from .options import feature_option
 from .profession import DndClass, get_class
 from .progression import MAX_LEVEL
@@ -84,6 +105,9 @@ from .subclass_grants import (
 )
 from .subclass_grants import (
     death_save_marks as _death_save_marks,
+)
+from .subclass_grants import (
+    spell_defense as _spell_defense,
 )
 from .subclass_grants import (
     subclass_extra_attack,
@@ -340,10 +364,18 @@ class DndCharacter(TrpgCharacter):
     # —— 建卡来源 ——
     race: str = ""  # 种族内部键
     subrace: str = ""  # 亚种键（无则空）
-    profession: str = ""  # 职业内部键
+    profession: str = ""  # 职业内部键（兼职时 = **起始职业**）
+    #: **兼职**：每一级所属的职业键，下标 0 就是 1 级（长度 = 总等级）。
+    #: 空列表 = 单职业卡（所有等级都在 :attr:`profession` 上）——老存档的常态。
+    #: ⚠️ 这是唯一真相：``{职业: 等级}``、生命骰、兼职法术位都从它推，不另存一份。
+    level_classes: list[str] = field(default_factory=list)
     #: 子职内部键（PHB 2024：**所有职业都在 3 级**获得子职，见 :mod:`.subclass`）。
     #: 1~2 级的角色为空；3 级以上建卡必经 :class:`.creation.CreationStep` 的「选择子职」。
+    #: 兼职时它等于 :attr:`subclasses` 里起始职业那一条（展示用）。
     subclass: str = ""
+    #: **每个职业各自的子职**（职业键 → 子职键）。兼职战士 3 / 法师 5 各有各的子职；
+    #: 单职业卡留空即可，读时回落到 :attr:`subclass`。
+    subclasses: dict[str, str] = field(default_factory=dict)
     background: str = ""  # 背景内部键
     #: 阵营（PHB 2024 第四步：守序善良 / 中立善良 / … / 绝对中立 / 无阵营）。
     #: 纯角色扮演标记，**没有任何机械效果**（手册 2312-2347），留空不报错。
@@ -478,6 +510,19 @@ class DndCharacter(TrpgCharacter):
         self.skill_proficiencies = list(dict.fromkeys(self.skill_proficiencies))
         self.equipment = list(dict.fromkeys(self.equipment))
         self.conditions = list(dict.fromkeys(self.conditions))
+        # 兼职序列：只留认得出的职业键；没记过就别硬塞（单职业卡保持空列表）
+        self.level_classes = [
+            str(key).strip() for key in (self.level_classes or []) if str(key).strip()
+        ]
+        if self.level_classes:
+            # 以序列为准同步总等级与起始职业（读档时手写坏的 level 不该压过它）
+            self.level = max(1, len(self.level_classes))
+            self.profession = self.level_classes[0]
+        self.subclasses = {
+            str(key).strip(): str(value).strip()
+            for key, value in (self.subclasses or {}).items()
+            if str(key).strip() and str(value).strip()
+        }
         # 旧存档没有熟练项字段：按职业 + 种族补一遍（之后 DM 可以自行增改）
         if not self.armor_proficiencies and not self.weapon_proficiencies:
             self._fill_default_proficiencies()
@@ -777,6 +822,34 @@ class DndCharacter(TrpgCharacter):
         except KeyError:
             return None
 
+    # —— 兼职（多职业）——
+
+    def class_level(self, profession: str = "") -> int:
+        """某个职业的等级（不传 = 起始职业）；单职业卡就是 :attr:`level`。"""
+        key = str(profession or self.profession or "")
+        return int(_class_levels(self).get(key, 0))
+
+    @property
+    def class_levels(self) -> dict[str, int]:
+        """``{职业键: 等级}``（按首次出现排序；单职业卡只有一条）。"""
+        return _class_levels(self)
+
+    @property
+    def is_multiclass(self) -> bool:
+        """是不是兼职角色。"""
+        return _is_multiclass(self)
+
+    @property
+    def class_text(self) -> str:
+        """职业构成文本：单职业只给职业名，兼职给 ``战士 5 / 法师 3``。"""
+        if not self.is_multiclass:
+            return self.profession_obj.cn if self.profession_obj else "无业"
+        return _classes_text(self)
+
+    def subclass_for(self, profession: str = "") -> str:
+        """某个职业选的子职键（没选 / 没这个职业 → 空串）。"""
+        return _subclass_for(self, profession)
+
     @property
     def background_obj(self) -> Background | None:
         """背景对象；2024 重排删掉了民间英雄 / 化外之民，旧存档认不出时给 ``None``。"""
@@ -806,21 +879,29 @@ class DndCharacter(TrpgCharacter):
         return sub.cn if sub.cn != sub.short else f"{sub.cn}"
 
     def unlocked_subclass_features(self) -> tuple[Any, ...]:
-        """按当前等级已解锁的子职特性（3 级以上才有）。"""
-        sub = self.subclass_obj
-        if not sub:
-            return ()
-        return sub.features_up_to(self.level)
+        """按当前等级已解锁的子职特性（3 级以上才有；兼职时合并各职业的子职）。"""
+        out: list[Any] = []
+        for profession, level in self.class_levels.items():
+            key = self.subclass_for(profession)
+            if not key:
+                continue
+            sub = resolve_subclass(key)
+            if sub is None:
+                continue
+            out.extend(sub.features_up_to(level))
+        return tuple(out)
 
     def class_features(self) -> tuple[ClassFeature, ...]:
         """按当前等级已解锁的**职业**特性（``res/dnd/class_features.yaml``）。
 
         派生而非存卡：这样 DM 用 ``update_character`` 手写的自由文本特性不会
-        与它互相覆盖，改等级 / 改职业也会自动跟着变。
+        与它互相覆盖，改等级 / 改职业也会自动跟着变。**按各职业自己的等级**取
+        —— 兼职战士 2 / 法师 5 不会拿到战士 5 级的多重攻击。
         """
-        if not self.profession:
-            return ()
-        return features_for(self.profession, self.level)
+        out: list[ClassFeature] = []
+        for profession, level in self.class_levels.items():
+            out.extend(features_for(profession, level))
+        return tuple(out)
 
     def class_feature_names(self) -> tuple[str, ...]:
         """已解锁职业特性的名字（去重保序，展示用）。"""
@@ -832,11 +913,12 @@ class DndCharacter(TrpgCharacter):
 
         **子职也能给**（勇气学院 6 级「额外攻击」），两个来源取大者 —— 子职那
         条不会叠加，只是把吟游诗人从 1 次抬到 2 次。
+        **兼职也不叠加**（手册明文）：多个职业都给了额外攻击时取各职业的最大值。
         """
-        return max(
-            attacks_per_action(self.profession, self.level),
-            subclass_extra_attack(self),
-        )
+        best = subclass_extra_attack(self)
+        for profession, level in self.class_levels.items():
+            best = max(best, attacks_per_action(profession, level))
+        return best
 
     # —— 防护师「奥术守御」结界 ——
 
@@ -893,8 +975,11 @@ class DndCharacter(TrpgCharacter):
 
     @property
     def action_surge_max(self) -> int:
-        """动作如潮每次休息之间能用几次（战士 2 级 1 次、17 级 2 次）。"""
-        return action_surge_max(self.profession, self.level)
+        """动作如潮每次休息之间能用几次（战士 2 级 1 次、17 级 2 次）。
+
+        兼职时看**战士等级**，不是总等级。
+        """
+        return action_surge_max("fighter", self.class_level("fighter") or 0)
 
     @property
     def action_surge_left(self) -> int:
@@ -923,7 +1008,10 @@ class DndCharacter(TrpgCharacter):
         好让 :meth:`resource_max` / :meth:`use_resource` / :meth:`restore_resources`
         对所有资源一视同仁。
         """
-        out = dict(spendable_at(self.profession, self.level))
+        out: dict[str, int] = {}
+        for profession, level in self.class_levels.items():
+            for key, cap in spendable_at(profession, level).items():
+                out[key] = max(int(out.get(key, 0)), int(cap))
         out.update(subclass_spendable(self))
         return out
 
@@ -978,8 +1066,11 @@ class DndCharacter(TrpgCharacter):
 
     @property
     def rage_damage(self) -> int:
-        """狂暴伤害加值（野蛮人 1 级 +2、9 级 +3、16 级 +4；非野蛮人 0）。"""
-        return value_at(self.profession, self.level, "rage_damage")
+        """狂暴伤害加值（野蛮人 1 级 +2、9 级 +3、16 级 +4；非野蛮人 0）。
+
+        兼职时看**野蛮人等级**。
+        """
+        return value_at("barbarian", self.class_level("barbarian") or 0, "rage_damage")
 
     @property
     def raging(self) -> bool:
@@ -1040,13 +1131,27 @@ class DndCharacter(TrpgCharacter):
     # —— 护甲 / 武器熟练项 ——
 
     def _fill_default_proficiencies(self) -> None:
-        """按职业 + 种族（含亚种）填出默认熟练项（建卡与旧存档升级都用它）。"""
+        """按职业 + 种族（含亚种）填出默认熟练项（建卡与旧存档升级都用它）。
+
+        兼职时：起始职业给整套熟练，之后进入的职业只给**兼职熟练**
+        （见 :mod:`.multiclass`）—— 这是 5e 的明文，不是漏算。
+        """
         armor: list[str] = []
         weapons: list[str] = []
-        profession = self.profession_obj
-        if profession:
-            armor.extend(profession.armor_proficiencies)
-            weapons.extend(profession.weapon_proficiencies)
+        from .multiclass import grants_for as _grants_for
+
+        for index, profession in enumerate(self.class_levels):
+            try:
+                cls = get_class(profession)
+            except KeyError:
+                continue
+            if index == 0:
+                armor.extend(cls.armor_proficiencies)
+                weapons.extend(cls.weapon_proficiencies)
+            else:
+                grant = _grants_for(cls)
+                armor.extend(grant.armor)
+                weapons.extend(grant.weapons)
         race = self.race_obj
         if race:
             sub = self.subrace_obj
@@ -1204,22 +1309,29 @@ class DndCharacter(TrpgCharacter):
     def max_hp(self) -> int:
         """生命值上限。
 
-        1 级取生命骰最大值 + 体质调整值；之后每级取生命骰平均值（向上取整）+ 体质调整值，
-        **掷过生命骰的等级用掷出的值**（见 :meth:`roll_hit_die`）。
+        1 级取**起始职业**生命骰最大值 + 体质调整值；之后每级取**那一级所属职业**
+        的生命骰平均值（向上取整）+ 体质调整值，**掷过生命骰的等级用掷出的值**
+        （见 :meth:`roll_hit_die`）。兼职时就是：「只有作为 1 级角色才拿 1 级生命值」，
+        之后进入的新职业每一级也按升级算（手册「生命值和生命值骰」）。
         ⚠️ 每级增量**至少 +1**（PHB 2024：体质调整值为负也不会让升级倒扣生命）。
         （2024 起力竭不再减半生命上限——那是对应 2014 第 4 级的效果。）
         """
-        profession = self.profession_obj
         con = self.modifier("con")
-        if not profession:
+        total = max(1, int(self.level))
+        if not self.profession:
+            # 没有职业的卡（理论上只有半成品）：保底 8 + 体质，不按等级虚长
             hp = max(1, 8 + con)
         else:
-            hp = profession.level1_hp + con
-            average = profession.hit_die // 2 + 1
-            for level in range(2, int(self.level) + 1):
+            hp = 0
+            for level in range(1, total + 1):
+                die = _hit_die_for_level(self, level)
+                if level == 1:
+                    hp += die + con
+                    continue
                 rolled = int(self.hp_rolls.get(level, 0) or 0)
-                gain = (rolled + con) if rolled else (average + con)
+                gain = (rolled + con) if rolled else (die // 2 + 1 + con)
                 hp += max(1, gain)
+            hp = max(1, hp)
         hp += self.hp_per_level * self.level
         scale = merge_effects(self.conditions, exhaustion=self.exhaustion).hp_max_scale
         if scale < 1.0:
@@ -1234,8 +1346,8 @@ class DndCharacter(TrpgCharacter):
             且**至少 +1**；掷出的骰值记进 :attr:`hp_rolls`，生命上限随之重算。
         """
         level = max(2, int(level or 2))
-        profession = self.profession_obj
-        die = int(getattr(profession, "hit_die", 8) or 8)
+        # 兼职时这一级可能属于另一个职业：骰面要按**那一级所属职业**取
+        die = _hit_die_for_level(self, level)
         result = roll(f"1d{die}", label="生命骰", rng=rng)
         self.hp_rolls[level] = int(result.total)
         con = self.modifier("con")
@@ -1244,24 +1356,35 @@ class DndCharacter(TrpgCharacter):
     @property
     def is_prepared_caster(self) -> bool:
         """是否需要每日准备法术（2024：**所有**施法职业都是准备制）。"""
-        profession = self.profession_obj
-        return bool(profession and profession.is_prepared_caster)
+        return bool(self.castable_classes())
 
     def prepared_limit(self) -> int:
         """这个等级能准备几个法术（不含戏法）。
 
         2024 的准备数是职业表里查的固定值（法师 1 级 4 个、20 级 25 个），
         **不再用「等级 + 属性调整值」**；表里查不到才回退旧公式（旧存档 / 旧数据）。
+        兼职时按**准备数最多的那个施法职业**算（各职业各管各的准备列表，引擎只有一份，
+        所以取上限——具体哪几个由 DM 定，见 ``rule.md``「兼职」节）。
         """
-        profession = self.profession_obj
-        if not profession or not profession.is_prepared_caster:
-            return 0
-        table = prepared_at(profession.key, self.level)
-        if table:
-            return table
-        return profession.prepared_count(
-            self.level, self.modifier(profession.prepared_ability or profession.casting)
-        )
+        best = 0
+        for profession, level in self.class_levels.items():
+            try:
+                cls = get_class(profession)
+            except KeyError:
+                continue
+            if not cls.is_prepared_caster:
+                continue
+            table = prepared_at(cls.key, level)
+            if table:
+                best = max(best, int(table))
+                continue
+            best = max(
+                best,
+                cls.prepared_count(
+                    level, self.modifier(cls.prepared_ability or cls.casting)
+                ),
+            )
+        return best
 
     def prepared_text(self) -> str:
         """准备情况的展示文本（未管理 / 已准备 N 个）。"""
@@ -1654,42 +1777,73 @@ class DndCharacter(TrpgCharacter):
 
     @property
     def is_caster(self) -> bool:
-        """是否具备施法能力（职业带施法属性）。"""
-        profession = self.profession_obj
-        return bool(profession and profession.is_caster)
+        """是否具备施法能力（任一职业带施法属性）。"""
+        return bool(self.casting_ability)
+
+    def castable_classes(self) -> tuple[str, ...]:
+        """这张卡上**能施法**的职业键（兼职时可能不止一个）。"""
+        out: list[str] = []
+        for profession in self.class_levels:
+            try:
+                if get_class(profession).is_caster:
+                    out.append(profession)
+            except KeyError:
+                continue
+        return tuple(out)
 
     @property
     def casting_ability(self) -> str:
-        """施法属性内部键（"" = 非施法者）。"""
-        profession = self.profession_obj
-        return profession.casting if profession else ""
+        """施法属性内部键（"" = 非施法者；兼职时取**等级最高**的施法职业）。"""
+        return _casting_ability_for(self)
+
+    def casting_ability_for(self, spell: Any = None) -> str:
+        """这道法术用哪个职业的施法属性（兼职时按法术所属职业算）。"""
+        return _casting_ability_for(self, spell)
 
     @property
     def casting_text(self) -> str:
         """施法属性中文名（"" = 非施法者）。"""
-        profession = self.profession_obj
-        return profession.casting_text if profession else ""
+        ability = self.casting_ability
+        return get_ability(ability).cn if ability else ""
 
     @property
     def spell_attack_bonus(self) -> int:
         """法术攻击加值 = 熟练加值 + 施法属性调整值（2024 力竭每级再 −2）。"""
-        if not self.casting_ability:
+        return self.spell_attack_bonus_for(None)
+
+    def spell_attack_bonus_for(self, spell: Any = None) -> int:
+        """某道法术的攻击加值（兼职时用该法术所属职业的施法属性）。"""
+        ability = self.casting_ability_for(spell)
+        if not ability:
             return self.proficiency + self.d20_bonus()
-        return self.proficiency + self.modifier(self.casting_ability) + self.d20_bonus()
+        return self.proficiency + self.modifier(ability) + self.d20_bonus()
 
     @property
     def spell_save_dc(self) -> int:
         """法术豁免 DC = 8 + 熟练加值 + 施法属性调整值。"""
-        if not self.casting_ability:
+        return self.spell_save_dc_for(None)
+
+    def spell_save_dc_for(self, spell: Any = None) -> int:
+        """某道法术的豁免 DC（兼职时用该法术所属职业的施法属性）。"""
+        ability = self.casting_ability_for(spell)
+        if not ability:
             return 8 + self.proficiency
-        return 8 + self.proficiency + self.modifier(self.casting_ability)
+        return 8 + self.proficiency + self.modifier(ability)
 
     def max_spell_slots(self) -> dict[int, int]:
-        """按职业与等级推出的法术位上限 ``{环阶: 数量}``。"""
+        """按职业与等级推出的法术位上限 ``{环阶: 数量}``。
+
+        单职业走职业自己的表（全职 / 半施法 / 契约各一套）；**兼职**走「兼职施法者」
+        表（全职等级 + 半施法等级的一半 + 三分之一施法者的三分之一），契约位另加。
+        """
+        if not self.is_caster:
+            return {}
+        if self.is_multiclass:
+            return _multiclass_slots(self)
         profession = self.profession_obj
         if not profession or not profession.is_caster:
             return {}
-        return max_slots(profession.caster_kind, self.level)
+        return max_slots(profession.caster_kind, self.class_level(profession.key))
 
     def spent_spell_slots(self) -> dict[int, int]:
         """已消耗的法术位 ``{环阶: 数量}``。"""
@@ -1823,9 +1977,22 @@ class DndCharacter(TrpgCharacter):
         return False, f"没有{' / '.join(names)}了", ""
 
     def restore_slots(self, *, kind: str = "long") -> None:
-        """恢复法术位：长休全部恢复；短休只恢复契约魔法（魔契师）。"""
+        """恢复法术位：长休全部恢复；短休只恢复**契约魔法**（魔契师）。
+
+        兼职时契约位与普通位**共用一个池**（引擎只有一份「已用」计数），
+        短休按「回到契约位上限那一档」近似恢复 —— 也就是契约位全回、
+        普通位不回（见 ``res/rule.md``「兼职」节登记的口径）。
+        """
         if kind == "long":
             self.spell_slots_used = {}
+            return
+        if self.is_multiclass:
+            from .multiclass import pact_slots as _pact_at
+
+            for level, count in _pact_at(self).items():
+                key = str(level)
+                used = int(self.spell_slots_used.get(key, 0) or 0)
+                self.spell_slots_used[key] = max(0, used - int(count))
             return
         profession = self.profession_obj
         if profession and profession.caster_kind == "pact":
@@ -2143,12 +2310,17 @@ class DndCharacter(TrpgCharacter):
         *,
         label: str = "法术攻击",
         advantage: Advantage = Advantage.NORMAL,
+        bonus: int | None = None,
         rng: Random | None = None,
     ) -> CheckResult:
-        """法术攻击检定（对抗目标 AC），加值取 :attr:`spell_attack_bonus`。"""
+        """法术攻击检定（对抗目标 AC），加值取 :attr:`spell_attack_bonus`。
+
+        :param bonus: 兼职时按**这道法术所属职业**算出的加值（见
+            :meth:`spell_attack_bonus_for`）；留空就用卡的默认值。
+        """
         final, reason = self._check_advantage("attack", advantage)
         result = roll_check(
-            self.spell_attack_bonus,
+            self.spell_attack_bonus if bonus is None else int(bonus),
             target_ac,
             kind=label,
             advantage=final,
@@ -2234,6 +2406,19 @@ class DndCharacter(TrpgCharacter):
                 entries.append(item)
         return entries
 
+    def resist_spell_damage(self, amount: int) -> tuple[int, str]:
+        """防护师 14 级「法术抗性」：法术造成的伤害**减半**。
+
+        这是「法术来源」的减免，不是伤害类型，所以走不了抗性表（抗性表只认
+        钝击 / 火焰这类类型）；而且**只算一次**（见 B12：同类减免不叠加）。
+
+        :return: ``(减免后的伤害, 说明)``；没有这条特性原样返回。
+        """
+        _save_adv, resist = _spell_defense(self)
+        if not resist or amount <= 0:
+            return amount, ""
+        return amount // 2, f"法术抗性（{amount} → {amount // 2}）"
+
     def resistances_text(self) -> str:
         """抗性表文本（固定抗性 + 子职给的 + **状态带来的**，如狂暴的物理抗性）。"""
         return resistances_text(self._resistance_entries())
@@ -2314,10 +2499,23 @@ class DndCharacter(TrpgCharacter):
         race_text = race.cn if race else "未知种族"
         if self.subrace_obj:
             race_text += f"·{self.subrace_obj.cn}"
-        profession_text = profession.cn if profession else "无业"
-        sub = self.subclass_obj
-        if sub:
-            profession_text += f"（{sub.short}）"
+        profession_text = self.class_text
+        if self.is_multiclass:
+            # 兼职：每个职业的子职挂在各自名字后面（战士 5（勇士）/ 法师 3（防护师））
+            parts: list[str] = []
+            for key in self.class_levels:
+                try:
+                    cn = get_class(key).cn
+                except KeyError:
+                    cn = key
+                sub_key = self.subclass_for(key)
+                sub = resolve_subclass(sub_key) if sub_key else None
+                parts.append(f"{cn} {self.class_level(key)}" + (f"（{sub.short}）" if sub else ""))
+            profession_text = " / ".join(parts)
+        else:
+            sub = self.subclass_obj
+            if sub:
+                profession_text += f"（{sub.short}）"
         lines = [
             f"【{self.name or '无名者'}】{race_text} {profession_text} Lv.{self.level}",
             format_ability_block(self.abilities),
@@ -2618,7 +2816,7 @@ class DndCharacter(TrpgCharacter):
         if self.subrace_obj:
             race_text += f"·{self.subrace_obj.cn}"
         profession = self.profession_obj
-        prof_text = profession.cn if profession else "无业"
+        prof_text = self.class_text
         bg = self.background_obj
         bg_text = bg.cn if bg else ""
 
@@ -2765,7 +2963,9 @@ class DndCharacter(TrpgCharacter):
             "race",
             "subrace",
             "profession",
+            "level_classes",
             "subclass",
+            "subclasses",
             "background",
             "base_scores",
             "ability_boost",
