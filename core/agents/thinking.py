@@ -1,15 +1,16 @@
 """通用「带循环 + 功能调用」的 Agent 基类。
 
 机制参考 ``ATRI/system/agent/brain/thinking.py``：模型在一次输出里先给出
-「思考内容」，再用一段 ```text 代码块列出要调用的功能（每行一个
-``功能名(参数名=参数值, ...)``）。解析后逐个执行，把结果回填给模型继续思考，
-直到某个功能结束循环（:class:`AgentFinishError`）或模型不再给出功能调用。
+「思考内容」，再逐行给出要调用的功能（每行一个
+``功能名(参数名=参数值, ...)``，不要求包在代码块里）。解析后逐个执行，
+把结果回填给模型继续思考，直到某个功能结束循环
+（:class:`AgentFinishError`）或模型不再给出功能调用。
 
 解析层复用主 Agent 的解释器（``ATRI.system.agent.brain.action_parser``），
 下面这些容错都在那边实现、两边共享：
 
-- **多个 ```text 代码块**：逐块解析并合并调用（约定仍是「一个文本区」，
-  提示词里会要求模型写在同一个块里），解析不出调用的块按正文保留；
+- **裸调用**：提示词要求调用直接写在正文里，每行一个；
+- **代码块包裹**：旧约定，历史对话里仍会出现，围栏会被剥掉后照常解析；
 - **DSML 原生工具调用**：部分模型不按约定输出
   ``<｜｜DSML｜｜ invoke name="...">`` 这类原生调用 DSL，共享解释器把它转成
   同样的调用结构，并连同参数值从正文里剥除，避免原样泄漏成给玩家看的叙述；
@@ -59,7 +60,6 @@ __all__ = [
 #: 战报（2026-10-23）里 ``move(player=l_o_o_k, pos=8,10)`` 连着失败了四次——
 #: 逗号把坐标劈成两个参数，整行调用作废，模型只能一遍遍重写，
 #: 连带把已经写好的叙述也重生成一遍。这类格式问题程序自己能修，不该让模型猜。
-_CALL_BLOCK_RE = re.compile(r"```[ \t]*[A-Za-z_]*[ \t]*\n(?P<body>.*?)```", re.S)
 #: 行首是「功能名(」的调用行
 _CALL_LINE_HEAD_RE = re.compile(r"^[ \t]*[A-Za-z_]\w*[ \t]*\(")
 #: ``pos=8,10``：逗号紧跟数字，是坐标而不是下一个参数
@@ -76,28 +76,24 @@ _ARG_ALIASES: dict[str, str] = {
 
 
 def _repair_call_text(text: str) -> str:
-    """修补代码块里的调用写法（全角括号、没加引号的坐标）。
+    """修补调用行的写法（全角括号、没加引号的坐标）。
 
     只动行首是调用的行，叙述正文（包括字符串值里的全角括号）原样保留。
+    调用不再要求包在代码块里，因此逐行处理整份文本，而不是只进代码块。
     """
     if not text:
         return text
 
-    def _fix_block(match: re.Match) -> str:
-        body = match.group("body")
-        lines = []
-        for line in body.split("\n"):
-            if _CALL_LINE_HEAD_RE.match(line):
-                line = line.replace("）", ")").replace("（", "(")
-                line = _BARE_COORD_RE.sub(
-                    lambda m: f'{m.group("key")}="{m.group("a")},{m.group("b")}"',
-                    line,
-                )
-            lines.append(line)
-        fixed = "\n".join(lines)
-        return match.group(0).replace(body, fixed, 1)
-
-    return _CALL_BLOCK_RE.sub(_fix_block, text)
+    lines = []
+    for line in text.split("\n"):
+        if _CALL_LINE_HEAD_RE.match(line):
+            line = line.replace("）", ")").replace("（", "(")
+            line = _BARE_COORD_RE.sub(
+                lambda m: f'{m.group("key")}="{m.group("a")},{m.group("b")}"',
+                line,
+            )
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _collapse_args(tool: Any, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -294,19 +290,17 @@ class ThinkingAgent(TrpgAgent):
             "你可以调用以下功能，禁止调用未列出的功能:\n"
             f"{blocks}\n\n"
             "功能调用格式：\n"
-            "``` text\n"
-            "功能名(参数名=参数值, ...)\n"
-            "```\n\n"
+            "功能名(参数名=参数值, ...)\n\n"
             "调用要求：\n"
             "- 每行一个调用，无参数写成 功能名()\n"
             "- 字符串用双引号，内容需要换行时写 \\n，禁止在引号内直接换行\n"
             "- 只使用上面列出的参数名，不要虚构参数\n"
-            "- 所有调用写在**同一个** ```text 代码块里，不要拆成多个代码块\n"
+            "- 调用直接写在正文里，每行一个，不要用代码块包裹\n"
             "- **分轮调用**：需要先看某个功能返回结果（如检定 / 掷骰成败）再写的内容，"
             "必须等结果返回、下一轮再写；结束本次思考的功能（如 narrate）"
             "不要与它们写在同一次输出里。"
             f"{batchable}\n"
-            "- 只用 ```text 代码块输出调用，禁止使用 XML / DSML 等其它调用格式"
+            "- 禁止使用 XML / DSML 等其它调用格式"
         )
 
     def build_messages(self, values) -> LLMMessages:
@@ -335,8 +329,8 @@ class ThinkingAgent(TrpgAgent):
     def split_response(cls, text: str) -> tuple[str, list[dict[str, Any]], list[str]]:
         """把模型输出拆成 ``(叙述内容, 功能调用列表, 待回填的解析问题)``。
 
-        多代码块合并、DSML 原生调用、坏调用容错都在共享解释器里，这里只转发，
-        避免与主 Agent 各自维护一套解析。
+        裸调用、旧代码块、DSML 原生调用、坏调用容错都在共享解释器里，这里只
+        转发，避免与主 Agent 各自维护一套解析。
 
         转发前先做一次**格式修补**（全角括号、``pos=8,10`` 这类没加引号的坐标）：
         程序能修的就不必让模型重写一遍（那会连带把叙述也重新生成一次）。
@@ -399,7 +393,7 @@ class ThinkingAgent(TrpgAgent):
                 feedback = [
                     f"本次输出有 {len(issues)} 处调用无法解析：{detail}。"
                     "请严格按「功能名(参数名=参数值, ...)」格式重写：字符串用双引号，"
-                    "所有调用写在同一个代码块里。"
+                    "每个调用独占一行，不要用代码块包裹。"
                 ]
             else:
                 feedback = []
