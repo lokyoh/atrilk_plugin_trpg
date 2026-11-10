@@ -84,7 +84,7 @@ from .core.dnd import (
     wants_reroll,
 )
 from .core.dnd.clock import clock_text
-from .core.dnd.creation import session_from_card
+from .core.dnd.creation import session_from_card, wants_roll
 from .core.dnd.event_progress import event_summary
 from .core.dnd.events import load_pool
 from .core.dnd.image_render import (
@@ -92,6 +92,12 @@ from .core.dnd.image_render import (
     data_card_html,
     narration_to_html,
     player_panel_html,
+)
+from .core.dnd.roll_limit import (
+    consume_daily_roll,
+    load_roll_result,
+    save_roll_result,
+    today_key,
 )
 from .core.trpg import DiceError, reroll_check, roll
 from .matchers import (
@@ -466,6 +472,45 @@ def _reply(session: CreationSession) -> str:
     return creation_prompt(session.step, session)
 
 
+def _check_daily_roll(session: CreationSession, text: str) -> None:
+    """掷属性每日一次门禁（属性现在**只有 roll 一条路**）。
+
+    建卡续接（``_advance``）、建卡带参数、改卡（``_apply_edit_step``）都在把
+    回复交给状态机之前过这一关。额度账本独立于建卡会话，所以「取消建卡 →
+    重新建卡」也刷不出第二次；账本里同时留着当天掷出的候选，被拦下时把
+    候选找回会话，玩家仍能接着挑完这一组，不会被卡住一整天。
+
+    :raises CreationError: 今天已经掷过，由调用点按既有错误格式提示玩家
+    """
+    if session.step is not CreationStep.ABILITY or not wants_roll(text):
+        return
+    today = today_key()
+    if consume_daily_roll(session.user_id, today=today):
+        return
+    if not session.ability_candidates:
+        result = load_roll_result(session.user_id, today=today)
+        if result is not None:
+            session.ability_candidates, session.ability_set_groups = result
+    hint = f"今天（{today}，北京时间）已经掷过属性了 —— 掷属性每天只有一次。"
+    if session.ability_candidates:
+        hint += (
+            f"请从今天掷出的 {len(session.ability_candidates)} 组候选里回复序号挑一组"
+            "（或回复「自动」），"
+        )
+    hint += "明天可再掷新的（取消建卡重来不会刷新次数）。"
+    raise CreationError(hint)
+
+
+def _persist_roll_result(session: CreationSession) -> None:
+    """刚掷出候选就随额度存一份：会话被取消也留着今天这组结果。"""
+    if session.step is CreationStep.ABILITY and session.ability_candidates:
+        save_roll_result(
+            session.user_id,
+            session.ability_candidates,
+            session.ability_set_groups,
+        )
+
+
 async def _advance(
     session: CreationSession, text: str
 ) -> tuple[str, DndCharacter | None]:
@@ -474,7 +519,9 @@ async def _advance(
     :return: ``(要发送的文案, 完成的角色卡)``；尚未完成时角色卡为 ``None``。
     """
     try:
+        _check_daily_roll(session, text)
         out = session.handle(text)
+        _persist_roll_result(session)
     except CreationError as e:
         save_session(session)
         return f"⚠️ {e}\n\n{_reply(session)}\n（不想建了可以回复「取消」）", None
@@ -687,8 +734,8 @@ async def _query_data(event: MessageEvent, args: Message = CommandArg()):
 # --------------------------------------------------------------------------- #
 
 #: 可重做的建卡步骤：步骤 -> 触发词（第一个为展示名）
+#: 注意没有「等级」——建卡固定 1 级，等级只能由升级 / DM 的 update_character 改。
 _REDO_STEPS: tuple[tuple[CreationStep, tuple[str, ...]], ...] = (
-    (CreationStep.LEVEL, ("等级", "level")),
     (CreationStep.ABILITY, ("属性", "ability", "roll", "掷属性")),
     (CreationStep.RACE, ("种族", "race")),
     (CreationStep.LANGUAGES, ("语言", "language", "languages")),
@@ -740,14 +787,6 @@ def _reset_dependents(session: CreationSession, step: CreationStep) -> list[str]
         if session.asi:
             session.asi = {}
             return ["旧的等级加点已清空，请按提示重新分配"]
-        return []
-
-    if step is CreationStep.LEVEL:
-        # 等级变了，允许的加点次数跟着变：清空重分配，免得降级后还留着多出来的 +2
-        session.asi_done = 0
-        if session.asi:
-            session.asi = {}
-            return ["等级变了，旧的等级加点已清空，请按新等级重新分配"]
         return []
 
     if step is not CreationStep.PROFESSION:
@@ -809,7 +848,9 @@ def _apply_edit_step(
     """
     step = session.step
     try:
+        _check_daily_roll(session, text)
         session.handle(text)
+        _persist_roll_result(session)
     except CreationError as e:
         return None, f"⚠️ {e}\n\n{creation_prompt(session.step, session)}"
 

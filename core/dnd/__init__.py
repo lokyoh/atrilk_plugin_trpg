@@ -20,6 +20,7 @@
 - :mod:`combat` 战斗状态（先攻顺序 + 当前回合 + 敌人个体 + 行动经济记账）
 - :mod:`storage` 角色卡落盘
 - :mod:`session_store` 建卡会话落盘（超出 ``session_expire_timeout`` 也能续接）
+- :mod:`roll_limit` 掷属性每日一次额度（按玩家 + 北京时间记账，独立于建卡会话）
 - :mod:`world_store` 全局共享世界文档库（多世界，world / 剧情 / 地点等，markdown + JSON 索引 + 世界注册表）
 - :mod:`save_store` 跑团存档（角色卡副本 + 进度 + 事件日志）
 - :mod:`billing` 跑团用量统计（按存档累计 token 与花费）

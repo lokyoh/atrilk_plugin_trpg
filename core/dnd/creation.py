@@ -30,8 +30,6 @@ from .alignment import alignment_options, normalize_alignment
 from .attributes import (
     ABILITIES,
     ABILITY_SCORE_MAX,
-    ABILITY_SCORE_MIN,
-    STANDARD_ARRAY,
     get_ability,
 )
 from .background import Background, background_choices, get_background
@@ -90,6 +88,7 @@ __all__ = [
     "creation_prompt",
     "parse_multi_choice",
     "session_from_card",
+    "wants_roll",
 ]
 
 
@@ -101,8 +100,6 @@ class CreationStep(Enum):
     """建卡步骤。"""
 
     MODE = "选择模式"
-    #: 开卡等级（1~20）。**放在最前面**：等级决定要不要选子职、要做几次属性提升。
-    LEVEL = "选择等级"
     ABILITY = "roll属性"
     BACKGROUND = "选择背景"
     BOOST = "背景属性提升"
@@ -122,14 +119,15 @@ class CreationStep(Enum):
     DONE = "完成"
 
 
-#: 建卡步骤顺序：等级 → 属性 → 背景 → 属性提升 → 种族 → 语言 → 职业 → 子职 →
+#: 建卡步骤顺序：属性 → 背景 → 属性提升 → 种族 → 语言 → 职业 → 子职 →
 #: 技能 → 特性 → 装备包 → 法术 → 属性提升（ASI）→ 阵营。
+#: 建卡**固定 1 级**（原「选择开卡等级」步已删）：等级相关的子职 / ASI 两步
+#: 只在等级 ≥3 / ≥4 时出现，正常建卡走到就会被跳过；高等级角色靠升级会话长出来。
 #: 背景紧跟在属性后面，是因为 2024 的属性提升要落在背景给的三项上（D4/A1）；
 #: 「特性」放在技能之后，是因为游荡者的专精要从**已熟练的技能**里挑；
-#: ASI 放在最后，是因为它叠加在「roll + 背景提升」之上（高等级开卡才会出现）。
+#: ASI 放在最后，是因为它叠加在「roll + 背景提升」之上（只有高等级角色才会出现）。
 CREATION_STEPS: tuple[CreationStep, ...] = (
     CreationStep.MODE,
-    CreationStep.LEVEL,
     CreationStep.ABILITY,
     CreationStep.BACKGROUND,
     CreationStep.BOOST,
@@ -162,7 +160,6 @@ _LEVELUP_STEPS: tuple[CreationStep, ...] = (
 CHOICE_STEPS: frozenset[CreationStep] = frozenset(
     {
         CreationStep.MODE,
-        CreationStep.LEVEL,
         CreationStep.RACE,
         CreationStep.LANGUAGES,
         CreationStep.PROFESSION,
@@ -192,7 +189,14 @@ _ROLL_WORDS = {
     "reroll",
     "重来",
 }
-_ARRAY_WORDS = {"标准数组", "标准", "数组", "默认"}
+def wants_roll(text: str) -> bool:
+    """这句话是不是要掷属性（「重掷 / 再掷 / reroll」也算）。
+
+    每日额度门禁与 :meth:`CreationSession.handle` 共用这一份词表，避免两处
+    词表漂移导致「拦得住这句、拦不住那句」。
+    """
+    return (text or "").strip().lower() in _ROLL_WORDS
+
 
 #: 背景起源专长「魔法学徒」括号里的法术表（中文 -> 职业内部键）
 _MAGIC_INITIATE_CLASSES: dict[str, str] = {
@@ -442,7 +446,6 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
         return f"欢迎来到跑团！先选择要玩的规则模式：\n{options}\n回复序号即可（目前仅支持 DND 5e）。"
 
     if step is CreationStep.ABILITY:
-        array_text = "/".join(str(v) for v in STANDARD_ARRAY)
         candidates = session.ability_candidates if session else []
         if candidates:
             lines = [
@@ -455,16 +458,20 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
                 shown = "  ".join(f"{v:>2}" for v in scores)
                 lines.append(f"{i}. {shown}（合计 {sum(scores)}）")
             lines.append(
-                f"回复序号（1~{len(candidates)}）选一组直接使用；"
-                f"回复「重掷」再掷 {ABILITY_SET_COUNT} 组，"
-                f"或回复「标准数组」使用 {array_text}。"
+                f"回复序号（1~{len(candidates)}）选一组直接使用，"
+                "或回复「自动」由我挑合计最高的一组。"
+            )
+            lines.append(
+                "（属性**只能靠掷骰获得**、每天只有一次：今天不能再掷，"
+                "请从上面挑一组，明天可再掷新的。）"
             )
         else:
             lines = [
                 "第 1 步：roll 属性。",
                 f"回复「roll」掷 {ABILITY_SET_COUNT} 组完整属性"
-                "（DND 5e：每项 4d6 取最高的三个），挑一组直接使用；"
-                f"或回复「标准数组」使用 {array_text}。",
+                "（DND 5e：每项 4d6 取最高的三个），再从里面挑一组直接使用。",
+                "（属性**只能靠掷骰获得**、每天只有一次：没有标准数组，也没有手填属性；"
+                "今天掷出的候选会替你留着，取消建卡重来也不会刷新次数。）",
             ]
         return "\n".join(lines)
 
@@ -495,18 +502,6 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
             "种族额外给的自选已经算进上面的数量里。",
         ]
         return "\n".join(lines)
-
-    if step is CreationStep.LEVEL:
-        return "\n".join(
-            [
-                "选择开卡等级（1~20）：",
-                "1 级就是常规新角色；想直接跑高等级战役就写等级（如「5」「第 5 级」）。",
-                "等级会影响：生命上限、熟练加值、法术位、**3 级起要选子职**、"
-                "以及 4/8/12/16 级的属性提升（战士 6/14、游荡者 10 另有）。",
-                "回复「1」或直接回「跳过」按 1 级开卡。",
-                "（各等级的职业新特性引擎不逐级发放，由 DM 按职业表补，见「规则口径」。）",
-            ]
-        )
 
     if step is CreationStep.PROFESSION:
         return "\n".join(
@@ -719,8 +714,8 @@ class CreationSession:
     #: 今日准备的法术（法术 key，不含戏法）。从卡还原时带上原名单；
     #: 建卡时留空，由 :func:`build_character` 按挑的法术推。
     prepared: list[str] = field(default_factory=list)
-    #: 开卡等级（1~20）。**高等级开卡**：HP / 熟练加值 / 法术位 / 属性提升次数
-    #: 都按它算；3 级起必须选子职。
+    #: 角色等级。**建卡固定 1 级**（「选择开卡等级」步已删）；改卡 / 升级会话按卡上
+    #: 等级还原。HP / 熟练加值 / 法术位都按它算；3 级起必须选子职。
     level: int = 1
     #: 已做的属性提升（ASI）次数与加点：属性键 -> 加点（与背景提升分开记，
     #: 落卡时合并进 ``ability_boost``）
@@ -921,7 +916,7 @@ class CreationSession:
             return None
         return resolve_subclass(self.subclass)
 
-    # —— 高等级开卡 ——
+    # —— 按等级门槛出现的两步（子职 / 属性提升）——
 
     def subclass_options(self) -> tuple[SubClass, ...]:
         """本职业的可选子职（无职业 / 等级不够时为空 → 跳过该步）。"""
@@ -1397,31 +1392,30 @@ class CreationSession:
 
         if step is CreationStep.MODE:
             return self.choose_mode(raw)
-        if step is CreationStep.LEVEL:
-            return self.choose_level(raw)
         if step is CreationStep.ABILITY:
             lowered = raw.lower()
-            if lowered in _ROLL_WORDS:
+            if wants_roll(raw):
                 return self.roll_abilities(rng=rng)
-            if lowered in _ARRAY_WORDS:
-                return self.use_standard_array()
-            if self.ability_candidates:
-                if lowered in _AUTO_WORDS:
-                    best = max(
-                        range(len(self.ability_candidates)),
-                        key=lambda i: sum(self.ability_candidates[i]),
-                    )
-                    return self.choose_ability_set(best)
-                parts = _split_choices(raw)
-                index = _to_index(parts[0]) if len(parts) == 1 else None
-                if index is None or not 0 <= index < len(self.ability_candidates):
-                    raise CreationError(
-                        f"请回复 1~{len(self.ability_candidates)} 选一组属性，"
-                        f"回复「重掷」再掷 {ABILITY_SET_COUNT} 组，"
-                        "或回复「标准数组」使用标准数组。"
-                    )
-                return self.choose_ability_set(index)
-            return self.assign_scores(raw)
+            if not self.ability_candidates:
+                # 属性只有 roll 一条路：标准数组 / 手填六项数值都不再是入口
+                raise CreationError(
+                    "属性只能靠掷骰获得：请回复「roll」掷出候选属性组"
+                    "（每天一次），再从里面挑一组。"
+                )
+            if lowered in _AUTO_WORDS:
+                best = max(
+                    range(len(self.ability_candidates)),
+                    key=lambda i: sum(self.ability_candidates[i]),
+                )
+                return self.choose_ability_set(best)
+            parts = _split_choices(raw)
+            index = _to_index(parts[0]) if len(parts) == 1 else None
+            if index is None or not 0 <= index < len(self.ability_candidates):
+                raise CreationError(
+                    f"请回复 1~{len(self.ability_candidates)} 选一组属性，"
+                    "或回复「自动」由我挑；今天不能再掷，明天可再掷新的。"
+                )
+            return self.choose_ability_set(index)
         if step is CreationStep.RACE:
             return self.choose_race(raw)
         if step is CreationStep.LANGUAGES:
@@ -1454,33 +1448,6 @@ class CreationSession:
 
     # —— 各步骤的输入处理 ——
 
-    def choose_level(self, text: str) -> str:
-        """选择开卡等级（1~20，默认 1）。
-
-        高等级开卡不是「把等级字段改成 20」就完事：HP、熟练加值、法术位本来就跟
-        等级走；**3 级起要选子职**、**4/8/12/16 级各要做一次属性提升**（战士 6/14、
-        游荡者 10 另算），这两件由后面两步补齐。职业各等级的**新特性**仍需 DM
-        按职业表补（引擎不逐级发特性，见 ``res/rule.md``）。
-        """
-        self._require(CreationStep.LEVEL)
-        raw = text.strip()
-        if raw.lower() in _SKIP_WORDS or raw.lower() in _AUTO_WORDS:
-            self.level = 1
-        else:
-            cleaned = raw
-            for wrapper in ("级", "lv", "Lv", "LV", "第"):
-                cleaned = cleaned.replace(wrapper, "")
-            cleaned = cleaned.strip()
-            if not cleaned.isdigit():
-                raise CreationError(f"请回复 1~{MAX_LEVEL} 的等级数字（直接回车可用 1 级）。")
-            level = int(cleaned)
-            if level < 1 or level > MAX_LEVEL:
-                raise CreationError(f"等级要在 1~{MAX_LEVEL} 之间。")
-            self.level = level
-        self.record(f"等级：Lv.{self.level}")
-        self.advance()
-        return f"开卡等级 Lv.{self.level}。\n\n{creation_prompt(self.step, self)}"
-
     def choose_mode(self, text: str) -> str:
         """选择规则模式（目前仅 DND）。"""
         self._require(CreationStep.MODE)
@@ -1501,7 +1468,11 @@ class CreationSession:
         return f"已选择「{self.system}」。\n\n{creation_prompt(self.step, self)}"
 
     def roll_abilities(self, rng: random.Random | None = None) -> str:
-        """掷 :data:`ABILITY_SET_COUNT` 组完整属性（每项 4d6 取最高的三个），等玩家挑一组。"""
+        """掷 :data:`ABILITY_SET_COUNT` 组完整属性（每项 4d6 取最高的三个），等玩家挑一组。
+
+        每日一次的额度由 handler 层在调用本方法前拦截（:mod:`.roll_limit`）——
+        核心状态机不碰磁盘，测试里可以直接掷。
+        """
         self._require(CreationStep.ABILITY)
         sets: list[list[int]] = []
         set_groups: list[list[list[int]]] = []
@@ -1525,7 +1496,7 @@ class CreationSession:
         """选用第 ``index`` 组（0 基）候选属性，按展示顺序直接分配。"""
         self._require(CreationStep.ABILITY)
         if not self.ability_candidates:
-            raise CreationError("还没有掷出属性组，请先回复「roll」或「标准数组」。")
+            raise CreationError("还没有掷出属性组，请先回复「roll」。")
         if index < 0 or index >= len(self.ability_candidates):
             raise CreationError(
                 f"序号超出范围：可选 1~{len(self.ability_candidates)}。"
@@ -1546,61 +1517,6 @@ class CreationSession:
             f"已选择第 {index + 1} 组属性：{self.assigned_scores_text()}"
             f"\n\n{creation_prompt(self.step, self)}"
         )
-
-    def use_standard_array(self) -> str:
-        """使用标准数组（15/14/13/12/10/8），按属性顺序直接分配。"""
-        self._require(CreationStep.ABILITY)
-        self.ability_pool = list(STANDARD_ARRAY)
-        self.ability_groups = []
-        self.ability_candidates = []
-        self.ability_set_groups = []
-        self.base_scores = {
-            a.key: v for a, v in zip(ABILITIES, self.ability_pool, strict=True)
-        }
-        self.record(f"属性：标准数组 → {self.assigned_scores_text()}")
-        self.advance()
-        return (
-            f"已按标准数组分配属性：{self.assigned_scores_text()}"
-            f"\n\n{creation_prompt(self.step, self)}"
-        )
-
-    def assign_scores(self, text: str) -> str:
-        """按「力量 敏捷 体质 智力 感知 魅力」的顺序分配候选值。"""
-        self._require(CreationStep.ABILITY)
-        if not self.ability_pool:
-            raise CreationError("还没有候选属性值，请先回复「roll」或「标准数组」。")
-
-        tokens = _split_choices(text)
-        if len(tokens) == 1 and tokens[0].lower() in _AUTO_WORDS:
-            values = sorted(self.ability_pool, reverse=True)
-        else:
-            values = []
-            for token in tokens:
-                if not token.isdigit():
-                    raise CreationError(
-                        "请按顺序输入 6 个数字，例如「15 14 13 12 10 8」，或回复「自动」。"
-                    )
-                values.append(int(token))
-            if len(values) != len(ABILITIES):
-                raise CreationError(
-                    f"需要 {len(ABILITIES)} 个值（顺序："
-                    + " ".join(a.cn for a in ABILITIES)
-                    + "）。"
-                )
-            if sorted(values, reverse=True) != sorted(self.ability_pool, reverse=True):
-                raise CreationError(
-                    f"请使用候选值 {self.ability_pool} 中的数值，不要自行改动。"
-                )
-
-        for ability, value in zip(ABILITIES, values, strict=True):
-            if not ABILITY_SCORE_MIN <= value <= ABILITY_SCORE_MAX:
-                raise CreationError(
-                    f"{ability.cn} 的 {value} 超出 {ABILITY_SCORE_MIN}~{ABILITY_SCORE_MAX}。"
-                )
-        self.base_scores = {a.key: v for a, v in zip(ABILITIES, values, strict=True)}
-        self.record(f"属性分配：{self.assigned_scores_text()}")
-        self.advance()
-        return f"属性已分配：{self.assigned_scores_text()}\n\n{creation_prompt(self.step, self)}"
 
     def choose_race(self, text: str) -> str:
         """选择种族，可同时指定血系（``精灵 高等精灵``）。"""
@@ -2346,7 +2262,8 @@ def build_character(session: CreationSession) -> DndCharacter:
         feature_choices=dict(session.feature_choices),
         expertise=list(session.expertise),
         weapon_masteries=list(session.weapon_masteries),
-        score_method="4d6" if session.ability_groups else "standard",
+        # 属性现在只有 roll 一条路，卡上的生成方式统一写 4d6
+        score_method="4d6",
         score_rolls=_align_score_rolls(session),
         skills=list(dict.fromkeys(skills)),
         equipment=list(dict.fromkeys(normalized)),
