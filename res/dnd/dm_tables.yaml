@@ -1,0 +1,322 @@
+# 《城主指南 (2024)》DM 工具箱明文数据表
+#
+# 一张分段表（load_mapping）装下十几张小表：这些表都只有几行、彼此关联，
+# 拆成十几个文件反而没人找得到。段名 = 小节名，改数值不用改 .py。
+#
+# 出处（行号均为「参考/城主指南 (2024).md」）：
+#   improvised_damage  L1036-1048 / damage_severity L1050-1062
+#   doors L2330-2336 / lock_complexity L2342-2347 / lock_quality L2350-2357
+#   secret_doors L2359-2372 / portcullis L2378-2389 / trap_build L5594-5607
+#   trade_bars L9009-9020 / gems L9045-9123 / art L9127-9195
+#   individual_treasure L6182-6194 / hoard_treasure L6196-6210 / 任务奖励 L6212-6214
+#
+# ⚠️ 伤害/DC/价格等数值是 2024 明文，别拿 2014 的表覆盖。
+# ⚠️ 范例危害物 / 范例陷阱 / 范例毒药的详情卡在 md 里是 5etools 占位 HTML，
+#    本文件只收有明文数值的表；详情待从 参考/5etools-cn-cn2.0/data/ 转录。
+
+improvised_damage:
+- dice: 1d10
+  examples: 被炭烫伤，被倒下的书柜砸伤，被毒针刺伤
+- dice: 2d10
+  examples: 被闪电劈中，跌进火坑中
+- dice: 4d10
+  examples: 在坍塌的隧道里被落下的碎石砸中，滚入装满强酸的桶里
+- dice: 10d10
+  examples: 被紧实的墙壁碾压，被飞旋的钢铁利刃击中，淌过熔岩
+- dice: 18d10
+  examples: 淹没进熔岩里，被坠毁的飞行堡垒砸中
+- dice: 24d10
+  examples: 被卷入火元素位面的火焰涡流，被类神生物或和月亮一般大的怪物一口咬碎
+
+damage_severity:
+- levels: 1-4
+  setback: 5 (1d10)
+  deadly: 11 (2d10)
+- levels: 5-10
+  setback: 11 (2d10)
+  deadly: 22 (4d10)
+- levels: 11-16
+  setback: 22 (4d10)
+  deadly: 55 (10d10)
+- levels: 17-20
+  setback: 55 (10d10)
+  deadly: 99 (18d10)
+
+doors:
+- kind: 玻璃门
+  ac: 13
+  hp: 4
+  dc: 10
+- kind: 金属门
+  ac: 19
+  hp: 72
+  dc: 25
+- kind: 石门
+  ac: 17
+  hp: 40
+  dc: 20
+- kind: 木门
+  ac: 15
+  hp: 18
+  dc: 15
+
+lock_complexity:
+- kind: 简易
+  time: 1 个动作
+- kind: 复杂
+  time: 1 分钟
+
+lock_quality:
+- kind: 劣质
+  dc: 10
+- kind: 善良
+  dc: 15
+- kind: 高端
+  dc: 20
+
+secret_doors:
+- kind: 几乎没有隐藏的暗门
+  dc: 10
+- kind: 标准暗门
+  dc: 15
+- kind: 隐藏得很好的暗门
+  dc: 20
+
+portcullis:
+- size: 中型（8尺高 × 5尺宽）
+  iron_dc: 20
+  wood_dc: 15
+- size: 大型（10尺高 × 10尺宽）
+  iron_dc: 25
+  wood_dc: 20
+- size: 巨型（高20尺 × 宽15尺）
+  iron_dc: 30
+  wood_dc: 25
+
+trap_build:
+- levels: 1-4
+  setback_attack: +4
+  setback_dc: 10-12
+  setback_damage: 5 (1d10)
+  deadly_attack: +8
+  deadly_dc: 13-15
+  deadly_damage: 11 (2d10)
+- levels: 5-10
+  setback_attack: +4
+  setback_dc: 12-14
+  setback_damage: 11 (2d10)
+  deadly_attack: +8
+  deadly_dc: 15-17
+  deadly_damage: 22 (4d10)
+- levels: 11-16
+  setback_attack: +4
+  setback_dc: 14-16
+  setback_damage: 22 (4d10)
+  deadly_attack: +8
+  deadly_dc: 17-19
+  deadly_damage: 55 (10d10)
+- levels: 17-20
+  setback_attack: +4
+  setback_dc: 16-18
+  setback_damage: 55 (10d10)
+  deadly_attack: +8
+  deadly_dc: 19-21
+  deadly_damage: 99 (18d10)
+
+trade_bars:
+- name: 2磅银条
+  value: 10 GP
+  size: 5寸长 × 2寸宽 × 1/2寸高
+- name: 5磅银条
+  value: 25 GP
+  size: 6寸长 × 2寸宽 × 1寸高
+- name: 5磅金条
+  value: 250 GP
+  size: 5寸长 × 2寸宽 × 3/4寸高
+
+gems:
+- value: 10
+  die: 1d12
+  entries:
+  - "蓝铜矿石（斑驳的深蓝）"
+  - "带状玛瑙（棕色、蓝色、白色或红色的条纹）"
+  - "蓝石英（淡蓝）"
+  - "眼纹玛瑙（灰色、白色、棕色、蓝色或绿色的圆环）"
+  - "赤铁矿石（灰黑）"
+  - "青金石（浅蓝或深蓝带黄色斑点）"
+  - "孔雀石（浅绿和深绿的条纹）"
+  - "苔藓玛瑙（粉色或黄白，带有苔灰色或绿色斑纹）"
+  - "黑曜石（黑色）"
+  - "红锰矿石（淡粉）"
+  - "虎眼石（棕色，中心金色）"
+  - "绿松石（浅蓝绿）"
+- value: 50
+  die: 1d12
+  entries:
+  - "血玉髓（深灰带红色斑点）"
+  - "红玉髓（从橘黄至红棕）"
+  - "玉髓（白色）"
+  - "绿铜矿石（绿色）"
+  - "黄水晶（浅黄棕）"
+  - "碧玉（蓝色、黑色或棕色）"
+  - "月光石（白色带淡蓝光晕）"
+  - "缟玛瑙（纯黑、纯白或黑白条纹）"
+  - "石英（白色、烟灰色或黄色）"
+  - "缠丝玛瑙（红白条纹）"
+  - "星光玫瑰石英（中心为白色星形的玫瑰色石头）"
+  - "锆石（淡蓝绿）"
+- value: 100
+  die: 1d10
+  entries:
+  - "琥珀（从淡金至赤金）"
+  - "紫水晶（深紫）"
+  - "金绿玉（从黄绿至淡绿）"
+  - "珊瑚（深红）"
+  - "石榴石（红色、棕色、绿色或紫色）"
+  - "玉石（浅绿、深绿或白色）"
+  - "黑玉（深黑）"
+  - "珍珠（有光泽的白色、黄色或粉红）"
+  - "尖晶石（红色、红棕或深绿）"
+  - "电气石（淡绿、蓝色、棕色或红色）"
+- value: 500
+  die: 1d6
+  entries:
+  - "亚历山大绿石（深绿）"
+  - "海蓝宝石（淡蓝绿）"
+  - "黑珍珠（纯黑）"
+  - "蓝色尖晶石（深蓝）"
+  - "橄榄石（橄榄绿）"
+  - "黄玉（金黄）"
+- value: 1000
+  die: 1d8
+  entries:
+  - "黑蛋白石（深绿且带有黑色杂色阴影和金色斑点）"
+  - "蓝色蓝宝石（中蓝）"
+  - "翡翠（深绿）"
+  - "火蛋白石（火红）"
+  - "蛋白石（淡蓝带绿色和金色斑纹）"
+  - "星彩红宝石（中心为白色星形的红宝石）"
+  - "星光蓝色蓝宝石（中心为白色星形的蓝色蓝宝石）"
+  - "黄色蓝宝石（火黄或黄绿）"
+- value: 5000
+  die: 1d4
+  entries:
+  - "黑色蓝宝石（充满光泽的黑色并带有发光的亮点）"
+  - "钻石（蓝白、淡黄、粉色、棕色或蓝色）"
+  - "红锆石（炽橘）"
+  - "红宝石（从亮红至深红）"
+
+art:
+- value: 25
+  die: 1d10
+  entries:
+  - "银水壶"
+  - "骨制小雕像"
+  - "金手镯"
+  - "金丝祭袍"
+  - "由银丝缝制的黑天鹅绒面具"
+  - "银丝镶边铜杯"
+  - "一对骨骰子"
+  - "彩绘木制框架的手镜"
+  - "绣花丝绸手帕"
+  - "其中藏有画像的金吊坠"
+- value: 250
+  die: 1d10
+  entries:
+  - "镶有血玉髓的金戒指"
+  - "象牙雕像"
+  - "镶满宝石的金手镯"
+  - "饰有宝石吊坠的银项链"
+  - "青铜王冠"
+  - "带有金制绣花的丝绸祭袍"
+  - "制作精良的挂毯，长宽各 10 尺"
+  - "镶玉黄铜杯"
+  - "一盒绿松石制的动物小雕像"
+  - "饰有琥珀金丝的金鸟笼"
+- value: 750
+  die: 1d10
+  entries:
+  - "镶有月光石的银圣杯"
+  - "一扎著名作曲家遗失的乐谱"
+  - "木雕竖琴，镶嵌着象牙和锆石"
+  - "金制偶像"
+  - "形状像一条龙的金梳子，眼睛嵌有红色石榴石"
+  - "镶嵌有金箔和紫水晶的软木瓶塞浮雕"
+  - "真人般大小的精细银铸龙裔颅骨"
+  - "金银胸针"
+  - "金饰黑曜石小雕像"
+  - "金制彩绘战争面具"
+- value: 2500
+  die: 1d10
+  entries:
+  - "镶有火蛋白石的纯金链"
+  - "古老的名画"
+  - "附带刺绣的丝绸天鹅绒斗篷，镶有许多月光石"
+  - "嵌着一颗绿宝石的铂金手镯"
+  - "镶有宝石片的绣花手套"
+  - "宝石脚环"
+  - "金制八音盒"
+  - "镶有四颗海蓝宝石的金戒指"
+  - "用蓝色蓝宝石和月光石装饰的眼罩"
+  - "一串粉红色的小珍珠项链"
+- value: 7500
+  die: 1d10
+  entries:
+  - "宝石金制王冠"
+  - "宝石铂金戒指"
+  - "镶有红宝石的金雕像"
+  - "镶有绿宝石的金杯"
+  - "金首饰盒缀有铂金细丝"
+  - "一套黄金套娃"
+  - "玉制棋盘和黄金棋子"
+  - "镶嵌有金丝与宝石的象牙饮水角"
+  - "镀金的皇家马车或送葬船"
+  - "饰有黑珍珠的黄金铠甲"
+
+individual_treasure:
+- cr: 0-4
+  dice: 3d6
+  multiplier: 1
+  unit: GP
+  average: 10
+- cr: 5-10
+  dice: 2d8
+  multiplier: 10
+  unit: GP
+  average: 90
+- cr: 11-16
+  dice: 2d10
+  multiplier: 10
+  unit: PP
+  average: 110
+- cr: 17+
+  dice: 2d8
+  multiplier: 100
+  unit: PP
+  average: 900
+
+hoard_treasure:
+- cr: 0-4
+  dice: 2d4
+  multiplier: 100
+  unit: GP
+  average: 500
+  magic_dice: 1d4-1
+- cr: 5-10
+  dice: 8d10
+  multiplier: 100
+  unit: GP
+  average: 4400
+  magic_dice: 1d3
+- cr: 11-16
+  dice: 8d8
+  multiplier: 1000
+  unit: GP
+  average: 36000
+  magic_dice: 1d4
+- cr: 17+
+  dice: 6d10
+  multiplier: 10000
+  unit: GP
+  average: 330000
+  magic_dice: 1d6

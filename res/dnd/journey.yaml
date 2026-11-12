@@ -1,0 +1,255 @@
+# 《城主指南 (2024)》第二章「旅行」明文数值（参考 md L1220-1418）
+#
+# 一张分段表装下：11 种地形 × 5 列、步调修正、天气、声音传播、能见度、
+# 觅食 / 导航 / 追踪常量、旅程阶段四步与挑战清单。
+# 数值一律从这里取，别写回 .py（有测试拦）。
+#
+# ⚠️ **步调本身的英里数不在这里**：唯一真相是 core/dnd/environment.py 的
+#    TRAVEL_PACE（慢速 18 / 普通 24 / 快速 30 里每天，8 小时一天）与
+#    forced_march_exhaustion（超 8 小时每小时 DC 10+N）。复制一份会造成两处真相。
+# ⚠️ 原文用词不统一：地形表写「缓速 / 普通 / 快速」，步调小节写「慢速 / 中速 /
+#    快速」。这里按地形表原样存 max_pace，由 journey.normalize_pace 归一到
+#    environment 的 slow / normal / fast。
+# ⚠️ 「水路」的 max_pace 是「特殊」：原文说乘载具时按载具速度、不选旅行步调，
+#    所以这一行没有步调上限，DC 三列照旧有效。
+# ⚠️ 天气表 15-17 档的「风势」原文印作「光线」，疑为「轻风」误植；
+#    这里保留原文词并在 note 里标明，不擅自改规则。
+
+terrain:
+- cn: 极地
+  aliases: [苔原, 冰原, 雪原, 极地荒原, polar]
+  max_pace: 快速
+  pace_note: 要在极地保持快速步调，适当的装备（如滑雪板）不可或缺
+  encounter_dice: 6d6
+  encounter_mult: 10
+  encounter_display: 6d6 × 10 尺
+  forage_dc: 20
+  navigation_dc: 10
+  search_dc: 10
+- cn: 海岸
+  aliases: [海边, 沿岸, 海滩, coast]
+  max_pace: 普通
+  pace_note: ""
+  encounter_dice: 2d10
+  encounter_mult: 10
+  encounter_display: 2d10 × 10 尺
+  forage_dc: 10
+  navigation_dc: 5
+  search_dc: 15
+- cn: 荒漠
+  aliases: [沙漠, 戈壁, 荒原, desert]
+  max_pace: 普通
+  pace_note: ""
+  encounter_dice: 6d6
+  encounter_mult: 10
+  encounter_display: 6d6 × 10 尺
+  forage_dc: 20
+  navigation_dc: 10
+  search_dc: 10
+- cn: 森林
+  aliases: [林地, 树林, 密林, forest]
+  max_pace: 普通
+  pace_note: ""
+  encounter_dice: 2d8
+  encounter_mult: 10
+  encounter_display: 2d8 × 10 尺
+  forage_dc: 10
+  navigation_dc: 15
+  search_dc: 15
+- cn: 草地
+  aliases: [草原, 平原, 旷野, grassland]
+  max_pace: 快速
+  pace_note: ""
+  encounter_dice: 6d6
+  encounter_mult: 10
+  encounter_display: 6d6 × 10 尺
+  forage_dc: 15
+  navigation_dc: 5
+  search_dc: 15
+- cn: 山丘
+  aliases: [丘陵, 岗地, hills]
+  max_pace: 普通
+  pace_note: ""
+  encounter_dice: 2d10
+  encounter_mult: 10
+  encounter_display: 2d10 × 10 尺
+  forage_dc: 15
+  navigation_dc: 10
+  search_dc: 15
+- cn: 山地
+  aliases: [山脉, 高山, 群山, mountains]
+  max_pace: 缓速
+  pace_note: ""
+  encounter_dice: 4d10
+  encounter_mult: 10
+  encounter_display: 4d10 × 10 尺
+  forage_dc: 20
+  navigation_dc: 15
+  search_dc: 20
+- cn: 沼泽
+  aliases: [湿地, 泥沼, 沼地, swamp]
+  max_pace: 缓速
+  pace_note: ""
+  encounter_dice: 2d8
+  encounter_mult: 10
+  encounter_display: 2d8 × 10 尺
+  forage_dc: 10
+  navigation_dc: 15
+  search_dc: 20
+- cn: 幽暗地域
+  aliases: [地下, 地底, 洞穴, underdark]
+  max_pace: 普通
+  pace_note: ""
+  encounter_dice: 2d6
+  encounter_mult: 10
+  encounter_display: 2d6 × 10 尺
+  forage_dc: 20
+  navigation_dc: 10
+  search_dc: 20
+- cn: 城市
+  aliases: [城镇, 聚落, 城区, urban]
+  max_pace: 普通
+  pace_note: ""
+  encounter_dice: 2d6
+  encounter_mult: 10
+  encounter_display: 2d6 × 10 尺
+  forage_dc: 20
+  navigation_dc: 15
+  search_dc: 15
+- cn: 水路
+  aliases: [河流, 水上, 江, 湖, waterway]
+  max_pace: 特殊
+  pace_note: 角色依靠水路时的旅行速率取决于乘坐的载具，不选旅行步调
+  encounter_dice: 6d6
+  encounter_mult: 10
+  encounter_display: 6d6 × 10 尺
+  forage_dc: 15
+  navigation_dc: 10
+  search_dc: 15
+
+pace_rules:
+- key: 最大步调
+  text: 在任何旅程阶段，主要地形决定团队的最快旅行步调（见地形表最大步调列）。
+- key: 路况良好
+  text: 路况良好的道路使团队的最大步调提高一节（慢速→普通，或普通→快速）。
+- key: 速度更慢的旅客
+  text: 若任何成员的速度降到正常的一半或以下，整个团队必须以慢速步调移动。
+- key: 延长旅行
+  text: 每日超过 8 小时后，每多 1 小时在小时结束时过一次体质豁免，DC = 10 + 超出的第几小时，失败 +1 力竭。
+- key: 特殊移动
+  text: 每小时英里数 = 速度 ÷ 10；每日英里数（普通步调）= 每小时英里数 × 旅行小时数（通常 8）；快速 = 日英里数 × 1⅓ 向下取整；慢速 = 日英里数 × 2/3 向下取整。飞行或能无视困难地形者不受地形限制，一律可用快速步调。
+- key: 载具
+  text: 乘坐载具用载具速度按英里每小时算旅行速率，并且不选择旅行步调。
+
+weather:
+- roll: 1-14
+  temperature: 本季正常水准
+  wind: 不变
+  precipitation: 不变
+- roll: 15-17
+  temperature: 1d4 × 10 华氏度变冷
+  wind: 光线
+  precipitation: 轻度降雨或降雪
+- roll: 18-20
+  temperature: 1d4 × 10 华氏度变热
+  wind: 强
+  precipitation: 大雨或大雪
+  note: 原文 15-17 档风势印作「光线」，疑为「轻风」误植；按地形与季节自行调整。
+
+sound_distance:
+- level: 试图保持安静
+  dice: 2d6
+  mult: 5
+  display: 2d6 × 5 尺
+- level: 正常噪音水平
+  dice: 2d6
+  mult: 10
+  display: 2d6 × 10 尺
+- level: 非常响亮
+  dice: 2d6
+  mult: 50
+  display: 2d6 × 50 尺
+
+underwater_visibility:
+- condition: 清澈的水，明亮光照
+  feet: 60
+- condition: 清澈的水，微光光照
+  feet: 30
+- condition: 浑浊的水或黑暗
+  feet: 10
+
+visibility_notes:
+- key: 晴朗白昼
+  text: 户外多数角色能向任何方向看到约 2 英里，除非有障碍物阻挡视线。
+- key: 高处俯瞰
+  text: 位于山地或高岗、或能从高处俯瞰下方区域时，能见范围增至 40 英里。
+- key: 降雨
+  text: 轻度遮蔽状态使最大能见度降至 1 英里。
+- key: 雾气
+  text: 轻度遮蔽状态使能见度降至 100~300 尺之间。
+- key: 海上
+  text: 乌鸦巢上的瞭望员天晴无风时可见 10 英里；阴沉天空减半；轻度遮蔽同陆地。
+- key: 水下
+  text: 水下可见度取决于水的清澈度与光照，按水下遭遇距离表定遭遇距离。
+
+forage:
+- check: 感知（求生）
+  frequency: 每个旅程阶段一次；阶段短于一天则每日一次
+  dc_source: 旅行地形表的觅食DC列
+  yield_dice: 1d6
+  yield_bonus: 感知调整值
+  food_unit: 磅
+  water_unit: 加仑
+  text: 检定失败什么也找不到；成功则掷 1d6 + 感知调整值得到食物磅数，再重复掷骰得到水加仑数。多人觅食各掷各的。没有饮水口粮的角色靠它避免脱水与饥饿。
+
+navigation:
+- check: 感知（求生）
+  dc_source: 旅行地形表的导航DC列
+  assist: 另一名成员可按协助动作给优势
+  delay_dice: 1d6
+  delay_percent: 10
+  text: 没有既定路径或看不到地标时有迷路风险；检定失败队伍偏离路线，基准是当前旅程阶段长度延长 1d6 × 10%，还可能影响后续阶段。
+
+tracking:
+- dc_source: 旅行地形表的搜索DC列
+  short_search: 狭窄区域（如一连串洞穴）重找踪迹需 10 分钟
+  outdoor_search: 户外重找踪迹需 1 小时
+  text: 追踪用感知（求生）；踪迹明显（泥路大军）无需掷骰。休息后、天气或地形变化、路径被河流切断时可能要重掷。多组踪迹可给优势，繁忙区域给劣势。原文把搜索DC列作为追踪DC的起点。
+
+phase_steps:
+- step: 1
+  title: 设定步调
+  text: 让玩家选慢速 / 普通 / 快速；按地形上限与阶段长度（英里）算出走完要多久。
+- step: 2
+  title: 描述旅行
+  text: 描述本阶段发生了什么，引入并解决一个或多个挑战。
+- step: 3
+  title: 追踪粮食与水消耗
+  text: 每个生物按阶段消耗相应食物与水；不足则面临脱水与饥饿。
+- step: 4
+  title: 跟踪进度
+  text: 阶段结束时在地图上标记位置，记录经过的时间与到达的地标 / 中转站 / 冒险地点。
+
+challenges:
+- key: 遭遇其他生物
+  text: 遭遇距离由地形表定；可能是伏击、从天而降的攻击、远距离观测、偶然发现或追击。
+- key: 觅食
+  text: 感知（求生）对抗觅食DC，成功掷 1d6+感知调整值得食物与水。
+- key: 导航
+  text: 感知（求生）对抗导航DC，失败迷路并延长 1d6 × 10%。
+- key: 阻碍
+  text: 悬崖、暴风雪、森林大火等；延迟之外还可能引发战斗遭遇、伤害、力竭或其他状态。
+- key: 搜索行动
+  text: 旅程最后阶段找目的地，感知（察觉）对抗搜索DC，可按地形与目标性质调整。
+- key: 追踪
+  text: 沿踪迹选路，用搜索DC作起点；失败失去路径，狭窄区域找 10 分钟、户外 1 小时。
+
+phase_notes:
+- key: 阶段长度
+  text: 每阶段代表从几小时到十天左右的旅行；清晰路径前往知名目的地可以只有一个阶段，三阶段常构成一次令人满意的跋涉。
+- key: 规划各个阶段
+  text: 每阶段记起点、终点、行程距离、主要地形，选或掷天气，再设计一个或多个挑战。超过三阶段用多份规划卡。
+- key: 没有目的地的旅程
+  text: 用地图方格 / 六边格定义阶段（六边格爬行）；沙盒方式按格预置遭遇，随机方式用表掷每格的遭遇或阻碍。
+- key: 天气
+  text: 每阶段掷 1d20 三次分别定气温、风势、降水；按地形与季节调整。天气大多无机械影响，极端天气见第三章环境效应。

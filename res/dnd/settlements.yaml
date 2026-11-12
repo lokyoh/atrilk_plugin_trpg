@@ -1,0 +1,416 @@
+# 《城主指南 (2024)》第三章「聚居地」明文数值（参考 md L4385-4525）
+#
+# 七组内容：规模表 3 行 + 六张随机表（重要特征 1d20、闻名于 1d20、
+# 当前的灾难 1d12、当地领袖 1d12、酒馆名称 1d20×2、随机店铺 1d20）。
+# 数值与文案一律从这里取，别写回 .py（有测试拦）。
+#
+# ⚠️ 规模表**不是随机表**：村庄 / 小镇 / 城市由 DM 按设定选，
+#    卡上只给人口范围与「该聚落可能出售的最昂贵物品价值」的交易限额。
+#    原文 L4387 明确说可按特殊情况调整（村里恰好有炼金师也可能买得到药水）。
+# ⚠️ 酒馆名称按原文 L4501 脚注：**两个组成部分各掷一次 1d20**，别只掷一次。
+# ⚠️ 所有随机表用 low/high 存档位；单值行 low == high。
+
+meta:
+- key: features
+  cn: 重要特征
+  aliases: [特征, 地标, 重要地标]
+  dice: 1d20
+- key: known_for
+  cn: 闻名于
+  aliases: [成名之举, 名声, 特产]
+  dice: 1d20
+- key: calamity
+  cn: 当前的灾难
+  aliases: [灾难, 灾变, 麻烦]
+  dice: 1d12
+- key: leader
+  cn: 当地领袖
+  aliases: [领袖, 首领, 统治者]
+  dice: 1d12
+- key: tavern
+  cn: 酒馆名称
+  aliases: [酒馆, 酒馆名, 旅店]
+  dice: 1d20 × 2
+- key: shops
+  cn: 随机店铺
+  aliases: [店铺, 商店, 随机商铺]
+  dice: 1d20
+
+size:
+- cn: 村庄
+  aliases: [村落, 乡村, village]
+  population_text: 最多 500
+  population_min: 0
+  population_max: 500
+  trade_limit_gp: 20
+- cn: 小镇
+  aliases: [镇子, 城镇, town]
+  population_text: 501–5,000
+  population_min: 501
+  population_max: 5000
+  trade_limit_gp: 2000
+- cn: 城市
+  aliases: [大城, 都市, city]
+  population_text: 5001 及更高
+  population_min: 5001
+  population_max: null
+  trade_limit_gp: 200000
+
+features:
+- low: 1
+  high: 2
+  text: 格外坚实的城墙
+- low: 3
+  high: 4
+  text: 大量花园、公园和绿地
+- low: 5
+  high: 6
+  text: 大量泥泞、污秽和垃圾
+- low: 7
+  high: 8
+  text: 广阔的墓地
+- low: 9
+  high: 10
+  text: 持续不散的雾
+- low: 11
+  high: 12
+  text: 铁匠铺与锻造厂中的响声与浓烟
+- low: 13
+  high: 13
+  text: 运河和桥梁
+- low: 14
+  high: 14
+  text: 一侧或多侧为悬崖
+- low: 15
+  high: 16
+  text: 整洁的街道与维护良好的建筑物
+- low: 17
+  high: 18
+  text: 聚落之内的古代遗迹
+- low: 19
+  high: 20
+  text: 宏伟结构（如堡垒、庙宇、立石阵或塔庙）
+
+known_for:
+- low: 1
+  high: 1
+  text: 美食
+- low: 2
+  high: 2
+  text: 民风恶劣
+- low: 3
+  high: 3
+  text: 民风淳朴
+- low: 4
+  high: 4
+  text: 艺术家或作家
+- low: 5
+  high: 5
+  text: 伟大的英雄/救世主
+- low: 6
+  high: 6
+  text: 花朵
+- low: 7
+  high: 7
+  text: 季节庆典
+- low: 8
+  high: 8
+  text: 闹鬼
+- low: 9
+  high: 9
+  text: 施法者
+- low: 10
+  high: 10
+  text: 衰落
+- low: 11
+  high: 11
+  text: 虔诚
+- low: 12
+  high: 12
+  text: 赌博
+- low: 13
+  high: 13
+  text: 无神论
+- low: 14
+  high: 14
+  text: 教育
+- low: 15
+  high: 15
+  text: 葡萄酒
+- low: 16
+  high: 16
+  text: 高档时装
+- low: 17
+  high: 17
+  text: 政治阴谋
+- low: 18
+  high: 18
+  text: 强大的行会
+- low: 19
+  high: 19
+  text: 爱国主义
+- low: 20
+  high: 20
+  text: 古代遗迹
+
+calamity:
+- low: 1
+  high: 1
+  text: 怪物在聚落中滋生。
+- low: 2
+  high: 2
+  text: 一位关键人物逝世；这疑似是一场谋杀。
+- low: 3
+  high: 3
+  text: 竞争对手公会或帮派之间酝酿着战争。
+- low: 4
+  high: 4
+  text: 瘟疫或饥荒引发了骚乱。
+- low: 5
+  high: 5
+  text: 怪物攻击任何接近或离开聚落的人。
+- low: 6
+  high: 6
+  text: 贸易纠纷导致经济困苦。
+- low: 7
+  high: 7
+  text: 一场自然灾害威胁着该聚居地。
+- low: 8
+  high: 8
+  text: 末日预言让居民们人心惶惶。
+- low: 9
+  high: 9
+  text: 当地居民被征召参加战争。
+- low: 10
+  high: 10
+  text: 政治或宗教冲突可能引发暴力事件。
+- low: 11
+  high: 11
+  text: 该聚居地正遭受围攻。
+- low: 12
+  high: 12
+  text: 妄言威胁着当地大家族。
+
+leader:
+- low: 1
+  high: 1
+  text: 受人敬仰、公平公正的首领或议会
+- low: 2
+  high: 2
+  text: 令人畏惧的暴君
+- low: 3
+  high: 3
+  text: 被他人操纵的懦夫
+- low: 4
+  high: 4
+  text: 造成动乱的非法继任者
+- low: 5
+  high: 5
+  text: 强大的怪物
+- low: 6
+  high: 6
+  text: 神秘莫测的阴谋家
+- low: 7
+  high: 7
+  text: 领导权争夺（伴随公开战斗）
+- low: 8
+  high: 8
+  text: 执着于争吵的议会，难以做出决策
+- low: 9
+  high: 9
+  text: 愚钝的莽夫
+- low: 10
+  high: 10
+  text: 快要离世的领袖（继任者未定）
+- low: 11
+  high: 11
+  text: 意志坚定且受人尊敬的首领或议会
+- low: 12
+  high: 12
+  text: 宗教领袖或议会
+
+tavern_first:
+- low: 1
+  high: 1
+  text: 金色
+- low: 2
+  high: 2
+  text: 银色
+- low: 3
+  high: 3
+  text: 无胡者
+- low: 4
+  high: 4
+  text: 狂笑
+- low: 5
+  high: 5
+  text: 舞者
+- low: 6
+  high: 6
+  text: 镀金
+- low: 7
+  high: 7
+  text: 绊脚
+- low: 8
+  high: 8
+  text: 狼与
+- low: 9
+  high: 9
+  text: 堕落者
+- low: 10
+  high: 10
+  text: 下流的
+- low: 11
+  high: 11
+  text: 醉酒的
+- low: 12
+  high: 12
+  text: 葡萄酒与
+- low: 13
+  high: 13
+  text: 咆哮的
+- low: 14
+  high: 14
+  text: 皱眉
+- low: 15
+  high: 15
+  text: 酒桶与
+- low: 16
+  high: 16
+  text: 饥渴
+- low: 17
+  high: 17
+  text: 流浪
+- low: 18
+  high: 18
+  text: 狂吠的
+- low: 19
+  high: 19
+  text: 快乐
+- low: 20
+  high: 20
+  text: 女巫与
+
+tavern_second:
+- low: 1
+  high: 1
+  text: 里拉琴
+- low: 2
+  high: 2
+  text: 海豚
+- low: 3
+  high: 3
+  text: 矮人
+- low: 4
+  high: 4
+  text: 天马
+- low: 5
+  high: 5
+  text: 小屋
+- low: 6
+  high: 6
+  text: 玫瑰
+- low: 7
+  high: 7
+  text: 雄鹿
+- low: 8
+  high: 8
+  text: 鸭子
+- low: 9
+  high: 9
+  text: 羔羊
+- low: 10
+  high: 10
+  text: 恶魔
+- low: 11
+  high: 11
+  text: 山羊
+- low: 12
+  high: 12
+  text: 精魂
+- low: 13
+  high: 13
+  text: 部落
+- low: 14
+  high: 14
+  text: 小丑
+- low: 15
+  high: 15
+  text: 吊桶
+- low: 16
+  high: 16
+  text: 乌鸦
+- low: 17
+  high: 17
+  text: 半羊人
+- low: 18
+  high: 18
+  text: 狗
+- low: 19
+  high: 19
+  text: 蜘蛛
+- low: 20
+  high: 20
+  text: 龙
+
+shops:
+- low: 1
+  high: 1
+  text: 当铺
+- low: 2
+  high: 2
+  text: 药剂店
+- low: 3
+  high: 3
+  text: 杂货店
+- low: 4
+  high: 4
+  text: 熟食店
+- low: 5
+  high: 5
+  text: 陶艺店
+- low: 6
+  high: 6
+  text: 殡仪馆
+- low: 7
+  high: 7
+  text: 书店
+- low: 8
+  high: 8
+  text: 放债铺
+- low: 9
+  high: 9
+  text: 装甲师
+- low: 10
+  high: 10
+  text: 杂货店
+- low: 11
+  high: 11
+  text: 铁匠铺
+- low: 12
+  high: 12
+  text: 木工坊
+- low: 13
+  high: 13
+  text: 织物店
+- low: 14
+  high: 14
+  text: 珠宝店
+- low: 15
+  high: 15
+  text: 面包房
+- low: 16
+  high: 16
+  text: 制图店
+- low: 17
+  high: 17
+  text: 裁缝店
+- low: 18
+  high: 18
+  text: 绳店
+- low: 19
+  high: 19
+  text: 石匠坊
+- low: 20
+  high: 20
+  text: 抄写员

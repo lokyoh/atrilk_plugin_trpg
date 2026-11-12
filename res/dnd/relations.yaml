@@ -1,0 +1,178 @@
+# 《城主指南 (2024)》NPC 态度 / 忠诚 / 声望明文数值
+# 参考 md：态度 L1126-1130、初始态度 L6037-6047、忠诚 L3854-3868、
+#          声望 L4331-4379。数值与文案一律从这里取，别写回 .py（有测试拦）。
+#
+# ⚠️ 这三条都是**可选规则**，引擎只记账与掷骰，不替 DM 判断「该不该给声望」。
+# ⚠️ 忠诚值边界 10 有原文歧义：L3866 同时写「10 或更高冒死相助」与
+#    「1 到 10 之间忠诚度薄弱」。这里**裁定 >=10 冒死、1~9 薄弱、0 背叛**
+#    （取更靠前的明确句），见 loyalty_tiers 的 note，别静默改回去。
+# ⚠️ 起始忠诚 = 队伍最高魅力的一半，原文没说取整方式；工程取**向下取整**
+#    （cha // 2），在 core/dnd/relations.py 的 docstring 里写明。
+# ⚠️ 声望「重大任务 +3 或 +4」由 DM 选，表里存 min/max，不擅自替他定。
+
+attitudes:
+- key: hostile
+  cn: 敌对
+  aliases: [敌意, 敌视, 敌人, hostile]
+  text: "把冒险者当威胁，不会主动帮忙；言行改变态度后要向玩家描述变化。"
+- key: indifferent
+  cn: 冷漠
+  aliases: [冷淡, 中立, 无所谓, indifferent]
+  text: "不主动帮忙也不主动作对；一次善意言行（如请矿工喝酒）可能转为友好。"
+- key: friendly
+  cn: 友好
+  aliases: [友善, 好感, 朋友, friendly]
+  text: "愿意提供信息、许诺回报或邀请同行；DM 自行决定帮忙到什么程度。"
+
+initial_attitude:
+- low: 1
+  high: 4
+  attitude: 敌对
+- low: 5
+  high: 8
+  attitude: 冷漠
+- low: 9
+  high: 12
+  attitude: 友好
+
+# 原文 L6047 脚注：换骰子改变好感度范围；掷出的值 + modifier 后查上表。
+initial_variants:
+- key: 普通
+  aliases: [默认, 标准, normal]
+  dice: 1d12
+  modifier: 0
+  note: "原表 1d12：敌对 / 冷漠 / 友好各占 4 面"
+- key: 掠食者
+  aliases: [掠食性怪物, 捕食者, 怪物, predator]
+  dice: 1d6
+  modifier: 0
+  note: "掷 1d6（1~6）：更可能敌对"
+- key: 旅人
+  aliases: [普通旅行者, 旅行者, traveler]
+  dice: 1d6
+  modifier: 3
+  note: "掷 1d6+3（4~9）：三种态度都可能"
+- key: 热心
+  aliases: [热心之人, 好心人, warm]
+  dice: 1d6
+  modifier: 6
+  note: "掷 1d6+6（7~12）：更可能友好"
+
+loyalty_rules:
+- key: min
+  value: 0
+  text: "忠诚值永远不会降至 0 以下"
+- key: hard_cap
+  value: 20
+  text: "忠诚值以 0~20 衡量；同时不超过「队伍最高魅力值」"
+- key: start_divisor
+  value: 2
+  text: "起始忠诚值为最高魅力值的一半（工程向下取整）"
+- key: mutiny_ratio
+  value: 0.5
+  text: "航行中至少一半船员忠诚值降到 0 → 态度转敌对并哗变"
+
+loyalty_events:
+- key: 目标
+  aliases: [个人目标, 协助目标, goal]
+  dice: 1d4
+  sign: 1
+  text: "其他队员协助该 NPC 达成其个人目标 → +1d4"
+- key: 优待
+  aliases: [礼物, 特别优待, gift]
+  dice: 1d4
+  sign: 1
+  text: "受到特别优待（如获赠魔法武器）或被队友所救 → +1d4"
+- key: 违背
+  aliases: [违背阵营, 违背个性, against]
+  dice: 1d4
+  sign: -1
+  text: "队员行为违背该 NPC 的阵营或个性 → -1d4"
+- key: 虐待
+  aliases: [自私, 误导, 危及, abused]
+  dice: 2d4
+  sign: -1
+  text: "队员出于纯粹自私而虐待、误导或危及该 NPC → -2d4"
+
+loyalty_tiers:
+- key: devoted
+  min: 10
+  max: 20
+  cn: 愿冒生命危险
+  text: "忠诚值 10 或更高：会冒着生命危险协助队友。"
+- key: shaky
+  min: 1
+  max: 9
+  cn: 忠诚度薄弱
+  text: "忠诚值 1~9：对队伍的忠诚度相当薄弱。"
+  note: "原文写「1 到 10 之间」与上一档的 10 重叠，工程取 1~9"
+- key: broken
+  min: 0
+  max: 0
+  cn: 不再忠诚
+  text: "忠诚值 0：不再以队伍最佳利益行事，要么离队（攻击阻拦者），要么暗中让队伍败落。"
+
+loyalty_notes:
+- key: private
+  title: 私下跟进
+  text: "忠诚值要**私下**记录，玩家不该确定一名 NPC 队友忠诚还是不忠。"
+- key: crew
+  title: 船员与叛变
+  text: "可逐名记船员忠诚，或把全体船员当一个整体。航行中至少半数降到 0 就哗变；船已停泊则不忠船员离船且永不归来。"
+- key: adjust
+  title: 最高魅力变化
+  text: "队伍中最高魅力值变化（角色死亡 / 离队）时，相应调整 NPC 的最高与当前忠诚值。"
+
+reputation_gains:
+- key: 推进
+  aliases: [推进利益, advance]
+  value: 1
+  text: "推进团体利益的任务 → 声望 +1"
+- key: 指定任务
+  aliases: [直接获益, mission]
+  value: 2
+  text: "团体特别指定、或直接带来利益的任务 → 声望 +2"
+- key: 重大任务
+  aliases: [major]
+  value: 3
+  max: 4
+  text: "重大任务可一次 +3 或 +4，由 DM 判断"
+- key: 团队建设
+  aliases: [建设, teamwork]
+  value: 1
+  days_per_point: 10
+  text: "声望 1+ 后，冒险之余花「当前声望值 × 10」天做团体次要任务与社交 → 声望 +1"
+
+reputation_tiers:
+- min: 3
+  cn: 认可
+  text: "声望 3+：团体中受尊敬的成员，其他成员默认友好，危急时提供食宿；可能得到可靠联络人、安全屋或用品折扣。"
+- min: 10
+  cn: 特权
+  text: "声望 10+：也许能取用药水和卷轴、请求恩赐，或在危险任务中获得支援。"
+- min: 50
+  cn: 号令
+  text: "声望 50：可召集一支小规模军队、获得珍稀魔法物品、有一位协助施法者，或给低位成员分派特殊任务。"
+
+reputation_by_level:
+- level: 1
+  value: 1
+- level: 3
+  value: 3
+- level: 5
+  value: 10
+- level: 11
+  value: 25
+- level: 17
+  value: 50
+
+reputation_notes:
+- key: scope
+  title: 按团体分别记
+  text: "声望按「角色或小队 × 团体」分别记录（同一角色在 A 派系 5 点、B 派系 20 点很正常）；起始一律 0。"
+- key: loss
+  title: 降低声望
+  text: "与成员意见分歧**不**掉声望；对团体及成员犯下严重罪行会扣声望甚至失去阶级，扣多少由 DM 按严重程度定，最低 0。"
+- key: level
+  title: 基于等级的声望
+  text: "不想追踪声望值时，可用角色等级估算（前提是职业生涯大部分时间为该团体工作）；查 reputation_by_level 表。"

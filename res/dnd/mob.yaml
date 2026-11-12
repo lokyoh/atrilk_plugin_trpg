@@ -1,0 +1,185 @@
+# 《城主指南 (2024)》第三章「怪群」明文数值（参考 md L3572-3654）
+#
+# 两张表 + 一组说明，数值一律从这里取，别写回 .py（有测试拦）：
+#   resolution —— 「怪群结算」20 行：所需骰值（普通 / 具有优势 / 具有劣势）
+#                 × 4/5/6/8/10 个一组各成功几只。
+#   areas      —— 「效应区域内的目标」12 行：锥状 / 立方 / 圆形 / 线状 → 目标数。
+#   groups     —— 结算表表头的五个组大小，程序从它取，别另存一份。
+#   notes      —— 小贴士、三步法、原文范例与区域修正。
+#
+# ⚠️ 口径 2024：这不是 2014「每 X 次攻击命中一次」那张表。原文给的是
+#    「一组怪里成功几只」的分数；非表头数量按比例外推，原文 L3654 自己就
+#    示范了「12 × 1/6 = 2」，不是项目臆造。
+# ⚠️ 原文表格里的「—」在这里记 null：该列这一行**没有对应骰值**，不是 0。
+#    劣势列最高只到 16–17；所需骰值 18~20 且全体劣势时原文没有行，
+#    程序返回「表里没有」而不是偷偷钳到 17（校验器不静默修补）。
+# ⚠️ 命中数 0 是原文数值（所需骰值 19/20 时 4~8 只一组均为 0），
+#    别当成缺数据补成 1。
+
+groups:
+- size: 4
+- size: 5
+- size: 6
+- size: 8
+- size: 10
+
+resolution:
+- normal: 1
+  advantage: "1-4"
+  disadvantage: 1
+  hits: {4: 4, 5: 5, 6: 6, 8: 8, 10: 10}
+- normal: 2
+  advantage: "5-6"
+  disadvantage: null
+  hits: {4: 4, 5: 5, 6: 6, 8: 8, 10: 10}
+- normal: 3
+  advantage: "7-8"
+  disadvantage: 2
+  hits: {4: 4, 5: 5, 6: 5, 8: 7, 10: 9}
+- normal: 4
+  advantage: 9
+  disadvantage: null
+  hits: {4: 3, 5: 4, 6: 5, 8: 7, 10: 9}
+- normal: 5
+  advantage: 10
+  disadvantage: 3
+  hits: {4: 3, 5: 4, 6: 5, 8: 6, 10: 8}
+- normal: 6
+  advantage: 11
+  disadvantage: null
+  hits: {4: 3, 5: 4, 6: 5, 8: 6, 10: 8}
+- normal: 7
+  advantage: 12
+  disadvantage: 4
+  hits: {4: 3, 5: 4, 6: 4, 8: 6, 10: 7}
+- normal: 8
+  advantage: 13
+  disadvantage: 5
+  hits: {4: 3, 5: 3, 6: 4, 8: 5, 10: 7}
+- normal: 9
+  advantage: 14
+  disadvantage: null
+  hits: {4: 2, 5: 3, 6: 4, 8: 5, 10: 6}
+- normal: 10
+  advantage: null
+  disadvantage: 6
+  hits: {4: 2, 5: 3, 6: 3, 8: 4, 10: 6}
+- normal: 11
+  advantage: 15
+  disadvantage: 7
+  hits: {4: 2, 5: 3, 6: 3, 8: 4, 10: 5}
+- normal: 12
+  advantage: 16
+  disadvantage: null
+  hits: {4: 2, 5: 2, 6: 3, 8: 4, 10: 5}
+- normal: 13
+  advantage: null
+  disadvantage: 8
+  hits: {4: 2, 5: 2, 6: 2, 8: 3, 10: 4}
+- normal: 14
+  advantage: 17
+  disadvantage: 9
+  hits: {4: 1, 5: 2, 6: 2, 8: 3, 10: 4}
+- normal: 15
+  advantage: 18
+  disadvantage: 10
+  hits: {4: 1, 5: 2, 6: 2, 8: 2, 10: 3}
+- normal: 16
+  advantage: null
+  disadvantage: 11
+  hits: {4: 1, 5: 1, 6: 2, 8: 2, 10: 3}
+- normal: 17
+  advantage: 19
+  disadvantage: 12
+  hits: {4: 1, 5: 1, 6: 1, 8: 2, 10: 2}
+- normal: 18
+  advantage: null
+  disadvantage: 13
+  hits: {4: 1, 5: 1, 6: 1, 8: 1, 10: 2}
+- normal: 19
+  advantage: 20
+  disadvantage: "14-15"
+  hits: {4: 0, 5: 1, 6: 1, 8: 1, 10: 1}
+- normal: 20
+  advantage: null
+  disadvantage: "16-17"
+  hits: {4: 0, 5: 0, 6: 0, 8: 0, 10: 1}
+
+areas:
+- cone: 10尺
+  cube: 5-10尺
+  sphere: 半径5尺
+  line: null
+  targets: 1
+- cone: 15-20尺
+  cube: 15尺
+  sphere: null
+  line: 30尺长，5尺宽
+  targets: 2
+- cone: 25尺
+  cube: null
+  sphere: 半径10尺
+  line: 30尺长，10尺宽或60尺长，5尺宽
+  targets: 3
+- cone: null
+  cube: 20尺
+  sphere: null
+  line: 90/100尺长，5尺宽
+  targets: 4
+- cone: 30尺
+  cube: null
+  sphere: null
+  line: 60尺长，10尺宽或120尺长，5尺宽
+  targets: 5
+- cone: 35尺
+  cube: 25尺
+  sphere: 半径15尺
+  line: null
+  targets: 6
+- cone: 40尺
+  cube: 30尺
+  sphere: null
+  line: 90/100尺长，10尺宽
+  targets: 8
+- cone: 45尺
+  cube: null
+  sphere: null
+  line: null
+  targets: 9
+- cone: 50尺
+  cube: 35尺
+  sphere: 半径20尺
+  line: 120尺长，10尺宽
+  targets: 10
+- cone: 55尺
+  cube: 40尺
+  sphere: null
+  line: null
+  targets: 12
+- cone: 60尺
+  cube: 45尺
+  sphere: 半径25尺
+  line: null
+  targets: 16
+- cone: null
+  cube: 50尺
+  sphere: 半径30尺
+  line: null
+  targets: 20
+
+notes:
+- key: tips
+  title: 小贴士
+  text: "伤害用怪物数据卡的**平均伤害**；一次攻击把怪打到残血可视作它退场；把大量同类怪分成 5~8 只一组，轮流插在角色回合之间，组数不要多于角色人数。"
+- key: steps
+  title: 结算三步
+  text: "① 所需骰值 = 目标数值 − 怪物加值（攻击看 AC 与攻击加值，豁免看 DC 与豁免调整值）；② 全体有优势/劣势就查对应列，否则查普通列；③ 横向读出一个能轻松套用到这组怪的分数，按比例算出成功几只。"
+- key: example
+  title: 原文范例
+  text: "8 只丧尸（攻击加值 +3）打 AC18 的战士：所需骰值 15 → 8 个一组 2/8 → 2 只命中，按丧尸均值 4 点共 8 点伤害（L3650）。12 只丧尸对火球豁免：所需骰值 18 → 6 个一组 1/6 → 12 × 1/6 = 2 只通过（L3654）。"
+- key: area_mod
+  title: 区域修正
+  text: "目标很分散取 -1d3，挤在一起取 +1d3，且不能超过区域内实际生物数。DM 判断优先，倾向影响更多目标完全允许（L3624-3626）。圆形列同时用于柱状、光环（用光环尺寸代替半径）与球状（L3644）。"
+- key: scope
+  title: 边界
+  text: "系统只给「几只成功」与平均伤害的乘积建议，**不自动扣血、不写战场状态**：命中与伤害仍由 DM 用 attack / heal 结算，并把结果显式写进叙述（DM 回执只有 DM 看得到）。"

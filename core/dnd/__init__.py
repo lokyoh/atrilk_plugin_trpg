@@ -18,6 +18,11 @@
 - :mod:`npcs` 人形 NPC 档位表（按队伍等级给数值）与 NPC 名单（旧伤 / 关系）
 - :mod:`card` 角色卡（组装 + 检定 + 倒地与死亡豁免）
 - :mod:`combat` 战斗状态（先攻顺序 + 当前回合 + 敌人个体 + 行动经济记账）
+- :mod:`chase` 追逐状态机（距离 / 疾走次数 / 力竭 / 轮末逃脱 / 1d12 复杂状况）
+- :mod:`journey` 旅行地形 11 种与旅程阶段（步调上限 / 遭遇距离 / 觅食·导航·搜索 DC）
+- :mod:`mob` 怪群免掷结算表与效应区域目标表（DMG 2024 第三章）
+- :mod:`relations` NPC 态度 / 忠诚 / 声望（DMG 2024 第二、三章）
+- :mod:`settlements` 聚居地规模表与六张随机表（DMG 2024 第三章）
 - :mod:`storage` 角色卡落盘
 - :mod:`session_store` 建卡会话落盘（超出 ``session_expire_timeout`` 也能续接）
 - :mod:`roll_limit` 掷属性每日一次额度（按玩家 + 北京时间记账，独立于建卡会话）
@@ -128,17 +133,17 @@ from .encounter import (
 )
 from .encounter_budget import (
     DEFAULT_TIERS,
-    DIFFICULTY_RATIO,
+    XP_BUDGET,
     Performance,
     ThreatTier,
     active_tier,
-    day_budget,
     encounter_budget,
     event_cr,
     event_cr_text,
     event_xp_budget,
     performance_factor,
     summarize_performance,
+    xp_budget,
 )
 from .equipment import (
     ARMORS,
@@ -423,7 +428,6 @@ __all__ = [
     "DEFAULT_BASE_DC",
     "DEFAULT_TIERS",
     "DIFFICULTY_LEVELS",
-    "DIFFICULTY_RATIO",
     "DIVINE_ORDERS",
     "DOC_KINDS",
     "DOC_KIND_LABELS",
@@ -481,6 +485,7 @@ __all__ = [
     "SUPPORTED_SYSTEMS",
     "TURN_RESOURCES",
     "WEAPONS",
+    "XP_BUDGET",
     "Ability",
     "AbilitySet",
     "Armor",
@@ -566,7 +571,6 @@ __all__ = [
     "creation_prompt",
     "current_actor",
     "current_round",
-    "day_budget",
     "dc_for",
     "delete_card",
     "delete_doc",
@@ -738,6 +742,7 @@ __all__ = [
     "world_dir",
     "world_root",
     "worlds_dir",
+    "xp_budget",
     "xp_for_cr",
     "xp_progress_text",
     "xp_to_next_level",
