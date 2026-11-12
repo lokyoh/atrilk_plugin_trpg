@@ -6,7 +6,7 @@
 
 三条纪律：
 
-1. **这是内部 agent，不是 DM 工具**。DM 工具清单有 5000 字符的硬上限
+1. **这是内部 agent，不是 DM 工具**。DM 工具清单有 6000 字符的硬上限
    （见 ``tests/test_trpg_prompt_size``），而称号是**每四章才发生一次**的编排动作，
    不该占 DM 每轮都要读的工具预算。
 2. **必须有程序兜底**（:func:`~...dnd.epoch.fallback_epithet`）。

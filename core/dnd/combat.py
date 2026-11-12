@@ -77,6 +77,7 @@ from .monster_rules import (
     rules_of,
 )
 from .monsters import Monster
+from .morale import MORALE_DC, bloodied, flee_reasons, morale_check
 from .npcs import (
     build_npc,
     is_npc_key,
@@ -2836,6 +2837,86 @@ def do_patient_defense(
     )
 
 
+def do_morale(
+    save: Save, state: CombatState | None, ref: str, *, rng: Any = None
+) -> str:
+    """士气检定（DMG 2024 L1650-1658）：掷先攻前 DC10 感知豁免，失败 = 不愿参战。
+
+    在战斗外也能用（目标写图鉴里的怪物名），群体由首领代表掷一次。
+    """
+    name = str(ref or "").strip()
+    if not name:
+        return "士气检定要写 target：哪只生物或哪个群体（群体由首领代表掷一次）"
+    label = name
+    monster = None
+    if state is not None:
+        actor = find_combatant(state, name, kind="enemy")
+        if actor is not None:
+            label = actor.name
+            monster = resolve_monster(actor.monster)
+    if monster is None:
+        monster = resolve_monster(name)
+    if monster is None:
+        return f"找不到「{name}」这只生物：写场上敌人的名字，或图鉴里的怪物名"
+    result = morale_check(monster.modifier("wis"), rng=rng)
+    if result.willing:
+        return f"【{label}】{result.describe()} → **愿意参战**。"
+    return (
+        f"【{label}】{result.describe()} → **不愿参战**：逃跑，或尝试谈判"
+        "（谈判会暂停先攻序列）。\n"
+        f"（DMG 2024：DC 默认 {MORALE_DC}，可按敌人的勇敢/绝望程度调高或调低；"
+        "群体由首领代表掷一次。）"
+    )
+
+
+def do_enemy_flee(
+    save: Save, state: CombatState, ref: str, *, rng: Any = None
+) -> str:
+    """按 DMG 2024 判定敌人是否该跑；真跑了就退场（逃跑不给经验）。
+
+    两条触发条件见 :func:`~.morale.flee_reasons`。触发后让它过一次 DC10 感知豁免：
+    失败 = 逃跑（退场），成功 = 硬撑（DM 仍可直接判它跑）。
+    """
+    enemy = find_combatant(state, ref, kind="enemy")
+    if enemy is None:
+        return f"场上没有「{ref}」这个敌人"
+    if enemy.out:
+        return f"{enemy.name} 已经不在战斗里了"
+    allies = [c for c in state.order if c.is_enemy and c.cid != enemy.cid]
+    foes = [c for c in state.order if c.kind == "player"]
+    reasons = flee_reasons(
+        is_bloodied=bloodied(enemy.hp, enemy.max_hp),
+        allies_total=len(allies),
+        allies_down=sum(1 for c in allies if c.out or c.hp <= 0),
+        foes_down=sum(1 for c in foes if c.out or c.hp <= 0),
+        frightened="恐慌" in combatant_conditions(save, enemy),
+    )
+    if not reasons:
+        return (
+            f"{enemy.name} 不满足 DMG 2024 的逃跑条件"
+            "（浴血且超过一半盟友倒下，或浴血且恐慌）。可以让它继续战斗；"
+            "要强制撤走就用 update_enemy 的 out 标记。"
+        )
+    reason_text = "；".join(reasons)
+    monster = resolve_monster(enemy.monster)
+    result = morale_check(monster.modifier("wis") if monster else 0, rng=rng)
+    if result.willing:
+        return (
+            f"【{enemy.name}】{reason_text}。{result.describe()} → 硬撑着不退。"
+            "下回合开始若仍满足条件可再判，也可以由你直接判它逃跑。"
+        )
+    enemy.out = True
+    enemy.note = "士气崩溃，脱离战斗"
+    forget_defeat(state, enemy)
+    if enemy.npc:
+        update_npc(save, enemy.npc, status="逃跑")
+    save_combat(save, state)
+    return (
+        f"【{enemy.name}】{reason_text}。{result.describe()} → **逃离战场**"
+        "（逃跑不给经验；对手要继续追，用第三章的追逐规则）。"
+    )
+
+
 def do_tactic(
     save: Save,
     state: CombatState | None,
@@ -2876,6 +2957,7 @@ def do_tactic(
         return (
             f"没认出战术动作「{action}」。可用：回避（闪避 / 躲避）、"
             "躲藏（隐藏）、预备（准备）、借机攻击、上马、下马、"
+            "士气（DC10 感知豁免）、逃跑（按 DMG 判定并退场）、"
             "狂暴、回气、疾风步、患者防御、鲁莽攻击、卓越骰"
         )
     # 狂暴 / 回气**战斗外也能用**（战前开狂暴、战后回气），所以排在
@@ -2886,6 +2968,13 @@ def do_tactic(
         return do_second_wind(save, state, ref, rng=rng)
     if kind == "卓越骰":
         return do_superiority(save, state, ref, maneuver, rng=rng)
+    # DMG 2024「战斗或逃跑」：士气可在战斗外判定（掷先攻前），逃跑判定必须在战斗里
+    if kind == "士气":
+        return do_morale(save, state, target or ref, rng=rng)
+    if kind == "逃跑":
+        if state is None:
+            return "逃跑判定要在战斗里才能用；开战前先用「士气」掷 DC10 感知豁免"
+        return do_enemy_flee(save, state, target or ref, rng=rng)
     if state is None:
         return (
             f"「{kind}」要在战斗里才由系统结算。剧情里想躲藏 / 骑乘，"

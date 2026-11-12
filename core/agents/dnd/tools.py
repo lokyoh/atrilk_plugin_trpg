@@ -81,12 +81,14 @@ from ...dnd.difficulty import (
     dc_for,
     describe_dc,
 )
+from ...dnd.dm_tables import format_hazard, format_improvised, format_treasure
 from ...dnd.encounter import calibrate_specs
 from ...dnd.equipment import ARMORS, SHIELDS, WEAPONS, get_armor, get_weapon
 from ...dnd.evolution import note_scene_change
 from ...dnd.feats import get_feat
 from ...dnd.items import ITEMS, format_item_list, get_item
 from ...dnd.levelup import start_session as start_levelup_session
+from ...dnd.magic_items import get_magic_item, magic_item_count
 from ...dnd.memory import (
     MEMORY_MAX,
     add_memory,
@@ -173,6 +175,9 @@ from ...dnd.world_store import (
 from ...trpg.check import roll_check
 from ...trpg.dice import Advantage, DiceError, parse_dice, roll
 from ..thinking import AgentContext, AgentFinishError, AgentTool, ToolArg
+from .chase_actions import do_chase
+from .journey_actions import do_journey
+from .relations_actions import do_relations
 from .rules import match_rules
 
 __all__ = [
@@ -355,7 +360,7 @@ class CheckTool(AgentTool):
             "检定对象：技能名（如 察觉、隐匿、游说）或属性名（如 力量），"
             "豁免写作「力量豁免」",
         ),
-        ToolArg("dc", "int", "难度值，留空由系统按技能基准 + 难度词自动定档"),
+        ToolArg("dc", "int", "难度值，留空由系统自动定档；豁免建议 10~20"),
         ToolArg("advantage", "str", "普通 / 优势 / 劣势，默认普通"),
         ToolArg(
             "player",
@@ -393,7 +398,10 @@ class CheckTool(AgentTool):
                 + "\n可用的属性（写作「力量豁免」即为豁免检定）："
                 + "、".join(a.cn for a in ABILITIES)
             )
-        return f"【{card.name}】{result.describe()}"
+        text = f"【{card.name}】{result.describe()}"
+        # DMG 2024 的成败后果层只进 DM 回执，不写进玩家「🎲 判定」卡
+        hint = getattr(result, "consequence_hint", "")
+        return f"{text} {hint}" if hint else text
 
 
 # --------------------------------------------------------------------------- #
@@ -647,17 +655,74 @@ def _query_skill(name: str) -> str:
 
 
 def _query_item(name: str) -> str:
-    """查魔法物品：留空按大类列全部，给名字出完整描述。"""
+    """查魔法物品：战役自建表优先，查不到回退 DMG 2024 官方原文表。"""
     if not name:
         return (
-            f"魔法物品（共 {len(ITEMS)} 件）：\n"
+            f"魔法物品（战役自建 {len(ITEMS)} 件 / DMG 2024 原文 "
+            f"{magic_item_count()} 件）：\n"
             + format_item_list(ITEMS)
-            + "\n\n按名字查详情，比如「治疗药水」「+1 武器」。"
+            + "\n\n按名字查详情，比如「治疗药水」「+1 武器」「次元袋」「营养珠」。"
         )
     item = get_item(name)
-    if item is None:
-        raise KeyError(f"未知物品：{name}")
-    return item.describe()
+    if item is not None:
+        return item.describe()
+    official = get_magic_item(name)
+    if official is not None:
+        return official.describe()
+    raise KeyError(
+        f"未知物品：{name}（战役表与 DMG 2024 原文表都没有；"
+        "中文包未提供该名字的效果正文（索引可能有名字/页码，但无规则原文），按第七章原文由 DM 裁定）"
+    )
+
+
+def _query_improvised(name: str) -> str:
+    """DMG 2024 即兴伤害 + 伤害严重性与等级（第二章）。"""
+    return format_improvised(name)
+
+
+def _query_hazard(name: str) -> str:
+    """DMG 2024 门 / 锁 / 暗门 / 吊闸门 / 建造陷阱与危害度（第三章）。"""
+    return format_hazard(name)
+
+
+def _query_journey(name: str) -> str:
+    """DMG 2024 旅行地形 11 种与旅程阶段规则（第二章 L1220-1418）。"""
+    from ...dnd.journey import format_journey_query
+
+    return format_journey_query(name)
+
+
+def _query_mob(name: str) -> str:
+    """DMG 2024 怪群免掷结算表（第三章 L3572-3618）。"""
+    from ...dnd.mob import format_mob_query
+
+    return format_mob_query(name)
+
+
+def _query_mob_area(name: str) -> str:
+    """DMG 2024 效应区域内的目标表（第三章 L3620-3644）。"""
+    from ...dnd.mob import format_area_query
+
+    return format_area_query(name)
+
+
+def _query_relations(name: str) -> str:
+    """DMG 2024 NPC 态度 / 忠诚 / 声望规则（第二、三章）。"""
+    from ...dnd.relations import format_relations_query
+
+    return format_relations_query(name)
+
+
+def _query_settlement(name: str) -> str:
+    """DMG 2024 聚居地规模表与六张随机表（第三章 L4385-4525）。"""
+    from ...dnd.settlements import format_settlement_query
+
+    return format_settlement_query(name)
+
+
+def _query_treasure(name: str) -> str:
+    """DMG 2024 贸易条 / 宝石 / 艺术品 / 个体与库藏宝藏（第四、七章）。"""
+    return format_treasure(name)
 
 
 def _query_weapon(name: str) -> str:
@@ -995,6 +1060,14 @@ _DATA_TABLES = {
     "condition": _query_condition,
     "difficulty": _query_difficulty,
     "rule": _query_rule,
+    "improvised": _query_improvised,
+    "hazard": _query_hazard,
+    "treasure": _query_treasure,
+    "journey": _query_journey,
+    "mob": _query_mob,
+    "mob_area": _query_mob_area,
+    "relations": _query_relations,
+    "settlement": _query_settlement,
 }
 
 _DATA_ALIASES = {
@@ -1059,8 +1132,58 @@ _DATA_ALIASES = {
     "规则": "rule",
     "探索规则": "rule",
     "坠落": "rule",
-    "旅行": "rule",
+    "旅行步调": "rule",
     "强行军": "rule",
+    "旅行": "journey",
+    "旅程": "journey",
+    "地形": "journey",
+    "旅行地形": "journey",
+    "规划卡": "journey",
+    "travel": "journey",
+    "journey": "journey",
+    # —— DMG 2024 DM 工具箱 / 宝藏 ——
+    "improvised": "improvised",
+    "即兴伤害": "improvised",
+    "即兴": "improvised",
+    "伤害": "improvised",
+    "hazard": "hazard",
+    "门": "hazard",
+    "锁": "hazard",
+    "暗门": "hazard",
+    "吊闸门": "hazard",
+    "陷阱": "hazard",
+    "危害": "hazard",
+    "treasure": "treasure",
+    "宝藏": "treasure",
+    "宝石": "treasure",
+    "艺术品": "treasure",
+    "金属条": "treasure",
+    # —— DMG 2024 怪群（注意「区域」已是世界库 province，别占用）——
+    "mob": "mob",
+    "mobs": "mob",
+    "怪群": "mob",
+    "怪群结算": "mob",
+    "怪群免掷": "mob",
+    "效应区域": "mob_area",
+    "区域目标": "mob_area",
+    "目标数量": "mob_area",
+    "aoe": "mob_area",
+    # —— DMG 2024 NPC 关系与聚居地（「区域」是 province，别占用）——
+    "relations": "relations",
+    "关系": "relations",
+    "态度": "relations",
+    "初始态度": "relations",
+    "忠诚": "relations",
+    "loyalty": "relations",
+    "声望": "relations",
+    "reputation": "relations",
+    "settlement": "settlement",
+    "settlements": "settlement",
+    "聚居地": "settlement",
+    "聚落": "settlement",
+    "聚落表": "settlement",
+    "人口": "settlement",
+    "规模": "settlement",
     # —— 全局世界库文档 ——
     "world": "world",
     "世界": "world",
@@ -1139,10 +1262,15 @@ class QueryDataTool(AgentTool):
     description = (
         "查 DND 数据表（race/background/profession/subclass/class_feature/skill/weapon/armor/monster/"
         "bestiary/item/"
-        "spell/condition/difficulty/rule/npc_tier/npc）或世界库文档（world/realm/"
+        "spell/condition/difficulty/rule/npc_tier/npc/improvised/hazard/treasure/journey/mob/relations/settlement）或世界库文档（world/realm/"
         "province/city/place/dungeon/scene/event），table 可写中文；"
         "bestiary=图鉴名录（cr 5 按 CR 挑）；monster 按类型/栖息地/群组查或写"
-        "「随机 幽暗地域 亡灵x3」；rule 查探索规则（坠落/旅行步调/强行军）"
+        "「随机 幽暗地域 亡灵x3」；rule 查探索规则（坠落/旅行步调/强行军）；"
+        "improvised=即兴伤害与严重性，hazard=门/锁/陷阱DC，"
+        "treasure=宝石/艺术品/宝藏（可写「掷 宝石 100」）；journey=地形/旅程；"
+        "mob=怪群免掷/区域目标（写「8 AC18 +3」出几只命中）；"
+        "relations=态度/忠诚/声望（写「初始 热心」）；"
+        "settlement=聚落表（写「掷 小镇」出整张卡）"
     )
     args = (
         ToolArg("table", "str", "表名 / 文档类型"),
@@ -1191,7 +1319,7 @@ def query_data_text(table: str, name: str, context: AgentContext | None = None) 
             "未知数据表，可用：race / background / profession / subclass / class_feature / skill / "
             "weapon / armor / "
             "monster / bestiary / item / spell / condition / difficulty / rule / "
-            "npc_tier / npc，"
+            "improvised / hazard / treasure / journey / mob / mob_area / relations / settlement / npc_tier / npc，"
             "或世界库文档：world / realm / province / city / place / dungeon / scene / event"
         )
     try:
@@ -2331,14 +2459,16 @@ class TacticTool(AgentTool):
         "动作如潮（战士：本回合 +1 个动作）、狂暴（野蛮人：伤害+2/抗性）、"
         "回气（战士：1d10+等级回血）、疾风步 / 患者防御（武僧：花 1 功力）、"
         "鲁莽攻击（野蛮人：本回合攻有优势、挨打也有优势）、"
-        "卓越骰（战斗大师：花 1 骰掷点数，写法「卓越骰 精确攻击」）"
+        "卓越骰（战斗大师：花 1 骰掷点数，写法「卓越骰 精确攻击」）、"
+        "士气（掷先攻前 DC10 感知豁免，失败不愿参战）、"
+        "逃跑（浴血/恐慌时按 DMG 判定，失败退场）、追逐 / 旅程 / 关系（DMG 第二、三章）"
     )
     args = (
         ToolArg(
             "action",
             "str",
             "回避（=闪避/躲避）/ 躲藏（=隐藏）/ 预备（=准备）/ 借机攻击 / 上马 / 下马 / "
-            "动作如潮 / 狂暴 / 回气 / 疾风步 / 患者防御 / 鲁莽攻击 / 卓越骰",
+            "动作如潮 / 狂暴 / 回气 / 疾风步 / 患者防御 / 鲁莽攻击 / 卓越骰 / 士气 / 逃跑 / 追逐 / 旅程 / 关系",
         ),
         ToolArg("player", "str", "谁在做：角色名或 user_id；单人可留空"),
         ToolArg("target", "str", "借机攻击写打谁；上马写坐骑名"),
@@ -2359,6 +2489,30 @@ class TacticTool(AgentTool):
             return "当前没有存档，无法结算战术动作"
         ref = str(player or "").strip() or str(context.user_id or "")
         action_text = str(action or "").strip()
+        if action_text.startswith("追逐"):
+            return do_chase(
+                save,
+                action_text,
+                player=ref,
+                target=str(target or ""),
+                trigger=str(trigger or ""),
+            )
+        if action_text.startswith(("旅程", "旅行")):
+            return do_journey(
+                save,
+                action_text,
+                player=ref,
+                target=str(target or ""),
+                trigger=str(trigger or ""),
+            )
+        if action_text.startswith(("关系", "忠诚", "声望", "态度")):
+            return do_relations(
+                save,
+                action_text,
+                player=ref,
+                target=str(target or ""),
+                trigger=str(trigger or ""),
+            )
         if action_text in _ACTION_SURGE_WORDS:
             return _do_action_surge(context, save, ref)
         return do_tactic(
