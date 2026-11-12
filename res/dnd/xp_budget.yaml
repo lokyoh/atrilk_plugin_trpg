@@ -1,0 +1,88 @@
+# DMG 2024 第四章「战斗遭遇难度」第二步：人均经验值预算表
+# 见《城主指南 (2024).md》L5959-5994。用法：表中数字 × 小队人数 = 该场遭遇的 XP 预算，
+# 再按第三步逐只扣减怪物的 XP 价值（core/dnd/progression.py 的 CR_XP）。
+#
+# ⚠️ 三档是 2024 口径（低 / 中等 / 高）。2014 的 Adventuring Day 四档
+#    （easy / medium / hard / deadly）与「冒险日倍率」已不适用，别把倍率写回这里。
+# ⚠️ 一行一级，level 必须连续 1~20；缺表会在加载时抛错（datafiles 的约定）。
+
+- level: 1
+  low: 50
+  medium: 75
+  high: 100
+- level: 2
+  low: 100
+  medium: 150
+  high: 200
+- level: 3
+  low: 150
+  medium: 225
+  high: 400
+- level: 4
+  low: 250
+  medium: 375
+  high: 500
+- level: 5
+  low: 500
+  medium: 750
+  high: 1100
+- level: 6
+  low: 600
+  medium: 1000
+  high: 1400
+- level: 7
+  low: 750
+  medium: 1300
+  high: 1700
+- level: 8
+  low: 1000
+  medium: 1700
+  high: 2100
+- level: 9
+  low: 1300
+  medium: 2000
+  high: 2600
+- level: 10
+  low: 1600
+  medium: 2300
+  high: 3100
+- level: 11
+  low: 1900
+  medium: 2900
+  high: 4100
+- level: 12
+  low: 2200
+  medium: 3700
+  high: 4700
+- level: 13
+  low: 2600
+  medium: 4200
+  high: 5400
+- level: 14
+  low: 2900
+  medium: 4900
+  high: 6200
+- level: 15
+  low: 3300
+  medium: 5400
+  high: 7800
+- level: 16
+  low: 3800
+  medium: 6100
+  high: 9800
+- level: 17
+  low: 4500
+  medium: 7200
+  high: 11700
+- level: 18
+  low: 5000
+  medium: 8700
+  high: 14200
+- level: 19
+  low: 5500
+  medium: 10700
+  high: 17200
+- level: 20
+  low: 6400
+  medium: 13200
+  high: 22000

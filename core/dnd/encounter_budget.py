@@ -5,22 +5,25 @@
 1. **这一章该给玩家多少压力？** —— :func:`event_cr`
 2. **玩家打得太顺 / 打得太惨，该不该调？** —— :func:`performance_factor`
 
-它只做算术与统计，**不碰存档、不调模型**。所有入参都是从存档与事件日志里取出来的
+只做算术与统计，**不碰存档、不调模型**。所有入参都是从存档与事件日志里取出来的
 数值，所以每个函数都是纯函数、可直接断言（这是本项目里最容易做对也最该做测试的部分）。
 
-规则锚点是 DMG 的 **Adventuring Day**：一个 4 小时时段能承受的经验量约等于
-「阈值低档 × 人数 × 难度倍率」，难度倍率 easy 2 / medium 4 / hard 6。
-难度倍率直接除以 4 得到「每场遭遇」的口径，因为一场遭遇大约吃掉一个时段的四分之一到三分之一。
+**经验值预算的口径是 DMG 2024**（参考文档 L5959-6013）：三档难度（低 / 中等 / 高）
++ 《人均经验值预算表》× 小队人数 = 这场战斗的 XP 预算，再逐只扣减怪物 XP。
+表落在 ``res/dnd/xp_budget.yaml``，由 :func:`xp_budget` 查。
+2014 的 Adventuring Day 四档倍率（easy / medium / hard / deadly）**已不采用**。
 
-三层混合难度（见 :func:`event_cr`）：
+三层混合难度 :func:`event_cr` 与 :class:`ThreatTier` 是**项目自造的节奏锚**，
+不是 DMG 规则：
 
 - **基础轨**：队伍平均等级，与 :func:`~.encounter.target_cr_for` 的单人口径一致；
 - **事件轨**：随事件序号缓慢爬升，并叠加威胁层级（20 级后的压力走**规则层**，不动数值）；
 - **表现轨**：:func:`performance_factor`，玩家打得太顺就加压、翻车就减压。
 
 > 为什么 20 级后不堆怪：等级表（:data:`~.progression.MAX_LEVEL`）与
-> :data:`~.progression.CR_XP`（最高档 CR20）在 20 级同时封顶，而预算要放大约 3000 倍。
-> 所以 :class:`ThreatTier` 的加成都写成**规则描述**而不是数字，交给 DM 落地。
+> :data:`~.progression.CR_XP`（最高档 CR20）在 20 级同时封顶，高难度预算会远超
+> 单只怪的 XP 上限。所以 :class:`ThreatTier` 的加成都写成**规则描述**而不是数字，
+> 交给 DM 落地。
 """
 
 from __future__ import annotations
@@ -30,6 +33,8 @@ from dataclasses import dataclass
 from math import exp as _exp
 from typing import Any
 
+from .datafiles import load_table
+
 try:  # pragma: no cover - typing 只在 3.9+ 存在
     from collections.abc import Mapping
 except ImportError:  # pragma: no cover
@@ -37,39 +42,61 @@ except ImportError:  # pragma: no cover
 
 __all__ = [
     "DEFAULT_TIERS",
-    "DIFFICULTY_RATIO",
     "PERFORMANCE_WEIGHTS",
+    "XP_BUDGET",
     "Performance",
     "ThreatTier",
     "active_tier",
     "active_tiers",
-    "day_budget",
     "encounter_budget",
     "event_cr",
     "event_cr_text",
     "event_xp_budget",
     "performance_factor",
     "summarize_performance",
+    "xp_budget",
 ]
 
 
-#: DMG Adventuring Day 的难度倍率（× 阈值低档 × 人数）
-DIFFICULTY_RATIO: dict[str, float] = {
-    "easy": 2.0,
-    "medium": 4.0,
-    "hard": 6.0,
-    "deadly": 8.0,
+#: 难度别名：2024 三档 + 2014 旧名兼容（旧名只做参数兼容，**不是**规则档位）
+_DIFFICULTY_ALIASES: dict[str, str] = {
+    "low": "low",
+    "低": "low",
+    "easy": "low",
+    "简单": "low",
+    "medium": "medium",
+    "中等": "medium",
+    "中": "medium",
+    "normal": "medium",
+    "high": "high",
+    "高": "high",
+    "hard": "high",
+    "deadly": "high",
+    "困难": "high",
 }
 
-#: 一场遭遇大约吃掉一个 4 小时时段的多少
-_ENCOUNTER_SHARE = 1.0 / 3.0
 
-#: 难度倍率 → 表现系数的缓动系数。困难局本就该一直紧绷，不该由表现大幅摆动。
-_EASE_BY_RATIO: dict[float, float] = {
-    2.0: 0.45,  # easy
-    4.0: 0.38,  # medium
-    6.0: 0.30,  # hard
-    8.0: 0.24,  # deadly
+def normalize_difficulty(value: str) -> str:
+    """把任意写法收敛到 ``low`` / ``medium`` / ``high``；认不出按中等。"""
+    return _DIFFICULTY_ALIASES.get(str(value or "medium").strip().lower(), "medium")
+
+
+#: DMG 2024《人均经验值预算表》：等级 → {难度: 人均 XP}。数值在
+#: ``res/dnd/xp_budget.yaml``，改表不用改代码；缺表会在导入时抛错。
+XP_BUDGET: dict[int, dict[str, int]] = {
+    int(row["level"]): {
+        "low": int(row["low"]),
+        "medium": int(row["medium"]),
+        "high": int(row["high"]),
+    }
+    for row in load_table("xp_budget")
+}
+
+#: 难度 → 表现系数的缓动系数。困难局本就该一直紧绷，不该由表现大幅摆动。
+_EASE_BY_DIFFICULTY: dict[str, float] = {
+    "low": 0.45,
+    "medium": 0.38,
+    "high": 0.30,
 }
 
 #: 表现系数各项的权重。四项相加为 1，单项封顶，保证系数落在 [-1, +1]。
@@ -86,48 +113,45 @@ PERFORMANCE_WEIGHTS: dict[str, float] = {
 # --------------------------------------------------------------------------- #
 
 
-def _threshold_low(level: int) -> int:
-    """取 DMG 阈值表的低档（升到下一级所需的累计经验）。"""
-    from .progression import LEVEL_XP_THRESHOLDS, MAX_LEVEL
+def xp_budget(level: int, party_size: int = 4, difficulty: str = "medium") -> int:
+    """DMG 2024：人均经验值 × 角色数 = **这一场战斗**的 XP 预算。
+
+    第三步是拿 :data:`~.progression.CR_XP` 逐只扣减预算来编成遭遇
+    （``花费尽可能多的经验值但不要超出预算``），那一步还没接进编排层。
+
+    :param level: 小队等级（1~20，越界钳到边界）
+    :param party_size: 小队中的角色数
+    :param difficulty: ``low`` / ``medium`` / ``high``（中文「低 / 中等 / 高」同认；
+        2014 的 easy / hard / deadly 只做参数兼容，不是 2024 档位）
+    """
+    from .progression import MAX_LEVEL
 
     lv = max(1, min(int(level), MAX_LEVEL))
-    if lv >= MAX_LEVEL:
-        return LEVEL_XP_THRESHOLDS[MAX_LEVEL - 1]
-    return LEVEL_XP_THRESHOLDS[lv]
-
-
-def day_budget(level: int, party_size: int = 4, difficulty: str = "medium") -> int:
-    """一个 4 小时冒险时段能承受的经验总量。
-
-    :param level: 队伍平均等级
-    :param party_size: 参与玩家人数
-    :param difficulty: ``easy`` / ``medium`` / ``hard`` / ``deadly``
-    """
-    ratio = DIFFICULTY_RATIO.get(
-        str(difficulty or "medium"), DIFFICULTY_RATIO["medium"]
-    )
-    size = max(1, int(party_size))
-    return round(_threshold_low(level) * size * ratio)
+    tier = normalize_difficulty(difficulty)
+    return XP_BUDGET[lv][tier] * max(1, int(party_size))
 
 
 def encounter_budget(
     level: int, party_size: int = 4, difficulty: str = "medium"
 ) -> int:
-    """单场遭遇该给的经验量（时段预算 ÷ 3）。"""
-    return round(day_budget(level, party_size, difficulty) * _ENCOUNTER_SHARE)
+    """兼容别名：单场遭遇预算 = :func:`xp_budget`。
+
+    旧实现是「2014 冒险日预算 ÷ 3」，2024 没有「冒险日 ÷ 3」这一步 ——
+    一场遭遇就是一次完整预算，别再把 ``÷ 3`` 加回来。
+    """
+    return xp_budget(level, party_size, difficulty)
 
 
 def event_xp_budget(
     level: int, story_points: int = 3, party_size: int = 4, difficulty: str = "medium"
 ) -> int:
-    """一章该花掉的经验总量。
+    """一章该花掉的经验总量（**项目自造的节奏锚，不是 DMG 规则**）。
 
-    Story Point 约合 30 分钟（DMG 口径），一个时段装4 个推进点，所以
-    「一章 ≈ 3 个推进点」≈ 三分之一个时段。这个函数把节奏锚翻译成数字，
-    让「这一章打几场」有据可依，而不是靠 DM 自觉。
+    Story Point 是本项目约合 30 分钟的推进点，一章按 3 个点 ≈ 三场遭遇的量级；
+    把节奏锚翻译成数字，让「这一章打几场」有据可依，而不是靠 DM 自觉。
     """
     points = max(1, min(int(story_points), 12))
-    return round(encounter_budget(level, party_size, difficulty) * points)
+    return xp_budget(level, party_size, difficulty) * points
 
 
 # --------------------------------------------------------------------------- #
@@ -214,8 +238,8 @@ def _rounds_from(content: str) -> int:
 
 
 #: 各项指标在这个值以内算「正常」，超过则线性加压/ 减压。
-#: ``combat_speed`` 是**回合数**：DMG 口径下一场战斗通常 3 轮左右结束，
-#: 所以甜点位取 3——比它快算轻松，比它慢才算吃力。
+#: ``combat_speed`` 是**回合数**：项目按「一场战斗通常 3 轮左右」取甜点位
+#: （这是本项目的节奏估计，不是规则书明文）——比它快算轻松，比它慢才算吃力。
 _SWEET_SPOT: dict[str, float] = {
     "combat_speed": 3.0,  # 平均回合数：3 轮以内算打得快
     "knockdown": 0.0,  # 一次不倒最好
@@ -223,7 +247,7 @@ _SWEET_SPOT: dict[str, float] = {
     "attrition": 2.0,  # 两场以内算正常
 }
 
-#: 「打满负面」所需的回合数。DMG 的 5e 战斗通常 3 轮左右结束，
+#: 「打满负面」所需的回合数。项目按 3 轮左右收尾做甜点位，
 #: 打满 3 轮仍然结束说明队伍游刃有余，拖到 8 轮才叫真的吃力——
 #: 甜点位设在 3 而不是 2.5，否则一场正常的 4 轮战斗就被当成「翻车」。
 _FULL_STRAIN = 8.0
@@ -232,7 +256,7 @@ _FULL_STRAIN = 8.0
 def _normalize(name: str, value: float) -> float:
     """把单项指标压到 [-1, 1]：负号表示「吃力」（该减压），正号表示「轻松」（该加压）。
 
-    回合数走**分段插值**而不是除法：0~2 轮算轻松，3 轮（DMG 常规）算持平，
+    回合数走**分段插值**而不是除法：0~2 轮算轻松，3 轮（项目的甜点位）算持平，
     之后线性滑向 8 轮的「吃力」。用除法的话 4 轮就打满负面，
     结果是几乎每章都在减压——那不是自适应，是单向漂移。
     """
@@ -255,7 +279,7 @@ def performance_factor(
     """表现系数：``+0.2`` 表示加两成压力，``-0.2`` 表示减两成。
 
     难度越高，系数越收敛——困难局本来就该一直紧绷，不该由表现大幅摆动。
-    缓动系数分别是 easy 0.45 / medium 0.38 / hard 0.30 / deadly 0.24。
+    缓动系数分别是 low 0.45 / medium 0.38 / high 0.30。
 
     **没有任何统计时返回 0**（按基准难度来）。这不是「表现完美」而是「没数据」：
     新开一局的事件日志是空的，各项归一化却会把「零场战斗、零倒地」读成
@@ -265,10 +289,7 @@ def performance_factor(
         return 0.0
     if perf.combats <= 0 and perf.knockdowns <= 0 and perf.long_rests <= 0:
         return 0.0
-    ratio = DIFFICULTY_RATIO.get(
-        str(difficulty or "medium"), DIFFICULTY_RATIO["medium"]
-    )
-    scale = _EASE_BY_RATIO.get(ratio, 0.38)
+    scale = _EASE_BY_DIFFICULTY.get(normalize_difficulty(difficulty), 0.38)
 
     terms = {
         "combat_speed": _normalize(

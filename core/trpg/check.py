@@ -81,6 +81,40 @@ class CheckResult:
         return self.total - self.dc
 
     @property
+    def consequence_hint(self) -> str:
+        """DMG 2024 的**成败后果层**（L1008-1028），只给 DM 的裁定提示。
+
+        刻意不写进 :meth:`describe`：那个文案要进玩家「🎲 判定」卡，也会被十几个
+        战斗 / 豁免调用点复用，逐条挂建议会把战斗日志刷成废话。这里单独取，
+        由 DM 的 ``check`` 工具在回执里附一句；**提示不等于改判**，采纳与否由 DM 定。
+
+        - 失败只差 1~2：可给「有代价的成功」，用困境换达成（L1012-1020）；
+        - 失败差 ≥5：可追加更坏后果，如触发陷阱、惊动守卫（L1022-1024）；
+        - 成功大幅超出：按超过 DC 的程度给更高完成度 / 额外收获（L1026-1028）。
+
+        攻击检定（``auto_critical``）不适用「有代价的成功」与「更坏后果」——
+        命中就是命中、失手就是失手，但成功程度（比试计分）仍然适用。
+        """
+        if self.forced_success or self.forced_failure:
+            return ""
+        if self.auto_critical and (self.nat20 or self.nat1):
+            return ""
+        margin = self.margin
+        if self.success:
+            if margin >= 10:
+                return "（大幅超出 DC：可给额外收获或更高完成度）"
+            if margin >= 5:
+                return "（明显超出 DC：可给额外细节或优势）"
+            return ""
+        if self.auto_critical:
+            return ""
+        if margin >= -2:
+            return "（只差 1~2：可给「有代价的成功」，用困境换达成）"
+        if margin <= -5:
+            return "（差 ≥5：可追加更坏后果，如触发陷阱 / 惊动守卫）"
+        return ""
+
+    @property
     def success(self) -> bool:
         """是否达成。默认由 d20 自然 20 / 自然 1 直接决定成败。"""
         if self.forced_success:

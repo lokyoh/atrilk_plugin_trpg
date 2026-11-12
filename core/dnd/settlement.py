@@ -6,8 +6,10 @@
   累加经验（:func:`~.progression.xp_for_cr`；档位 NPC 没有正式 CR，走自己的表
   :func:`~.npcs.npc_xp`），再**除以参战人数**平分给每位玩家，写入角色卡的
   ``exp`` 字段。除不尽的零头如实记进存档的「经验零头」总账。
-- **战利品**：**逐只**按怪物的档次掷金币与物品（:func:`roll_loot`）后合并，
-  结果记进存档进度的 ``战利品`` 字段，由 DM 决定怎么分；其中的装备类物品可以用
+- **战利品**：DMG 2024「一组相同的生物掷一次，结果乘以数量」——按怪物模板分组，
+  每组掷一次后按只数放大再合并。**金币按 DMG《随机个体宝藏表》结算**
+  （:func:`~.dm_tables.roll_individual`），掉什么杂物 / 装备仍是项目自造的近似档位；
+  结果记进存档进度的 ``战利品`` 字段，由 DM 决定怎么分，装备类物品可以用
   ``update_character`` 的 ``equipment`` 字段直接收进装备栏。
 - **升级**：分完经验后逐个检查阈值（:func:`~.progression.can_level_up`），
   达标的自动 :func:`~.progression.level_up`，并把生命上限 / 熟练加值 / 法术位的变化
@@ -33,10 +35,11 @@ from typing import Any
 
 from .card import DndCharacter
 from .combat import CombatState, recover_ammo
+from .dm_tables import roll_individual
 from .levelup import start_session
 from .memory import add_memory, current_round
 from .monsters import SCALE_SUFFIX
-from .npcs import is_npc_key, tier_from_key
+from .npcs import is_npc_key, resolve_monster, tier_from_key
 from .progression import can_level_up, level_up, xp_for_cr
 from .save_store import Save, get_character, log_event, set_character, update_progress
 
@@ -51,20 +54,24 @@ __all__ = [
 ]
 
 
-#: 战利品档位：``(CR 下限, 金币骰, 金币颗数/骰, 物品个数上限, 候选物品)``
+#: 战利品「物品」档位：``(CR 下限, 物品个数上限, 候选物品)``
+#:
+#: ⚠️ **金币已改按 DMG 2024《随机个体宝藏表》结算**（:mod:`.dm_tables`），不再用这里的骰。
+#: 本表只决定「掉几件杂物 / 装备」，是**项目自造的近似值**，不是规则书明文；
+#: 补第七章的宝石 / 艺术品 / 随机魔法物品表后应替换掉，别把本表当规则引用。
 #:
 #: 候选物品分两类：**装备**全部取自 :mod:`.equipment` 的装备表（DM 可以直接
 #: ``update_character`` 的 ``equipment`` 字段塞进装备栏，名字认得出来）；
 #: **杂物**（箭 / 绳索 / 火把 / 干粮 / 宝石 / 钱袋 / 魔法卷轴）不在装备表里，
 #: 属于战利品清单上的描述性物品，由 DM 自行决定怎么处置。
-LOOT_TABLE: tuple[tuple[float, int, int, int, tuple[str, ...]], ...] = (
-    (0.0, 1, 6, 0, ("箭", "绳索", "火把", "干粮")),
-    (1.0, 1, 8, 1, ("箭", "绳索", "火把", "干粮", "短剑", "皮甲")),
-    (2.0, 2, 6, 1, ("箭", "火把", "短剑", "皮甲", "轻弩", "镶钉皮甲")),
-    (4.0, 2, 8, 1, ("轻弩", "链甲衫", "长剑", "弯刀", "鳞甲", "木盾")),
-    (6.0, 3, 6, 2, ("长剑", "弯刀", "板条甲", "钢盾", "战锤", "银币袋")),
-    (9.0, 4, 6, 2, ("长剑", "战锤", "全身板甲", "重弩", "巨剑", "宝石", "金币袋")),
-    (13.0, 5, 8, 2, ("全身板甲", "巨斧", "戟", "巨剑", "宝石", "金币袋", "魔法卷轴")),
+LOOT_TABLE: tuple[tuple[float, int, tuple[str, ...]], ...] = (
+    (0.0, 0, ("箭", "绳索", "火把", "干粮")),
+    (1.0, 1, ("箭", "绳索", "火把", "干粮", "短剑", "皮甲")),
+    (2.0, 1, ("箭", "火把", "短剑", "皮甲", "轻弩", "镶钉皮甲")),
+    (4.0, 1, ("轻弩", "链甲衫", "长剑", "弯刀", "鳞甲", "木盾")),
+    (6.0, 2, ("长剑", "弯刀", "板条甲", "钢盾", "战锤", "银币袋")),
+    (9.0, 2, ("长剑", "战锤", "全身板甲", "重弩", "巨剑", "宝石", "金币袋")),
+    (13.0, 2, ("全身板甲", "巨斧", "戟", "巨剑", "宝石", "金币袋", "魔法卷轴")),
 )
 
 #: 属于「杂物」的名字（给数量而不是 1 件）；不在 :mod:`.equipment` 的装备表里
@@ -73,7 +80,7 @@ LOOT_JUNK: frozenset[str] = frozenset(
 )
 
 
-def _loot_band(cr: float) -> tuple[float, int, int, int, tuple[str, ...]]:
+def _loot_band(cr: float) -> tuple[float, int, tuple[str, ...]]:
     """按 CR 取战利品档位（取不超过它的最高一档）。"""
     band = LOOT_TABLE[0]
     for row in LOOT_TABLE:
@@ -85,19 +92,13 @@ def _loot_band(cr: float) -> tuple[float, int, int, int, tuple[str, ...]]:
 
 
 def roll_coins(cr: float, rng: Any = None) -> dict[str, int]:
-    """按怪物的 CR 掷一袋金币。
+    """按 DMG 2024《随机个体宝藏表》掷一组怪的钱币（L6188-6194）。
 
-    :return: ``{"银": n, "金": n, "铂": n}``（没有的币种不出现）
+    CR 0–4 = 3d6 GP；5–10 = 2d8×10 GP；11–16 = 2d10×10 PP；17+ = 2d8×100 PP。
+    一组相同生物**只掷一次**，乘只数的步骤在 :func:`_roll_all_loot`。
+    括号里的平均值 DM 可以直接取用，不必掷骰。
     """
-    randomer = rng or random
-    _, dice, faces, _, _ = _loot_band(cr)
-    gold = randomer.randint(0, dice) * faces
-    silver = randomer.randint(0, faces) * 5
-    coins = {"银": silver, "金": gold}
-    # 高 CR 偶尔出手阔绰，给一把铂金
-    if float(cr) >= 9 and randomer.randint(1, 100) <= 5 + int(float(cr)):
-        coins["铂"] = randomer.randint(1, max(1, int(float(cr) // 5)))
-    return {name: value for name, value in coins.items() if value > 0}
+    return roll_individual(cr, rng)
 
 
 def coins_text(coins: dict[str, int]) -> str:
@@ -142,7 +143,7 @@ def roll_loot(cr: float, rng: Any = None) -> dict[str, Any]:
         ``equipment`` 字段收下），也有杂物（箭 / 钱袋 / 卷轴……）这类描述性物品。
     """
     randomer = rng or random
-    _, _, _, item_count, candidates = _loot_band(cr)
+    _, item_count, candidates = _loot_band(cr)
     count = randomer.randint(0, item_count) if item_count else 0
     items: list[str] = []
     for _ in range(count):
@@ -186,6 +187,8 @@ class SettlementResult:
     #: 掷出来的金币与物品（同一份，全队共享——每人份数见 ``share_text``）
     coins: dict[str, int] = field(default_factory=dict)
     items: list[str] = field(default_factory=list)
+    #: 本场战果的图鉴宝藏类别（任意 / 个体 / 奥秘 / 武备 / 器具 / 圣物）
+    treasure_themes: list[str] = field(default_factory=list)
     #: 逐人的经验变化与升级文案：``user_id -> [文本, ...]``
     lines: dict[str, list[str]] = field(default_factory=dict)
     #: 事件日志（被击败的敌人清单）
@@ -288,6 +291,11 @@ class SettlementResult:
             share = self.share_text
             if share:
                 lines.append(share)
+            if self.treasure_themes:
+                lines.append(
+                    "图鉴宝藏类别：" + "、".join(self.treasure_themes)
+                    + "（库藏宝藏由 DM 按剧情发放）"
+                )
         for chunks in self.lines.values():
             lines.extend(chunks)
         if self.ammo_text:
@@ -340,20 +348,83 @@ def _loot_cr(item: dict[str, Any]) -> float:
     return _as_float(item.get("cr"))
 
 
-def _roll_all_loot(state: CombatState, rng: Any = None) -> dict[str, Any]:
-    """逐只掷战利品再合并——5e 是「每只怪物各掷一次」，不是整场只掷一次。
+def _loot_group_key(item: dict[str, Any]) -> str:
+    """同类怪的分组键：图鉴模板 key（缩放 key 也算同一组）。"""
+    key = str(item.get("monster") or "").strip()
+    if not key:
+        return str(item.get("name") or "?")
+    return key.split(SCALE_SUFFIX, 1)[0]
 
-    :return: ``{"coins": {...合并后的币数}, "items": [...按档次从高到低]}``
+
+def _treasure_theme(item: dict[str, Any]) -> str:
+    """读图鉴给的宝藏类别；档位 NPC / 查不到模板时返回空串。"""
+    key = str(item.get("monster") or "")
+    if not key or is_npc_key(key):
+        return ""
+    monster = resolve_monster(key)
+    return str(monster.treasure or "") if monster is not None else ""
+
+
+def _multiply_items(items: list[str], count: int) -> list[str]:
+    """把一组的物品按只数放大：杂物合数量，装备保持能认出的名字。
+
+    装备名要保持 ``get_weapon`` / ``get_armor`` 认得出（``usable_items`` 靠它
+    提醒玩家收进装备栏），所以重复列出而不是写成「长剑×4」；杂物本来就带
+    「×N」，合并数量才不至于把清单刷成八行「火把×3」。
     """
+    if count <= 1:
+        return list(items)
+    out: list[str] = []
+    for text in items:
+        name, sep, amount = text.rpartition("×")
+        has_qty = bool(sep) and amount.isdigit()
+        base = name if has_qty else text
+        qty = int(amount) if has_qty else 1
+        if base in LOOT_JUNK:
+            out.append(f"{base}×{qty * count}")
+        else:
+            out.extend([text] * count)
+    return out
+
+
+def _roll_all_loot(state: CombatState, rng: Any = None) -> dict[str, Any]:
+    """按怪物模板分组掷战利品再合并。
+
+    DMG 2024《随机个体宝藏表》（参考文档 L6186）：「若要决定一组相同的生物
+    所拥有的宝藏总量，你可以掷一次并将结果乘以这些生物的数量。」旧实现逐只
+    各掷一次，注释还自称 5e 口径，方向是反的 —— 期望值一样，方差却被压小。
+
+    顺带把图鉴 ``treasure`` 类别读出来（这批数据录了 304 条却一直没人用）：
+    主题类（任意 / 奥秘 / 武备 / 器具 / 圣物）提示有库藏宝藏可发，个体类只按
+    个体表走。库藏表本身还没落地，**不改数值**，只把信息写进结算与存档。
+
+    :return: ``{"coins": {...}, "items": [...], "themes": [...去重后的类别]}``
+    """
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for item in state.defeated:
+        groups.setdefault(_loot_group_key(item), []).append(item)
+
+    # 高档次组排前面，玩家看到清单时先看到值钱的
+    ordered = sorted(
+        groups.values(),
+        key=lambda rows: max(_loot_cr(row) for row in rows),
+        reverse=True,
+    )
     coins: dict[str, int] = {}
     items: list[str] = []
-    # 高档次的排前面，玩家看到清单时先看到值钱的
-    for item in sorted(state.defeated, key=_loot_cr, reverse=True):
-        one = roll_loot(_loot_cr(item), rng)
+    themes: list[str] = []
+    for rows in ordered:
+        cr = max(_loot_cr(row) for row in rows)
+        one = roll_loot(cr, rng)
+        count = len(rows)
         for name, value in one["coins"].items():
-            coins[name] = coins.get(name, 0) + int(value)
-        items.extend(one["items"])
-    return {"coins": coins, "items": items}
+            coins[name] = coins.get(name, 0) + int(value) * count
+        items.extend(_multiply_items(one["items"], count))
+        for row in rows:
+            theme = _treasure_theme(row)
+            if theme and theme not in themes:
+                themes.append(theme)
+    return {"coins": coins, "items": items, "themes": themes}
 
 
 def _defeated_text(state: CombatState) -> str:
@@ -413,11 +484,16 @@ def settle_combat(
     # 战利品按**全体参战**分（含阵亡者：他也在场，装备能捡），跟经验口径不同
     result.loot_count = len(_participants(save, state))
 
-    # 战利品：每只怪各掷一次（5e 口径），不是整场只掷一次
+    # 战利品：同类一组掷一次 × 数量（DMG 2024 个体宝藏口径）
     top = max((_loot_cr(item) for item in state.defeated), default=0.0)
-    loot = _roll_all_loot(state, rng) if state.defeated else {"coins": {}, "items": []}
+    loot = (
+        _roll_all_loot(state, rng)
+        if state.defeated
+        else {"coins": {}, "items": [], "themes": []}
+    )
     result.coins = loot["coins"]
     result.items = list(loot["items"])
+    result.treasure_themes = list(loot.get("themes") or [])
 
     for user_id, card in cards:
         result.lines[user_id] = _award_xp(card, result.share, save.save_id)
@@ -436,6 +512,8 @@ def settle_combat(
     if result.coins or result.items:
         current = list(save.progress.get("战利品") or [])
         entry = f"{result.loot_text}（最高档次 {top:g}）"
+        if result.treasure_themes:
+            entry += f"（宝藏类别 {'、'.join(result.treasure_themes)}）"
         update_progress(save, 战利品=[*current, entry])
 
     # 战斗结束是「已发生」的大事，顺手摘一条剧情记忆（零额外模型成本）：

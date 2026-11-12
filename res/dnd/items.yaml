@@ -1,11 +1,14 @@
 # 魔法物品表
 # 一条一件：类别、稀有度、是否调谐、消耗与使用条件。
+# ⚠️ 稀有度档位名按 DMG 2024 六档（普通 / 非普通 / 珍稀 / 极珍稀 / 传说 / 神器），
+#    逐件的分档仍是项目「可玩的近似值」，尚未按第七章 A–Z 表校对；
+#    缺 price / charges / curse / craft 等字段，见 docs/trpg-dmg2024-audit.md B6。
 
 - key: elven_boots
   cn: 精灵之靴
   en: Elven Boots
   kind: 饰品
-  rarity: 稀有
+  rarity: 珍稀
   requires_attunement: true
   effect: 轻步：无视地形带来的移动困难，且在有光的地方不惊动警觉的生物
   desc: 穿上后脚步几乎不发出声音，靴底会自己找最平的那块石头。
@@ -16,7 +19,7 @@
   cn: 健康灵药
   en: Potion of Health
   kind: 药水
-  rarity: 非常稀有
+  rarity: 极珍稀
   consumes: 药水一瓶
   consumable: true
   effect: 回复 2d4+4 点生命值，永久提升最大生命值 4 点（上限 +40）
@@ -29,7 +32,8 @@
   cn: 治疗药水
   en: Potion of Healing
   kind: 药水
-  rarity: 非常稀有
+  # DMG 2024：治疗药水是普通魔法物品（100 GP，消耗品半价 50 GP）
+  rarity: 普通
   consumes: 药水一瓶
   consumable: true
   effect: 回复 2d4+2 点生命值
@@ -41,7 +45,7 @@
   cn: 抗性药水
   en: Potion of Resistance
   kind: 药水
-  rarity: 非常稀有
+  rarity: 极珍稀
   consumes: 药水一瓶
   consumable: true
   effect: 对一种伤害类型获得抗性，持续 1 小时（服用时选择类型）
@@ -53,7 +57,7 @@
   cn: 法术卷轴
   en: Scroll of Spells
   kind: 卷轴
-  rarity: 稀有
+  rarity: 珍稀
   consumes: 卷轴一张
   consumable: true
   effect: 内含一个 1~3 环法术，可由任何能施放该环位法术的角色使用
@@ -65,7 +69,7 @@
   cn: +1 武器
   en: +1 Weapon
   kind: 武器
-  rarity: 稀有
+  rarity: 珍稀
   bonus: 1
   effect: 攻击与伤害 +1
   desc: 武器本身没什么特别，握着它的时候手会自己知道该怎么挥。
@@ -76,7 +80,7 @@
   cn: 防护斗篷
   en: Cloak of Protection
   kind: 饰品
-  rarity: 非常稀有
+  rarity: 极珍稀
   requires_attunement: true
   effect: 魅力与豁免加值 +1
   desc: 灰扑扑的粗布，斗篷内衬缝着一层看不出材质的皮。
@@ -84,7 +88,7 @@
   cn: 防护戒指
   en: Ring of Protection
   kind: 饰品
-  rarity: 稀有
+  rarity: 珍稀
   requires_attunement: true
   effect: AC 与豁免加值 +1
   desc: 黄铜环，内侧刻着磨损的铭文，戴久了手指会发凉。
@@ -92,14 +96,14 @@
   cn: 收纳袋
   en: Bag of Holding
   kind: 奇物
-  rarity: 非常稀有
+  rarity: 极珍稀
   effect: 额外容纳 500 磅体积的物品，但活物塞进去会被困住
   desc: 布面，鼓鼓的，像装着一袋湿沙。
 - key: cloak_of_invisibility
   cn: 隐形斗篷
   en: Cloak of Invisibility
   kind: 饰品
-  rarity: 非常稀有
+  rarity: 极珍稀
   requires_attunement: true
   effect: 隐形；攻击或施法时隐形结束
   desc: 灰白的一片，边缘磨得起了毛。披上时布料凉得贴皮肤。
@@ -107,7 +111,7 @@
   cn: 疾行之靴
   en: Boots of Striding and Springing
   kind: 饰品
-  rarity: 非常稀有
+  rarity: 极珍稀
   requires_attunement: true
   effect: 移动速度翻倍；跳跃距离乘三
   desc: 看着就是双旧靴子，但穿上之后你会想跑。
@@ -115,7 +119,7 @@
   cn: +2 武器
   en: +2 Weapon
   kind: 武器
-  rarity: 非常稀有
+  rarity: 极珍稀
   bonus: 2
   effect: 攻击与伤害 +2
   desc: 这类东西在铁匠那儿没有第二把。
@@ -135,7 +139,7 @@
   cn: +1 护甲
   en: +1 Armor
   kind: 护甲
-  rarity: 稀有
+  rarity: 珍稀
   bonus: 1
   effect: AC +1
   desc: 甲片内衬某种会呼吸的东西，夜里贴身发暖。
@@ -143,7 +147,7 @@
   cn: +2 护甲
   en: +2 Armor
   kind: 护甲
-  rarity: 非常稀有
+  rarity: 极珍稀
   bonus: 2
   effect: AC +2
   desc: 凑齐一套这样的甲要杀很多人——这是它的一部分来历。
@@ -151,14 +155,14 @@
   cn: 长明灯
   en: Lamp of Undying
   kind: 奇物
-  rarity: 非常稀有
+  rarity: 极珍稀
   effect: 火焰不灭，且照亮周围 60 尺；可驱散一处不死性
   desc: 铜灯，油是绿的，烧起来没有烟。
 - key: stone_of_guarding
   cn: 守望石
   en: Stone of Guarding
   kind: 奇物
-  rarity: 非常稀有
+  rarity: 极珍稀
   requires_attunement: true
   effect: 指定一个生物：其死亡时生命值恢复至 1 点，一天一次
   desc: 一颗温热的卵石，握久了会听见很远的海浪。
@@ -166,7 +170,7 @@
   cn: 恐吓盔
   en: Helm of Terror
   kind: 饰品
-  rarity: 非常稀有
+  rarity: 极珍稀
   requires_attunement: true
   effect: 豁免减 2；附近敌人对你的恐惧检定劣势
   desc: 戴上后你自己的脸也会变得可怕。
@@ -190,7 +194,7 @@
   cn: 跑跳之靴
   en: Boots of Striding and Springing
   kind: 饰品
-  rarity: 非常稀有
+  rarity: 极珍稀
   requires_attunement: true
   effect: 移动速度翻倍；跳跃距离乘三
   desc: 一双旧皮靴。穿上它的人总想去跑。
@@ -201,7 +205,7 @@
   cn: 食人魔力量护手
   en: Gauntlets of Ogre's Might
   kind: 饰品
-  rarity: 非常稀有
+  rarity: 极珍稀
   requires_attunement: true
   effect: 力量变为 19（若原本更高则不变）
   desc: 一双铁护手，内侧刻着食人魔的纹样。戴上的瞬间，手臂的肌肉会自己撑起来。
@@ -211,7 +215,7 @@
   cn: 飞行药水
   en: Potion of Flying
   kind: 药水
-  rarity: 非常稀有
+  rarity: 极珍稀
   consumes: 药水一瓶
   consumable: true
   effect: 获得 60 尺飞行速度（每秒 60 尺）
@@ -223,7 +227,7 @@
   cn: 隐形药水
   en: Potion of Invisibility
   kind: 药水
-  rarity: 非常稀有
+  rarity: 极珍稀
   consumes: 药水一瓶
   consumable: true
   effect: 隐形；攻击或施法时隐形结束
@@ -235,7 +239,7 @@
   cn: 活力药水
   en: Potion of Vitality
   kind: 药水
-  rarity: 非常稀有
+  rarity: 极珍稀
   consumes: 药水一瓶
   consumable: true
   effect: 体质变为 20（若原本更高则不变），并回复该数值的生命值
@@ -247,7 +251,7 @@
   cn: 蜘蛛法杖
   en: Spider Staff
   kind: 奇物
-  rarity: 非常稀有
+  rarity: 极珍稀
   requires_attunement: true
   effect: 可施放蛛网术；持杖者的蜘蛛类生物不攻击自己
   desc: 一根黑木杖，顶端是一颗琥珀色的小球，里面封着一只会织网的东西的影子。
@@ -255,7 +259,7 @@
   cn: 防护法杖
   en: Staff of Protection
   kind: 奇物
-  rarity: 非常稀有
+  rarity: 极珍稀
   requires_attunement: true
   effect: 可施放法师护甲；持杖者对远程攻击有优势
   desc: 木杖缠着皮绳，握把处有一层磨得发亮的包浆。伊阿诺逃跑时顺手抓走了它。
@@ -265,7 +269,7 @@
   cn: 魔法飞弹魔杖
   en: Wand of Magic Missile
   kind: 奇物
-  rarity: 非常稀有
+  rarity: 极珍稀
   requires_attunement: true
   effect: 可施放魔法飞弹（1~3 环）
   desc: 细木棍，顶端嵌着一颗不起眼的灰石。握久了手心会发热。
