@@ -781,6 +781,19 @@ def _query_settlement(name: str) -> str:
     return format_settlement_query(name)
 
 
+def _query_bastion(name: str) -> str:
+    """DMG 2024 第八章据点：设施 / 事件 / 各类子表（tactic 的「据点」用它查细节）。"""
+    from ...dnd.bastion import format_bastion_query
+
+    text = format_bastion_query(name)
+    if not text:
+        raise KeyError(
+            f"据点表里没有「{name}」。可查：事件 / 规则 / 教练 / 公会 / 特饮 / 参考书 / "
+            "种植园 / 兽栏 / 尺寸 / 宝藏 / 客人，或某个设施名（如铁匠铺）"
+        )
+    return text
+
+
 def _query_treasure(name: str) -> str:
     """DMG 2024 贸易条 / 宝石 / 艺术品 / 个体与库藏宝藏（第四、七章）。"""
     return format_treasure(name)
@@ -1175,6 +1188,7 @@ _DATA_TABLES = {
     "mob_area": _query_mob_area,
     "relations": _query_relations,
     "settlement": _query_settlement,
+    "bastion": _query_bastion,
 }
 
 _DATA_ALIASES = {
@@ -1300,6 +1314,11 @@ _DATA_ALIASES = {
     "聚落表": "settlement",
     "人口": "settlement",
     "规模": "settlement",
+    "bastion": "bastion",
+    "bastions": "bastion",
+    "据点": "bastion",
+    "设施": "bastion",
+    "特色设施": "bastion",
     # —— 全局世界库文档 ——
     "world": "world",
     "世界": "world",
@@ -1316,7 +1335,9 @@ _DATA_ALIASES = {
     "省": "province",
     "省份": "province",
     "city": "city",
-    "据点": "city",
+    # 「据点」留给 DMG 第八章的 Bastion（城级世界文档改用「玩家据点」，
+    # 否则同一个词会同时指向世界库文档与据点经营两套东西）
+    "玩家据点": "city",
     "城镇": "city",
     "城市": "city",
     "place": "place",
@@ -1435,7 +1456,7 @@ def query_data_text(table: str, name: str, context: AgentContext | None = None) 
             "未知数据表，可用：race / background / profession / subclass / class_feature / skill / "
             "weapon / armor / supply（价目）/ "
             "monster / bestiary / item / spell / condition / difficulty / rule / "
-            "improvised / hazard / treasure / journey / mob / mob_area / relations / settlement / npc_tier / npc，"
+            "improvised / hazard / treasure / journey / mob / mob_area / relations / settlement / bastion（据点）/ npc_tier / npc，"
             "或世界库文档：world / realm / province / city / place / dungeon / scene / event"
         )
     try:
@@ -2651,7 +2672,8 @@ class TacticTool(AgentTool):
         "鲁莽攻击（野蛮人：本回合攻有优势、挨打也有优势）、"
         "卓越骰（战斗大师：花 1 骰掷点数，写法「卓越骰 精确攻击」）、"
         "士气（掷先攻前 DC10 感知豁免，失败不愿参战）、"
-        "逃跑（浴血/恐慌时按 DMG 判定，失败退场）、追逐 / 旅程 / 关系（DMG 第二、三章）"
+        "逃跑（浴血/恐慌时按 DMG 判定，失败退场）、追逐 / 旅程 / 关系（DMG 第二、三章）、"
+        "据点（DMG 第八章：建 / 设施 / 指令 / 回合 / 维护 / 状态）"
     )
     args = (
         ToolArg(
@@ -2659,7 +2681,7 @@ class TacticTool(AgentTool):
             "str",
             "回避（=闪避/躲避）/ 躲藏（=隐藏）/ 预备（=准备）/ 借机攻击 / 上马 / 下马 / "
             "坐骑倒地（=坠马/落马/强制移动）/ "
-            "动作如潮 / 狂暴 / 回气 / 疾风步 / 患者防御 / 鲁莽攻击 / 卓越骰 / 士气 / 逃跑 / 追逐 / 旅程 / 关系",
+            "动作如潮 / 狂暴 / 回气 / 疾风步 / 患者防御 / 鲁莽攻击 / 卓越骰 / 士气 / 逃跑 / 追逐 / 旅程 / 关系 / 据点",
         ),
         ToolArg("player", "str", "谁在做：角色名或 user_id；单人可留空"),
         ToolArg("target", "str", "借机攻击写打谁；上马写坐骑名"),
@@ -2680,6 +2702,16 @@ class TacticTool(AgentTool):
             return "当前没有存档，无法结算战术动作"
         ref = str(player or "").strip() or str(context.user_id or "")
         action_text = str(action or "").strip()
+        if action_text.startswith(("据点", "堡垒", "经营")):
+            from .bastion_actions import do_bastion
+
+            return do_bastion(
+                save,
+                action_text,
+                player=ref,
+                target=str(target or ""),
+                trigger=str(trigger or ""),
+            )
         if action_text.startswith("追逐"):
             return do_chase(
                 save,
