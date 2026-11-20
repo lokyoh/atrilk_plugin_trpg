@@ -370,16 +370,18 @@ DM 用 `start_combat` 列出敌人后，系统会：
 
 ### 数据表（`res/dnd/`，改数值不用动 .py）
 
-| 文件 | 内容 |
-|---|---|
-| `races` / `backgrounds` / `languages` / `alignments` / `feats` | 10 种族（血系制）/ 16 背景（含起源专长）/ 18 语言 / 九大阵营 + 无阵营 / 10 项起源专长 |
-| `classes` / `class_features` / `class_resources` | 12 职业 / 283 条职业等级特性 / 11 职业的资源次数与恢复口径 |
-| `subclasses` / `multiclass` | 48 个子职（含等级特性原文与结算标记）/ 12 职业的兼职熟练 |
-| `spells` / `spell_progression` | 396 个法术 / 8 个施法职业的戏法与准备数成长表 |
-| `monsters/`（xmm / mm / dosi / lmop） | 531 只怪物（同名先到先得）；`bestiary_index.yaml` 是图鉴名录 502 张卡 |
-| `equipment` / `items` / `weapon_masteries` / `options` | 武器护甲用品 / 魔法物品 / 8 条精通词条 / 1 级特性选项 |
-
+插件内置 **27 张 YAML 表** + `monsters/` 目录（xmm / mm / dosi / lmop）。
 `core/dnd/datafiles.py` 负责读取（缺表抛错，不静默兜底）。
+
+| 分组 | 文件 | 内容 |
+|---|---|---|
+| 建卡基础 | `races` / `backgrounds` / `languages` / `alignments` / `feats` / `options` | 10 种族（血系制）/ 16 背景（含起源专长）/ 18 语言 / 九大阵营 + 无阵营 / 10 项起源专长 / 1 级特性选项 |
+| 职业成长 | `classes` / `class_features` / `class_resources` / `subclasses` / `multiclass` / `spell_progression` | 12 职业 / 283 条等级特性 / 11 职业资源 / 48 子职 / 兼职熟练 / 8 职业法术数量成长 |
+| 法术与装备 | `spells` / `equipment` / `items` / `weapon_masteries` | 396 个法术（0~9 环）/ 武器护甲用品 / 28 件战役魔法物品 / 8 条精通词条 |
+| 怪物 | `monsters/` + `bestiary_index` | 531 只怪物（同名先到先得）/ 图鉴名录 502 张卡 |
+| 遭遇与结算 | `xp_budget` / `dm_tables` | 2024 人均经验值预算表；即兴伤害 / 门·锁 / 陷阱 / 宝石·艺术品 / 个体·库藏宝藏 |
+| 宝藏与范例卡 | `magic_item_tables` / `magic_items` / `hazard_cards` | 20 张 1d100 随机魔法物品表 / 538 条物品详情 / 60 张陷阱·危害·疫病·毒药·攻城装备卡 |
+| DMG 2024 玩法 | `chase` / `journey` / `mob` / `relations` / `settlements` | 追逐 / 旅行地形与旅程 / 怪群与效应区域 / NPC 关系 / 聚居地随机表 |
 
 ### 落盘位置（`data/plugins/跑团/`）
 
@@ -389,6 +391,8 @@ DM 用 `start_combat` 列出敌人后，系统会：
   `billing`、归属会话 `chat_key`、创建者、暂停标记）、角色卡副本 `characters/<user_id>.json`、
   事件日志 `events.jsonl`、本局场景副本 `scenes/`、本轮名单与已提交行动 `round.json`、
   战斗状态 `combat.json`、具名 NPC `npcs.json`、剧情流水 `story.md`；
+- DMG 2024 的三个独立状态也落在 `saves/<存档ID>/`：`chase.json`（追逐）、
+  `journey.json`（旅程）、`relations.json`（NPC 关系）——互不共享，不塞进 `combat.json`；
 - `saves/bindings.json` 会话与存档的绑定；`cards/` 角色卡源文件（**DM 的改动只改存档副本，
   不动源卡**）。
 
@@ -397,8 +401,8 @@ DM 用 `start_combat` 列出敌人后，系统会：
 > **规则口径（2026-10-24 裁定，2026-11-10 补入 DMG）**：规则文本以《玩家手册（2024）》
 > 与《城主指南（2024）》为准（与 2014 不一致处以 2024 为准：旅行步调 / 力竭 / 突袭 / 强行军
 > 递增 DC 已改）；怪物数据用 2025 图鉴（兽人等 2025 删掉的从 2014 图鉴补录，出处标 MM）。
-> 自造近似项（CR 校准 / 战利品档位表 / 时钟折算）与 DMG 侧缺口清单见 `res/rule.md`
-> 「规则口径」节和 `docs/trpg-dmg2024-audit.md`。
+> 自造近似项（CR 校准 / 战利品档位表 / 时钟折算）见 `res/rule.md`「规则口径」节；
+> 已知不足与待办的单一真相是 `docs/trpg-known-gaps.md`，文档索引见 `docs/trpg-INDEX.md`。
 
 ```
 core/
