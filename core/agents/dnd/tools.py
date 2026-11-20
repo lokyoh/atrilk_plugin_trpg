@@ -132,11 +132,11 @@ from ...dnd.npcs import (
 from ...dnd.profession import CLASSES, get_class
 from ...dnd.progression import (
     EPIC_BOON_LEVEL,
-    LEVEL_XP_THRESHOLDS,
     MAX_LEVEL,
     asi_levels_for,
     can_level_up,
     level_up,
+    set_level,
     xp_progress_text,
 )
 from ...dnd.race import get_race, race_choice_lines
@@ -1701,29 +1701,7 @@ class UpdateCharacterTool(AgentTool):
                 message += "\n" + tip
         elif field == "level":
             before = card.level
-            target = max(1, _parse_int(text, card.level))
-            card.level = min(MAX_LEVEL, target)
-            # 兼职卡：等级序列跟着伸缩（降级砍尾、升级补在主职业上；要换职业用「兼职」）
-            if card.level_classes:
-                order = list(card.level_classes)
-                if len(order) > card.level:
-                    order = order[: card.level]
-                else:
-                    order.extend([card.profession] * (card.level - len(order)))
-                card.level_classes = order
-            floor = LEVEL_XP_THRESHOLDS[min(card.level, MAX_LEVEL) - 1]
-            if card.level < before:
-                # 降级时把经验一起下调，否则会出现「3 级但 50000 经验」的自相矛盾
-                card.exp = min(card.exp, floor)
-            else:
-                # 升级时把经验抬到该级的下限，避免「等级 5 但经验 0」
-                card.exp = max(card.exp, floor)
-            message = (
-                f"等级 Lv.{before} → Lv.{card.level}"
-                f"（生命上限 {card.max_hp}，熟练加值 +{card.proficiency}）"
-            )
-            if target > MAX_LEVEL:
-                message += f"；等级上限为 {MAX_LEVEL}，已取上限"
+            message = set_level(card, _parse_int(text, card.level))
             if card.level in asi_levels_for(card.profession):
                 message += (
                     f"（Lv.{card.level} 是属性提升等级：请用 features 落盘属性点 / "

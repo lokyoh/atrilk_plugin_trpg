@@ -37,6 +37,7 @@ __all__ = [
     "level_for_xp",
     "level_up",
     "next_level_threshold",
+    "set_level",
     "spell_gain_text",
     "xp_for_cr",
     "xp_progress_text",
@@ -172,6 +173,50 @@ def can_level_up(card: Any) -> bool:
     if threshold is None:
         return False
     return int(getattr(card, "exp", 0) or 0) >= threshold
+
+
+def set_level(card: Any, level: int) -> str:
+    """把角色卡**设到**指定等级，返回给 DM / 玩家看的过渡说明。
+
+    「设到」而不是「升 N 级」：重复发同一条指令不会翻倍涨级。建卡出的**通用卡**
+    在开局定级（见 ``handlers._open_save``）、DM 改等级（``update_character`` 的
+    「等级」字段）都走这里。
+
+    规则要点：
+
+    - 总等级钳在 ``1..MAX_LEVEL``；
+    - 兼职卡同步伸缩 ``level_classes``（降级砍尾、升级补在**主职业**上；
+      要换职业用「兼职」字段）；
+    - 经验抬 / 压到该级下限，避免「5 级但 0 经验」或「3 级却 5 万经验」；
+    - 生命上限 / 熟练加值 / 法术位都是**算出来的**（读 ``level`` 与
+      ``class_levels``），这里不用改。
+
+    **只改等级本身**。子职 / 属性提升 / 新法术这些要玩家拍板的选择不在这里，
+    由 :func:`atrilk_plugin_trpg.core.dnd.levelup.start_session` 另开会话问。
+    """
+    before = int(getattr(card, "level", 1) or 1)
+    target = max(1, int(level or 1))
+    card.level = min(MAX_LEVEL, target)
+    order = list(getattr(card, "level_classes", None) or [])
+    if order:
+        if len(order) > card.level:
+            order = order[: card.level]
+        else:
+            order.extend([card.profession] * (card.level - len(order)))
+        card.level_classes = order
+    floor = LEVEL_XP_THRESHOLDS[min(card.level, MAX_LEVEL) - 1]
+    if card.level < before:
+        card.exp = min(int(getattr(card, "exp", 0) or 0), floor)
+    else:
+        card.exp = max(int(getattr(card, "exp", 0) or 0), floor)
+    text = (
+        f"等级 Lv.{before} → Lv.{card.level}"
+        f"（生命上限 {getattr(card, 'max_hp', 0)}，"
+        f"熟练加值 +{getattr(card, 'proficiency', 0)}）"
+    )
+    if target > MAX_LEVEL:
+        text += f"；等级上限为 {MAX_LEVEL}，已取上限"
+    return text
 
 
 def level_up(card: Any, into: str = "") -> str:

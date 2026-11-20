@@ -41,10 +41,11 @@ _ORDER: tuple[CreationStep, ...] = (
 )
 
 
-def _session_for(card: DndCharacter, from_level: int):
+def _session_for(card: DndCharacter, from_level: int, keep_global: bool = False):
     """还原会话并标上「升级到当前等级」的上下文。"""
     session = session_from_card(card)
     session.purpose = "levelup"
+    session.keep_global = bool(keep_global)
     session.from_level = max(1, min(int(from_level or card.level - 1), card.level))
     return session
 
@@ -70,13 +71,20 @@ def pending_choices(card: DndCharacter, from_level: int = 0) -> tuple[str, ...]:
 
 
 def start_session(
-    card: DndCharacter, save_id: str = "", from_level: int = 0
+    card: DndCharacter,
+    save_id: str = "",
+    from_level: int = 0,
+    *,
+    keep_global: bool = False,
 ) -> str | None:
     """为这张卡开一个升级选择会话，返回给玩家看的提示；没有待办返回 ``None``。
 
     会话复用建卡的存储与续接管线（``sessions/<user_id>.json`` + 常驻响应器），
     从第一个待办步骤开始：中间不需要的步骤由 :meth:`CreationSession.advance`
     自动跳过；全部答完后按建卡的收尾逻辑写回角色卡（有存档写回存档）。
+
+    :param keep_global: 只写存档、**不覆盖插件目录的全局卡**。开局定级用它——
+        建卡出的通用卡是模板，等级的落地只该发生在这一局的存档副本里。
 
     ⚠️ **兼职卡不自动开会话**：这套管线假定「一个职业一条法术数量曲线」，
     兼职时子职 / 新法术该按**这次升级的那个职业**算，会话里没有这个上下文，
@@ -88,7 +96,7 @@ def start_session(
             "（兼职卡不自动开升级选择会话：子职用 update_character 的"
             "「子职 职业:子职名」，属性加点与这一级的新法术也请用 update_character 补。）"
         )
-    session = _session_for(card, from_level)
+    session = _session_for(card, from_level, keep_global)
     todo = [step for step in _ORDER if session.levelup_step_needed(step)]
     if not todo:
         return None
@@ -101,9 +109,13 @@ def start_session(
     session.step = todo[0]
     save_session(session)
 
+    head = (
+        f"🎚️ 本局按 Lv.{card.level} 开卡，先把等级带来的选择补上"
+        if keep_global
+        else f"⬆️ Lv.{session.from_level} → Lv.{card.level} 的升级选择"
+    )
     lines = [
-        f"⬆️ Lv.{session.from_level} → Lv.{card.level} 的升级选择"
-        "（回复后自动继续；回复「取消」跳过，稍后可用 /跑团.改卡 补）：",
+        head + "（回复后自动继续；回复「取消」跳过，稍后可用 /跑团.改卡 补）：",
         "",
         creation_prompt(session.step, session),
         "",

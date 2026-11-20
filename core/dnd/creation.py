@@ -121,8 +121,9 @@ class CreationStep(Enum):
 
 #: 建卡步骤顺序：属性 → 背景 → 属性提升 → 种族 → 语言 → 职业 → 子职 →
 #: 技能 → 特性 → 装备包 → 法术 → 属性提升（ASI）→ 阵营。
-#: 建卡**固定 1 级**（原「选择开卡等级」步已删）：等级相关的子职 / ASI 两步
-#: 只在等级 ≥3 / ≥4 时出现，正常建卡走到就会被跳过；高等级角色靠升级会话长出来。
+#: 建卡产出**通用卡**（1 级骨架）：等级相关的子职 / ASI 两步只在等级 ≥3 / ≥4 时
+#: 出现，建卡走到就会被跳过。**本局从几级起是开局的事**（``/跑团.开局 <等级>``），
+#: 定级后由升级选择会话把子职 / 加点 / 新法术逐项补齐（见 :mod:`.levelup`）。
 #: 背景紧跟在属性后面，是因为 2024 的属性提升要落在背景给的三项上（D4/A1）；
 #: 「特性」放在技能之后，是因为游荡者的专精要从**已熟练的技能**里挑；
 #: ASI 放在最后，是因为它叠加在「roll + 背景提升」之上（只有高等级角色才会出现）。
@@ -706,6 +707,10 @@ class CreationSession:
     #: 升级会话的**起始等级**（升级前那一级）。用来算「这一级新得几个法术」；
     #: 0 = 没标（建卡会话，或调用方没给）→ 按当前等级 -1 兜底。
     from_level: int = 0
+    #: 补课会话是否**只写存档、不动全局卡**。开局定级时置真：建卡出的通用卡
+    #: 留在 1 级当模板，等级的落地只发生在**这一局的存档副本**上——否则打完
+    #: 一局高等级冒险，下一局想按 1 级开也会被抬到高等级。
+    keep_global: bool = False
     #: 会话是不是从**已有角色卡**还原来的（改卡 / 升级）。这类会话写回时
     #: 经验与准备列表按卡上原样搬回去，不能按建卡的规则重算。
     from_card: bool = False
@@ -714,8 +719,9 @@ class CreationSession:
     #: 今日准备的法术（法术 key，不含戏法）。从卡还原时带上原名单；
     #: 建卡时留空，由 :func:`build_character` 按挑的法术推。
     prepared: list[str] = field(default_factory=list)
-    #: 角色等级。**建卡固定 1 级**（「选择开卡等级」步已删）；改卡 / 升级会话按卡上
-    #: 等级还原。HP / 熟练加值 / 法术位都按它算；3 级起必须选子职。
+    #: 角色等级。**建卡产出 1 级骨架**（「选择开卡等级」步已删），本局等级由
+    #: ``/跑团.开局 <等级>`` 定在存档副本上；改卡 / 升级会话按卡上等级还原。
+    #: HP / 熟练加值 / 法术位都按它算；3 级起必须选子职。
     level: int = 1
     #: 已做的属性提升（ASI）次数与加点：属性键 -> 加点（与背景提升分开记，
     #: 落卡时合并进 ``ability_boost``）
@@ -782,6 +788,7 @@ class CreationSession:
             "save_id": self.save_id,
             "from_level": self.from_level,
             "from_card": self.from_card,
+            "keep_global": self.keep_global,
             "exp": self.exp,
             "prepared": list(self.prepared),
             "level": self.level,
@@ -834,6 +841,7 @@ class CreationSession:
             save_id=str(data.get("save_id", "") or ""),
             from_level=int(data.get("from_level", 0) or 0),
             from_card=bool(data.get("from_card", False)),
+            keep_global=bool(data.get("keep_global", False)),
             exp=int(data.get("exp", 0) or 0),
             prepared=list(data.get("prepared", [])),
             level=max(1, min(int(data.get("level", 1) or 1), MAX_LEVEL)),

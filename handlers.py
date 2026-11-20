@@ -452,13 +452,18 @@ async def _continue_creation(event: MessageEvent):
     text = event.get_plaintext().strip()
     if text.lower() in _CANCEL_WORDS:
         is_levelup = session.purpose == "levelup"
+        keep_global = bool(getattr(session, "keep_global", False))
         delete_session(user_id)
         _unmark_active(user_id)
         if is_levelup:
-            await continue_card.finish(
-                "已跳过本次升级选择（角色卡保持原样）。"
+            note = (
+                "已跳过开卡补齐：这一局按定好的等级开着，"
+                "子职 / 属性加点 / 新法术仍缺着，随时用 /跑团.改卡 补。"
+                if keep_global
+                else "已跳过本次升级选择（角色卡保持原样）。"
                 "随时可以用 /跑团.改卡（子职 / 属性加点 / 法术）补上。"
             )
+            await continue_card.finish(note)
         await continue_card.finish("已取消建卡，随时发送 /跑团.建卡 重新开始。")
 
     out, character = await _advance(session, text)
@@ -541,7 +546,10 @@ async def _advance(
                 save = load_save(session.save_id)
                 if save is not None:
                     set_character(save, character)
-                save_card(character)
+                # 开局定级的补课**只落这一局的存档副本**：整局卡是通用模板，
+                # 被一局高等级冒险改掉之后，下一局想按 1 级开就没法开了。
+                if not session.keep_global:
+                    save_card(character)
             else:
                 save_card(character)
         except Exception as e:  # 落盘失败不应让玩家以为建好了
@@ -550,13 +558,13 @@ async def _advance(
 
         delete_session(session.user_id)
         if session.purpose == "levelup":
-            return (
-                await _card_result(
-                    "✅ 升级选择完成，已写回角色卡，继续游戏吧！",
-                    character,
-                ),
-                character,
+            done = (
+                "✅ 开卡等级带来的选择已补齐，这张卡已经按本局等级就位，"
+                "继续等人齐了 /跑团.开始 就行。"
+                if session.keep_global
+                else "✅ 升级选择完成，已写回角色卡，继续游戏吧！"
             )
+            return await _card_result(done, character), character
         return (
             await _card_result(
                 "🎲 角色卡已保存！\n"
@@ -734,7 +742,8 @@ async def _query_data(event: MessageEvent, args: Message = CommandArg()):
 # --------------------------------------------------------------------------- #
 
 #: 可重做的建卡步骤：步骤 -> 触发词（第一个为展示名）
-#: 注意没有「等级」——建卡固定 1 级，等级只能由升级 / DM 的 update_character 改。
+#: 注意没有「等级」——建卡产出的是通用卡（1 级骨架），等级归开局的 `/跑团.开局`
+#: 定，局内只能由升级 / DM 的 update_character 改。
 _REDO_STEPS: tuple[tuple[CreationStep, tuple[str, ...]], ...] = (
     (CreationStep.ABILITY, ("属性", "ability", "roll", "掷属性")),
     (CreationStep.RACE, ("种族", "race")),
@@ -979,11 +988,19 @@ class _StartPending:
     """本会话正在进行的开局选择状态。"""
 
     user_id: str
-    #: 当前阶段：只剩 "world"（选世界）。原先还有 "story"（选故事），
-    #: 故事推力文档下线后没有第二阶段了——事件是**建档之后**才织的。
+    #: 当前阶段：``"world"`` = 选世界 → ``"story"`` = 选入场事件（可选）→
+    #: ``"level"`` = 定本局开卡等级 → 建档。
+    #: 故事推力文档下线后「选故事」不再是必经步骤，只在世界有现成事件时出现。
     stage: str
-    #: 已选中的世界键（预留：将来若要分阶段选择时用）
+    #: 已选中的世界键（stage 为 story / level 时有值）
     world_key: str = ""
+    #: 已选中的入场事件键（stage 为 level 时有值，空 = 不挑、开局现织一件）
+    story_key: str = ""
+    #: 已选中的玩法名（stage 为 level 时有值；无尽模式走这条）
+    mode: str = ""
+    #: 建档**之前**就产生的用量（现生成世界那一笔）：存档还没 ID，先押在这里，
+    #: 等建档时补记到这一局的存档上。
+    usages: list = field(default_factory=list)
     at: float = field(default_factory=time.monotonic)
 
 
@@ -1011,10 +1028,23 @@ def _pending_pick(key: str, user_id: str) -> _StartPending | None:
     return pending
 
 
-def _set_pending_pick(key: str, user_id: str, stage: str, world_key: str = "") -> None:
+def _set_pending_pick(
+    key: str,
+    user_id: str,
+    stage: str,
+    world_key: str = "",
+    story_key: str = "",
+    mode: str = "",
+    usages: list | None = None,
+) -> None:
     """记录 / 重置本会话的开局选择状态。"""
     _START_PENDING[key] = _StartPending(
-        user_id=str(user_id), stage=stage, world_key=world_key
+        user_id=str(user_id),
+        stage=stage,
+        world_key=world_key,
+        story_key=story_key,
+        mode=mode,
+        usages=list(usages or []),
     )
 
 
@@ -1067,6 +1097,7 @@ def _world_chooser(worlds, note: str = "") -> str:
         "· 生成一个新世界 → /跑团.开局 生成 [主题]（不给主题就随机）",
         "· 一条命令开无尽局 → /跑团.开局 无尽（装预设世界 + 按无尽节奏跑）",
         "",
+        "选完世界（与入场事件）会再问一句本局**开卡等级**（1–20），然后才建档。",
         "世界是所有存档共享的；选完之后每一局会自己织自己的事件，互不影响。",
     ]
     return "\n".join(lines)
@@ -1075,11 +1106,11 @@ def _world_chooser(worlds, note: str = "") -> str:
 def _story_chooser(world_key: str, note: str = "") -> str:
     """「选起始故事」的提示文案。
 
-    开局是**两步选择**：先选世界，再从这个世界里**现成的事件**里挑一件
-    当这一局的起点。挑完才建档、等人加入、开局——DM 会按它写开场白，
-    而它就是这一局的**入场事件**。
+    开局是**三步选择**：选世界 → 挑一件入场事件（这个世界有现成事件时）→
+    定本局开卡等级，然后才建档、等人加入、开局。挑中的事件就是这一局的
+    **入场事件**，DM 会按它写开场白。
 
-    这个世界没有现成事件时（老世界），直接建档，不多问一轮。
+    这个世界没有现成事件时（老世界），跳过这一步直接问等级。
     """
     from .core.dnd.openings import opening_choices_text, opening_options
 
@@ -1101,6 +1132,38 @@ def _story_chooser(world_key: str, note: str = "") -> str:
         "选完的那一件就是这一局的入场事件，DM 会从它写开场白。",
         "如果你们想自己另起一个故事——开局时跟 DM 说一声就行，",
         "这些是**可选的**，不是全部。",
+        "",
+        "挑完之后还会问一句本局开卡等级（1–20），然后才建档。",
+    ]
+    return "\n".join(lines)
+
+
+def _world_title(world_key: str) -> str:
+    """世界键 → 展示名；世界已经不在了就回退成键本身。"""
+    world = get_world(world_key)
+    return world.title if world is not None else str(world_key or "")
+
+
+def _level_chooser(world_title: str = "", note: str = "") -> str:
+    """「定本局开卡等级」的提示文案。
+
+    建卡出的卡是**通用**的（不分等级）：等级只在开局时落到这一局的存档上。
+    3 级以上的子职、4 级起的属性提升、随等级涨的法术数量，建档 / 加入时
+    各自开一轮升级选择会话逐项问，答完自动写回存档。
+    """
+    lines: list[str] = []
+    if note:
+        lines.append(f"⚠️ {note}")
+        lines.append("")
+    where = f"（世界「{world_title}」）" if world_title else ""
+    lines += [
+        f"🎚️ 本局开卡等级{where}：",
+        f"· 1 级 → /跑团.开局 1（{int(_START_PICK_TTL // 60)} 分钟内有效）",
+        "· 高等级 → /跑团.开局 5（数字就是等级，1–20）",
+        "",
+        "建卡不分等级，卡是同一条；等级只落在**这一局的存档**上。",
+        "3 级以上要选子职、4 级起有属性提升、法术数量随等级涨——"
+        "这些会在建档 / 加入时各开一轮选择问玩家，答完自动写回。",
     ]
     return "\n".join(lines)
 
@@ -1125,6 +1188,23 @@ def _save_player_names(save: Save) -> list[str]:
     """存档里玩家的显示名（优先 lk 绑定名），给「谁加入了」这类文案用。"""
     names: list[str] = []
     for user_id in save.player_ids:
+        card = get_character(save, user_id)
+        name = player_name(user_id, card.name if card is not None else "")
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _players_in_session(save: Save) -> list[str]:
+    """存档里还有未完成建卡 / 选择会话的玩家显示名。
+
+    开局的补课会话（子职 / 属性提升 / 新法术）会**接住**玩家的普通消息，
+    所以有人还没答完时不能开局——否则他说的第一句行动会被当成选择吃掉。
+    """
+    names: list[str] = []
+    for user_id in save.player_ids:
+        if load_session(user_id) is None:
+            continue
         card = get_character(save, user_id)
         name = player_name(user_id, card.name if card is not None else "")
         if name and name not in names:
@@ -1162,6 +1242,42 @@ def _paused_save(key: str) -> Save | None:
     return None
 
 
+def _apply_start_level(save, user_id: str, level: int) -> str:
+    """把某玩家在存档里的**通用卡**按本局等级落地，返回要追加的提示。
+
+    建卡出的卡不分等级（它是整局通用的模板）；等级只落在**这一局的存档副本**上，
+    所以这里改的是 ``save`` 里的副本，插件目录的全局卡保持 1 级原样——
+    否则打完一局高等级冒险，下一局想按 1 级开就没法开了。
+
+    等级带来的**选择**（3 级子职 / 4 级起属性提升 / 随等级涨的法术）不在这里
+    替玩家做，交给升级选择会话逐项问（``keep_global=True``，答完只写回存档）。
+    """
+    from .core.dnd.levelup import pending_choices, start_session
+    from .core.dnd.progression import set_level
+
+    card = get_character(save, user_id)
+    if card is None or level <= 1 or int(card.level) == int(level):
+        return ""
+    note = set_level(card, level)
+    set_character(save, card)
+    lines = [f"🎚️ 本局开卡等级 Lv.{level}：{note}"]
+    tip = start_session(card, save.save_id, from_level=1, keep_global=True)
+    if tip:
+        lines += ["", tip]
+    else:
+        owed = pending_choices(card, from_level=1)
+        if owed:
+            # 已有会话在跑（或兼职卡）：不硬开第二个，把欠的说清楚让人自己补
+            names = {"subclass": "子职", "asi": "属性提升", "spells": "新法术"}
+            lines.append(
+                "（这张卡还欠：" + "、".join(names.get(k, k) for k in owed)
+                + " —— 先把之前那一轮选择答完，或用 /跑团.改卡 补。）"
+            )
+        else:
+            lines.append("（这张卡在该等级没有要补的选择。）")
+    return "\n".join(lines)
+
+
 def _open_save(
     user_id: str,
     key: str,
@@ -1169,6 +1285,7 @@ def _open_save(
     *,
     mode: str = "",
     story_key: str = "",
+    start_level: int = 1,
 ) -> tuple[str, str]:
     """建立存档、复制角色卡并绑定本会话，返回 ``(存档 ID, 给玩家的文案)``。
 
@@ -1179,9 +1296,12 @@ def _open_save(
         织法与纪元长度必须在织第一章之前落盘，否则第一章就按默认参数织出来了。
     :param story_key: 玩家挑的**入场事件**（世界库 ``event`` 文档的键）。
         空 = 玩家没挑（要自己另起一个），开局时织一件新的，那一件就是入场事件。
+    :param start_level: 本局**开卡等级**（1–20）。记在存档上，建卡人自己的卡与
+        之后每个 ``/跑团.加入`` 的卡都按它落地（见 :func:`_apply_start_level`）。
     """
     from .core.dnd.gamemode import mode_text, start_mode
 
+    level = max(1, min(int(start_level or 1), 20))
     card = load_card(user_id)
     save = create_save(player_cards=[card] if card is not None else [])
     save.creator_id = str(user_id)
@@ -1189,6 +1309,7 @@ def _open_save(
     save.story_key = str(story_key or "")
     save.progress["chat_key"] = key
     save.progress["started"] = False  # 等人齐 + /跑团.开始 之后才开局
+    save.progress["start_level"] = level
     picked = start_mode(save, mode)
     save_save(save)
     set_binding(key, save.save_id)
@@ -1198,7 +1319,7 @@ def _open_save(
 
     text = (
         f"🎲 冒险已就绪：存档 {save.save_id}\n"
-        f"世界「{world_name}」· {mode_text(save)}\n"
+        f"世界「{world_name}」· {mode_text(save)} · 开卡等级 Lv.{level}\n"
         "这一局的事件会在**开局时按队伍的实际水平织出来**；"
         "区域 / 城镇 / 自然地点 / 地下城 / 场景同样在用到时按需生成。\n\n"
         "先等大家加入，人齐了再开局：\n"
@@ -1207,6 +1328,9 @@ def _open_save(
         "· 人齐后由**任意已加入的玩家**发 /跑团.开始 正式开局\n"
         "· /跑团.存档 查看谁已经加入、进度与用量"
     )
+    level_note = _apply_start_level(save, user_id, level)
+    if level_note:
+        text += "\n\n" + level_note
     if save.story_key:
         from .core.dnd.openings import opening_options
 
@@ -1260,11 +1384,16 @@ async def _generate_world(
         )
         return
 
-    save_id, text = _open_save(user_id, key, report_.world_key)
-    # 世界是开局前生成的，用量补记到这一局的存档上
-    record_usages(save_id, list(report_.usages))
-    # 不在这里跑开场白：等玩家陆续加入，由 /跑团.开始 正式开局
-    await bot.send(event, f"{report_.summary()}\n\n{text}")
+    # 世界建好了，但还没建档：先把本局开卡等级问清楚（等级是开局的事，
+    # 建卡出的卡与等级无关）。玩家回一句 /跑团.开局 <等级> 就建档。
+    _set_pending_pick(
+        key, str(user_id), "level", report_.world_key, usages=list(report_.usages)
+    )
+    await bot.send(
+        event,
+        f"{report_.summary()}\n\n"
+        + _level_chooser(_world_title(report_.world_key), note="世界已生成。"),
+    )
 
 
 def _spawn(task: asyncio.Task) -> None:
@@ -1313,21 +1442,53 @@ async def _start_game(
     # 顺手清掉过期的开局选择状态（这个调用的副作用就是清理，返回值用不上）
     pending = _pending_pick(key, user_id)
 
+    # ·「定开卡等级」阶段：世界（与入场事件）都选好了，这一轮的数字是**等级**。
+    #   等级是**开局**的事，不是建卡的事：建卡出的卡与等级无关，只有在开局时
+    #   才知道这一局从几级起，因此统一在这里问、记在存档上、落到存档副本。
+    if pending is not None and pending.stage == "level":
+        from .core.dnd.progression import MAX_LEVEL
+
+        text = clean_name(head)
+        world_title = _world_title(pending.world_key)
+        if not text.isdigit():
+            await start_game.finish(
+                _level_chooser(world_title, note="要定等级，请给一个数字（1–20）。")
+            )
+        level = int(text)
+        if not (1 <= level <= MAX_LEVEL):
+            await start_game.finish(
+                _level_chooser(
+                    world_title, note=f"等级要在 1–{MAX_LEVEL} 之间，请重新选择。"
+                )
+            )
+        _START_PENDING.pop(key, None)
+        await matcher.send(
+            f"🌍 使用世界「{world_title}」· 开卡等级 Lv.{level}，正在建立存档……"
+        )
+        save_id, text = _open_save(
+            user_id,
+            key,
+            pending.world_key,
+            mode=pending.mode,
+            story_key=pending.story_key,
+            start_level=level,
+        )
+        if pending.usages:
+            # 世界是开局前现生成的：那笔用量补记到这一局的存档上
+            record_usages(save_id, pending.usages)
+        await start_game.finish(text)
+
     # ·「选起始故事」阶段：世界已经选好，这一轮的数字是**故事序号**。
     if pending is not None and pending.stage == "story":
         from .core.dnd.openings import opening_options
 
         options = opening_options(pending.world_key)
         if not options:
-            # 这个世界没有开场清单（中途换过世界？）：退回直接建档
-            _START_PENDING.pop(key, None)
-            world = next((w for w in worlds if w.key == pending.world_key), None)
-            if world is None:
-                await start_game.finish(
-                    "🌍 那个世界已经不在了。发送 /跑团.开局 重新选择。"
-                )
-            save_id, text = _open_save(user_id, key, world.key)
-            await start_game.finish(text)
+            # 这个世界没有开场清单（中途换过世界？）：退回「定等级」那一步
+            _set_pending_pick(key, user_id, "level", pending.world_key)
+            await start_game.finish(
+                _level_chooser(_world_title(pending.world_key))
+            )
         if not head.isdigit():
             await start_game.finish(
                 _story_chooser(
@@ -1342,20 +1503,13 @@ async def _start_game(
                 )
             )
         chosen = options[index - 1]
-        _START_PENDING.pop(key, None)
-        world = next((w for w in worlds if w.key == pending.world_key), None)
-        world_title = world.title if world else pending.world_key
-        await matcher.send(
-            f"🌍 使用世界「{world_title}」· 入场事件「{chosen.title}」，正在建立存档"
-            "（之后等大家加入再 /跑团.开始 开局）……"
+        _set_pending_pick(
+            key, user_id, "level", pending.world_key, story_key=chosen.event_key
         )
-        save_id, text = _open_save(
-            user_id,
-            key,
-            pending.world_key,
-            story_key=chosen.event_key,
+        await start_game.finish(
+            f"📖 入场事件：「{chosen.title}」\n\n"
+            + _level_chooser(_world_title(pending.world_key))
         )
-        await start_game.finish(text)
 
     # ·「无尽」：一条命令开局。装预设世界（零模型调用，已装则复用）+ 建档 +
     #   把无尽玩法写进存档（预设世界平时是开局时自动装的，这里只是省掉选世界那一步）。
@@ -1370,20 +1524,26 @@ async def _start_game(
         except Exception as e:
             log.warning(f"准备无尽模组失败：{str_traceback(e)}")
             await start_game.finish(f"⚠️ 无尽模组装不上：{e}")
-        info = get_world(preset_key)
-        await matcher.send(
-            f"🌍 使用预设世界「{info.title if info is not None else preset_key}」，"
-            "正在建立无尽模式的存档……"
-        )
-        save_id, text = _open_save(user_id, key, preset_key, mode="endless")
-        await start_game.finish(text)
+        title = _world_title(preset_key)
+        if rest.isdigit():
+            # /跑团.开局 无尽 5：等级一步给到，不用多问一轮
+            await matcher.send(
+                f"🌍 使用预设世界「{title}」· 开卡等级 Lv.{rest}，"
+                "正在建立无尽模式的存档……"
+            )
+            save_id, text = _open_save(
+                user_id, key, preset_key, mode="endless", start_level=int(rest)
+            )
+            await start_game.finish(text)
+        _set_pending_pick(key, user_id, "level", preset_key, mode="endless")
+        await start_game.finish(_level_chooser(title, note="无尽模式：先定本局开卡等级。"))
 
     # ·「生成」：生成一个新世界（事件在建档、开局时才织，不在这一步）
     if head in _GEN_WORDS:
         _START_PENDING.pop(key, None)
         await matcher.send(
             "🎲 开始准备这一局（需要一些时间，完成后我会汇报）：\n"
-            "① 生成世界地图　② 建立存档、等人加入\n"
+            "① 生成世界地图　② 定本局开卡等级、建立存档、等人加入\n"
             "开局时会按队伍的实际水平织出第一章。\n"
             "期间可以先做别的，不必等在这里。"
         )
@@ -1427,7 +1587,7 @@ async def _start_game(
                     )
 
         # 选中世界：**先看这个世界有没有现成的事件可选**。
-        # 有的话多问一轮（挑一件入场事件），没有就直接建档——
+        # 有的话多问一轮（挑一件入场事件），没有就直接进「定等级」——
         # 老世界没有现成事件，多问一轮只会让人莫名其妙。
         mode = "endless" if rest.lower() in _ENDLESS_WORDS else ""
         story_key = ""
@@ -1448,19 +1608,12 @@ async def _start_game(
                     )
                     return
 
-        _START_PENDING.pop(key, None)
-        await matcher.send(
-            f"🌍 使用世界「{world.title}」，正在建立存档"
-            "（之后等大家加入再 /跑团.开始 开局）……"
+        # 世界（与入场事件）都定了，最后问一句本局开卡等级，再建档。
+        _set_pending_pick(
+            key, user_id, "level", world.key, story_key=story_key, mode=mode
         )
-        save_id, text = _open_save(
-            user_id,
-            key,
-            world.key,
-            mode=mode,
-            story_key=story_key,
-        )
-        await start_game.finish(text)
+        prefix = f"🌍 已选世界「{world.title}」。\n\n"
+        await start_game.finish(prefix + _level_chooser(world.title))
 
     # · 裸 /跑团.开局：**还没有世界就先装内置预设**（零模型调用、一两秒就完），
     #   不再一上来就调模型现生成一个——现生成要一两分钟、还要花钱，而绝大多数
@@ -1508,6 +1661,16 @@ async def _start_round(event: MessageEvent, bot: Bot):
         await start_round.finish(
             f"你还没加入这一局，先发 /跑团.加入 {save.save_id}"
             "（本群直接发 /跑团.加入 也行）。"
+        )
+
+    # 开局定级后，缺的选择（子职 / 属性提升 / 新法术）是**逐项问**的。有人还没
+    # 答完就先别开局：那些会话会把玩家的「我要做什么」当成选择内容吃掉。
+    waiting = _players_in_session(save)
+    if waiting:
+        await start_round.finish(
+            "⏳ 还有人的开卡选择没答完："
+            + "、".join(waiting)
+            + "。\n答完（或回复「取消」跳过，之后可用 /跑团.改卡 补）再发 /跑团.开始。"
         )
 
     names = _save_player_names(save)
@@ -1833,6 +1996,11 @@ async def _join_save(event: MessageEvent, args: Message = CommandArg()):
         + "、".join(_save_player_names(save))
         + "）。"
     ]
+    # 本局的开卡等级：卡是通用的，等级只落在**这一局的副本**上
+    level = int(save.progress.get("start_level", 1) or 1)
+    level_note = _apply_start_level(save, event.get_user_id(), level)
+    if level_note:
+        lines += ["", level_note]
     if started:
         lines.append("这一局已经开局了，直接 @我 描述行动即可。")
     else:
