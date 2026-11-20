@@ -94,6 +94,8 @@ class Armor:
     strength_required: int = 0
     stealth_disadvantage: bool = False
     weight: float = 0.0
+    #: 表价原文（如 ``"45 gp"``）；交易按它算钱，见 :mod:`.trade`
+    cost: str = ""
 
     @property
     def is_shield(self) -> bool:
@@ -128,6 +130,8 @@ class Weapon:
     thrown_max: int = 0
     #: 武器精通词条 key（见 :data:`WEAPON_MASTERIES`）；空 = 这把武器没有精通
     mastery: str = ""
+    #: 表价原文（如 ``"15 gp"``）；交易按它算钱，见 :mod:`.trade`
+    cost: str = ""
 
     @property
     def is_ranged(self) -> bool:
@@ -207,6 +211,7 @@ def _armor(row: dict[str, Any]) -> Armor:
         strength_required=int(row.get("strength_required", 0)),
         stealth_disadvantage=bool(row.get("stealth_disadvantage", False)),
         weight=float(row.get("weight", 0.0)),
+        cost=str(row.get("cost", "") or ""),
     )
 
 
@@ -225,6 +230,7 @@ def _weapon(row: dict[str, Any]) -> Weapon:
         thrown_normal=int(row.get("thrown_normal", 0)),
         thrown_max=int(row.get("thrown_max", 0)),
         mastery=str(row.get("mastery", "") or ""),
+        cost=str(row.get("cost", "") or ""),
     )
 
 
@@ -278,13 +284,19 @@ def get_mastery(value: WeaponMastery | str | None) -> WeaponMastery | None:
     return WEAPON_MASTERIES.get(text) if text else None
 
 #: 起始「包」-> 内容物：数值在 ``res/dnd/equipment.yaml`` 的 ``packs`` 段。
-#: 只收录**容器包**（探索者背包 / 艺人包 / 学者包 / 祭司包 / 窃贼包）；
-#: 「材料包」「德鲁伊法器和材料包」是施法材料袋，不在此列（不展开）。
+#: 只收录**容器包**（探索套组 / 艺人套组 / 学者套组 / 祭司套组 / 窃贼套组 /
+#: 外交套组 / 地城套组）；「材料包」「德鲁伊法器和材料包」是施法材料袋，不在此列
+#: （不展开）。
+#:
+#: 包名按 PHB 2024 第六章改成了「XX 套组」，``aliases`` 保留 2014 的旧名
+#: （探索者背包 / 艺人包 …）——旧存档的卡上写的还是旧名，不认别名就展不开。
 PACKS: dict[str, tuple[str, ...]] = {}
 for _row in _TABLES.get("packs", []):
     _items = as_texts(_row.get("items"))
     PACKS[str(_row["cn"])] = _items
     PACKS.setdefault(str(_row["key"]), _items)
+    for _alias in as_texts(_row.get("aliases")):
+        PACKS.setdefault(_alias, _items)
 
 
 def pack_contents(name: str) -> tuple[str, ...] | None:
@@ -349,6 +361,10 @@ class Supply:
     weight: float = 0.0
     speed: str = ""  # 坐骑 / 载具的速度（如 "40 尺" / "1 mph"）
     carry: str = ""  # 坐骑载重（如 "480 磅"）
+    #: **PHB 2024 第六章没有这一条**（2014 遗留或建卡依赖，如「法术书」）。
+    #: 数据是按 2024 逐条核对过的（2026-11-21）；这些行保留是为了不破坏旧存档
+    #: 与职业装备包，不是漏改——查询时看不出区别，需要区分时看这个标记。
+    legacy: bool = False
 
 
 def _supply(row: dict[str, Any]) -> Supply:
@@ -360,6 +376,7 @@ def _supply(row: dict[str, Any]) -> Supply:
         weight=float(row.get("weight", 0.0) or 0.0),
         speed=str(row.get("speed", "") or ""),
         carry=str(row.get("carry", "") or ""),
+        legacy=bool(row.get("legacy", False)),
     )
 
 
@@ -367,8 +384,8 @@ def _supplies(section: str) -> tuple[Supply, ...]:
     return tuple(_supply(row) for row in _TABLES.get(section, []))
 
 
-#: 冒险用品（数据转录自 2014 快速参考；2024 第六章有增删，尚未逐条对齐——
-#: 见 res/rule.md「规则口径」节的已知未对齐项）
+#: 冒险用品（2026-11-21 按 PHB 2024 第六章逐条核对：价格 / 重量 / 条目增删已对齐；
+#: ``legacy`` 为真的条目 2024 表里没有，保留理由见 :class:`Supply`）
 GEAR: tuple[Supply, ...] = _supplies("gear")
 #: 工具表（工匠 / 赌具 / 乐器 / 盗贼工具 …）
 TOOLS: tuple[Supply, ...] = _supplies("tools")

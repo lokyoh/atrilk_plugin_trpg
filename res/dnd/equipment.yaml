@@ -8,28 +8,33 @@ armors:
   base_ac: 11
   stealth_disadvantage: true
   weight: 8
+  cost: "5 gp"
 - key: leather
   cn: 皮甲
   category: 轻甲
   base_ac: 11
   weight: 10
+  cost: "10 gp"
 - key: studded_leather
   cn: 镶钉皮甲
   category: 轻甲
   base_ac: 12
   weight: 13
+  cost: "45 gp"
 - key: hide
   cn: 兽皮甲
   category: 中甲
   base_ac: 12
   max_dex_bonus: 2
   weight: 12
+  cost: "10 gp"
 - key: chain_shirt
   cn: 链甲衫
   category: 中甲
   base_ac: 13
   max_dex_bonus: 2
   weight: 20
+  cost: "50 gp"
 - key: scale_mail
   cn: 鳞甲
   category: 中甲
@@ -37,12 +42,14 @@ armors:
   max_dex_bonus: 2
   stealth_disadvantage: true
   weight: 45
+  cost: "50 gp"
 - key: breastplate
   cn: 胸甲
   category: 中甲
   base_ac: 14
   max_dex_bonus: 2
   weight: 20
+  cost: "400 gp"
 - key: half_plate
   cn: 半身板甲
   category: 中甲
@@ -50,6 +57,7 @@ armors:
   max_dex_bonus: 2
   stealth_disadvantage: true
   weight: 40
+  cost: "750 gp"
 - key: ring_mail
   cn: 环甲
   category: 重甲
@@ -57,6 +65,7 @@ armors:
   max_dex_bonus: 0
   stealth_disadvantage: true
   weight: 40
+  cost: "30 gp"
 - key: chain_mail
   cn: 链甲
   category: 重甲
@@ -65,6 +74,7 @@ armors:
   strength_required: 13
   stealth_disadvantage: true
   weight: 55
+  cost: "75 gp"
 - key: splint
   cn: 板条甲
   category: 重甲
@@ -73,6 +83,7 @@ armors:
   strength_required: 15
   stealth_disadvantage: true
   weight: 60
+  cost: "200 gp"
 - key: plate
   cn: 板甲
   category: 重甲
@@ -81,17 +92,20 @@ armors:
   strength_required: 15
   stealth_disadvantage: true
   weight: 65
+  cost: "1,500 gp"
 shields:
 - key: shield_wood
   cn: 木盾
   category: 盾牌
   base_ac: 2
   weight: 6
+  cost: "10 gp"
 - key: shield_steel
   cn: 钢盾
   category: 盾牌
   base_ac: 2
   weight: 6
+  cost: "10 gp"
 weapons:
 # 数值对照《快速参考 (5e_2014).md》武器表（2014 PHB）。
 # 伤害 / 射程 / 词条两版相同；2024 新增的「精通」特性未实现（口径见 res/rule.md）。
@@ -106,6 +120,7 @@ weapons:
   damage_type: 钝击
   properties:
   - 轻型
+  cost: "1 sp"
 - key: dagger
   cn: 匕首
   category: 简易近战
@@ -118,6 +133,7 @@ weapons:
   - 投掷
   thrown_normal: 20
   thrown_max: 60
+  cost: "2 gp"
 - key: greatclub
   cn: 巨棒
   category: 简易近战
@@ -126,6 +142,7 @@ weapons:
   damage_type: 钝击
   properties:
   - 双手
+  cost: "2 sp"
 - key: handaxe
   cn: 手斧
   category: 简易近战
@@ -137,6 +154,7 @@ weapons:
   - 投掷
   thrown_normal: 20
   thrown_max: 60
+  cost: "5 gp"
 - key: javelin
   cn: 标枪
   category: 简易近战
@@ -147,6 +165,7 @@ weapons:
   - 投掷
   thrown_normal: 30
   thrown_max: 120
+  cost: "5 sp"
 - key: light_hammer
   cn: 轻锤
   category: 简易近战
@@ -158,12 +177,14 @@ weapons:
   - 投掷
   thrown_normal: 20
   thrown_max: 60
+  cost: "2 gp"
 - key: mace
   cn: 硬头槌
   category: 简易近战
   mastery: sap
   damage: 1d6
   damage_type: 钝击
+  cost: "5 gp"
 - key: quarterstaff
   cn: 长棍
   category: 简易近战
@@ -173,6 +194,7 @@ weapons:
   properties:
   - 两用
   two_handed_damage: 1d8
+  cost: "2 sp"
 - key: sickle
   cn: 镰刀
   category: 简易近战
@@ -181,6 +203,7 @@ weapons:
   damage_type: 挥砍
   properties:
   - 轻型
+  cost: "1 gp"
 - key: spear
   cn: 矛
   category: 简易近战
@@ -193,6 +216,7 @@ weapons:
   two_handed_damage: 1d8
   thrown_normal: 20
   thrown_max: 60
+  cost: "1 gp"
 # —— 简易远程 ——
 - key: light_crossbow
   cn: 轻弩
@@ -206,6 +230,7 @@ weapons:
   - 双手
   ranged_normal: 80
   ranged_max: 320
+  cost: "25 gp"
 - key: dart
   cn: 飞镖
   category: 简易远程
@@ -217,6 +242,7 @@ weapons:
   - 投掷
   thrown_normal: 20
   thrown_max: 60
+  cost: "5 cp"
 - key: shortbow
   cn: 短弓
   category: 简易远程
@@ -228,6 +254,7 @@ weapons:
   - 双手
   ranged_normal: 80
   ranged_max: 320
+  cost: "25 gp"
 - key: sling
   cn: 投石索
   category: 简易远程
@@ -238,6 +265,7 @@ weapons:
   - 弹药
   ranged_normal: 30
   ranged_max: 120
+  cost: "1 sp"
 # —— 军用近战 ——
 - key: battleaxe
   cn: 战斧
@@ -248,12 +276,14 @@ weapons:
   properties:
   - 两用
   two_handed_damage: 1d10
+  cost: "10 gp"
 - key: flail
   cn: 链枷
   category: 军用近战
   mastery: sap
   damage: 1d8
   damage_type: 钝击
+  cost: "10 gp"
 - key: glaive
   cn: 长柄刀
   category: 军用近战
@@ -264,6 +294,7 @@ weapons:
   - 重型
   - 触及
   - 双手
+  cost: "20 gp"
 - key: greataxe
   cn: 巨斧
   category: 军用近战
@@ -273,6 +304,7 @@ weapons:
   properties:
   - 重型
   - 双手
+  cost: "30 gp"
 - key: greatsword
   cn: 巨剑
   category: 军用近战
@@ -282,6 +314,7 @@ weapons:
   properties:
   - 重型
   - 双手
+  cost: "50 gp"
 - key: halberd
   cn: 戟
   category: 军用近战
@@ -292,6 +325,7 @@ weapons:
   - 重型
   - 触及
   - 双手
+  cost: "20 gp"
 - key: lance
   cn: 骑枪
   category: 军用近战
@@ -301,6 +335,7 @@ weapons:
   properties:
   - 触及
   - 特殊
+  cost: "10 gp"
 - key: longsword
   cn: 长剑
   category: 军用近战
@@ -310,6 +345,7 @@ weapons:
   properties:
   - 两用
   two_handed_damage: 1d10
+  cost: "15 gp"
 - key: maul
   cn: 巨锤
   category: 军用近战
@@ -319,12 +355,14 @@ weapons:
   properties:
   - 重型
   - 双手
+  cost: "10 gp"
 - key: morningstar
   cn: 钉头锤
   category: 军用近战
   mastery: sap
   damage: 1d8
   damage_type: 穿刺
+  cost: "15 gp"
 - key: pike
   cn: 长矛
   category: 军用近战
@@ -335,6 +373,7 @@ weapons:
   - 重型
   - 触及
   - 双手
+  cost: "5 gp"
 - key: rapier
   cn: 细剑
   category: 军用近战
@@ -343,6 +382,7 @@ weapons:
   damage_type: 穿刺
   properties:
   - 灵巧
+  cost: "25 gp"
 - key: scimitar
   cn: 弯刀
   category: 军用近战
@@ -352,6 +392,7 @@ weapons:
   properties:
   - 灵巧
   - 轻型
+  cost: "25 gp"
 - key: shortsword
   cn: 短剑
   category: 军用近战
@@ -361,6 +402,7 @@ weapons:
   properties:
   - 灵巧
   - 轻型
+  cost: "10 gp"
 - key: trident
   cn: 三叉戟
   category: 军用近战
@@ -373,12 +415,14 @@ weapons:
   two_handed_damage: 1d8
   thrown_normal: 20
   thrown_max: 60
+  cost: "5 gp"
 - key: warpick
   cn: 战镐
   category: 军用近战
   mastery: sap
   damage: 1d8
   damage_type: 穿刺
+  cost: "5 gp"
 - key: warhammer
   cn: 战锤
   category: 军用近战
@@ -388,6 +432,7 @@ weapons:
   properties:
   - 两用
   two_handed_damage: 1d10
+  cost: "15 gp"
 - key: whip
   cn: 鞭子
   category: 军用近战
@@ -397,6 +442,7 @@ weapons:
   properties:
   - 灵巧
   - 触及
+  cost: "2 gp"
 # —— 军用远程 ——
 - key: blowgun
   cn: 吹箭筒
@@ -409,6 +455,7 @@ weapons:
   - 装填
   ranged_normal: 25
   ranged_max: 100
+  cost: "10 gp"
 - key: hand_crossbow
   cn: 手弩
   category: 军用远程
@@ -421,6 +468,7 @@ weapons:
   - 装填
   ranged_normal: 30
   ranged_max: 120
+  cost: "75 gp"
 - key: heavy_crossbow
   cn: 重弩
   category: 军用远程
@@ -434,6 +482,7 @@ weapons:
   - 双手
   ranged_normal: 100
   ranged_max: 400
+  cost: "50 gp"
 - key: longbow
   cn: 长弓
   category: 军用远程
@@ -446,6 +495,7 @@ weapons:
   - 双手
   ranged_normal: 150
   ranged_max: 600
+  cost: "50 gp"
 - key: net
   cn: 捕网
   # ⚠️ 2024 把捕网移到了冒险用品（6951 / 7228），不再是武器表的一员；
@@ -461,6 +511,7 @@ weapons:
   - 投掷
   thrown_normal: 5
   thrown_max: 15
+  cost: "1 gp"
 - key: musket
   cn: 滑膛枪
   category: 军用远程
@@ -473,6 +524,7 @@ weapons:
   - 双手
   ranged_normal: 40
   ranged_max: 120
+  cost: "500 gp"
 - key: pistol
   cn: 手枪
   category: 军用远程
@@ -484,76 +536,119 @@ weapons:
   - 装填
   ranged_normal: 30
   ranged_max: 90
+  cost: "250 gp"
 
 # 起始「包」的内容物（5e2014「冒险用品」）。
 # ⚠️ 整段用品数据转录自 2014 快速参考，属「已知未对齐项」（口径见 res/rule.md）。
 # ⚠️ 只列可以展开的容器包；「材料包 / 德鲁伊法器和材料包」是施法材料袋，不是容器，别加进来。
 packs:
-- key: explorer
-  cn: 探索者背包
-  items:
-  - 背包
-  - 铺盖
-  - 餐具
-  - 火绒盒
-  - 火把×10
-  - 口粮×10
-  - 水袋
-  - 绳索
-- key: entertainer
-  cn: 艺人包
-  items:
-  - 背包
-  - 铺盖
-  - 戏服×2
-  - 蜡烛×5
-  - 水袋
-  - 易容工具
-- key: scholar
-  cn: 学者包
-  items:
-  - 背包
-  - 书
-  - 墨水
-  - 墨水笔
-  - 羊皮纸×10
-  - 沙袋
-  - 小刀
-- key: priest
-  cn: 祭司包
-  items:
-  - 背包
-  - 毯子
-  - 蜡烛×10
-  - 火绒盒
-  - 施舍盒
-  - 熏香×2
-  - 香炉
-  - 祭服
-  - 口粮×2
-  - 水袋
+# 套组内容按 PHB 2024 第六章正文重写；物品名沿用本项目现有写法（「表演服装」= 2024 的
+# 「戏服」、「长袍」= 2024 的「法袍」）。aliases 保留 2014 旧名，旧存档的卡照样能展开。
 - key: burglar
-  cn: 窃贼包
+  cn: 窃贼套组
+  aliases:
+  - 窃贼包
   items:
   - 背包
   - 滚珠×1000
-  - 细绳
   - 铃铛
-  - 蜡烛×5
+  - 蜡烛×10
   - 撬棍
-  - 锤子
-  - 岩钉×10
-  - 提灯
-  - 灯油×2
+  - 附盖提灯
+  - 燃油×7
   - 口粮×5
+  - 绳索
   - 火绒盒
   - 水袋
+- key: diplomat
+  cn: 外交套组
+  items:
+  - 箱子
+  - 高档服装
+  - 墨水
+  - 墨水笔×5
+  - 油灯
+  - 地图或卷轴匣×2
+  - 燃油×4
+  - 纸×5
+  - 羊皮纸×5
+  - 香水
+  - 火绒盒
+- key: dungeoneer
+  cn: 地城套组
+  items:
+  - 背包
+  - 铁蒺藜
+  - 撬棍
+  - 燃油×2
+  - 口粮×10
   - 绳索
+  - 火绒盒
+  - 火把×10
+  - 水袋
+- key: entertainer
+  cn: 艺人套组
+  aliases:
+  - 艺人包
+  items:
+  - 背包
+  - 铺盖
+  - 铃铛
+  - 牛眼提灯
+  - 表演服装×3
+  - 钢面镜
+  - 燃油×8
+  - 口粮×9
+  - 火绒盒
+  - 水袋
+- key: explorer
+  cn: 探索套组
+  aliases:
+  - 探索者背包
+  items:
+  - 背包
+  - 铺盖
+  - 燃油×2
+  - 口粮×10
+  - 绳索
+  - 火绒盒
+  - 火把×10
+  - 水袋
+- key: priest
+  cn: 祭司套组
+  aliases:
+  - 祭司包
+  items:
+  - 背包
+  - 毯子
+  - 圣水
+  - 油灯
+  - 口粮×7
+  - 长袍
+  - 火绒盒
+- key: scholar
+  cn: 学者套组
+  aliases:
+  - 学者包
+  items:
+  - 背包
+  - 书籍
+  - 墨水
+  - 墨水笔
+  - 油灯
+  - 燃油×10
+  - 羊皮纸×10
+  - 火绒盒
 
 
 # 冒险用品 / 工具 / 坐骑 / 鞍具载具 / 商业货物 / 生活开支 / 饮食住宿
-# 由《参考/快速参考 (5e_2014).md》对应表格转录生成，勿手改（要改用脚本重新生成）。
-# ⚠️ 转录源是 2014 版，属「已知未对齐项」（口径见 res/rule.md「规则口径」节）。
+# 2026-11-21 按《参考/玩家手册（2024）.md》第六章逐条核对：价格、重量、条目增删都对过
+# （工匠 17 种、其他工具 8 组、冒险用品 82 行、坐骑 8、鞍具陆运 10、载具 7、饮食住宿 17）。
+# ⚠️ `legacy: true` = 该条 **PHB 2024 第六章没有**（2014 遗留或建卡依赖，如「法术书」）。
+#    保留是为了不破坏旧存档与职业装备包，不是漏改。
+# ⚠️ 译名差异刻意没改：「表演服装」= 2024「戏服」、「长袍」= 2024「法袍」、
+#    「钢面镜」= 2024「镜子」、「双人帐篷」= 2024「帐篷」——旧卡上写的是旧名。
+# ⚠️ 「商业货物」在 2024 第六章**没有表**（2014 才有，2024 挪进 DMG），整段标 legacy。
 # ⚠️ 这些表只提供**数据与查询**；采购 / 出售暂不实现，也不放进 DM 职责，
 #    留作以后单独设计的程序。
 gear:
@@ -561,6 +656,7 @@ gear:
   cn: "算盘"
   cost: "2 gp"
   weight: 2.0
+  legacy: true
 - key: g002
   cn: "强酸 (小瓶)"
   cost: "25 gp"
@@ -574,7 +670,7 @@ gear:
   cost: "1 gp"
   weight: 1.0
 - key: g005
-  cn: "吹箭(50)"
+  cn: "针刺(50)"
   cost: "1 gp"
   weight: 1.0
 - key: g006
@@ -666,7 +762,7 @@ gear:
   cost: "1 gp"
   weight: 1.0
 - key: g028
-  cn: "箱子、地图或卷轴"
+  cn: "地图或卷轴匣"
   cost: "1 gp"
   weight: 1.0
 - key: g029
@@ -677,6 +773,7 @@ gear:
   cn: "粉笔(1支)"
   cost: "1 cp"
   weight: 0.0
+  legacy: true
 - key: g031
   cn: "箱子"
   cost: "5 gp"
@@ -685,6 +782,7 @@ gear:
   cn: "普通服装"
   cost: "5 sp"
   weight: 3.0
+  legacy: true
 - key: g033
   cn: "表演服装"
   cost: "5 gp"
@@ -713,6 +811,7 @@ gear:
   cn: "图腾"
   cost: "1 gp"
   weight: 0.0
+  legacy: true
 - key: g040
   cn: "木质法杖"
   cost: "5 gp"
@@ -725,6 +824,7 @@ gear:
   cn: "渔具"
   cost: "1 gp"
   weight: 4.0
+  legacy: true
 - key: g043
   cn: "扁瓶 或 大杯"
   cost: "2 cp"
@@ -737,10 +837,12 @@ gear:
   cn: "锤子"
   cost: "1 gp"
   weight: 3.0
+  legacy: true
 - key: g046
   cn: "大锤"
   cost: "2 gp"
   weight: 10.0
+  legacy: true
 - key: g047
   cn: "医疗包"
   cost: "5 gp"
@@ -765,6 +867,7 @@ gear:
   cn: "沙漏"
   cost: "25 gp"
   weight: 1.0
+  legacy: true
 - key: g053
   cn: "捕猎陷阱"
   cost: "5 gp"
@@ -785,26 +888,11 @@ gear:
   cn: "攀爬工具"
   cost: "25 gp"
   weight: 12.0
-- key: g058
-  cn: "易容工具"
-  cost: "25 gp"
-  weight: 3.0
-- key: g059
-  cn: "文书伪造工具"
-  cost: "15 gp"
-  weight: 5.0
-- key: g060
-  cn: "草药工具"
-  cost: "5 gp"
-  weight: 3.0
 - key: g061
   cn: "野炊工具"
   cost: "2 sp"
   weight: 1.0
-- key: g062
-  cn: "毒药工具"
-  cost: "50 gp"
-  weight: 2.0
+  legacy: true
 - key: g063
   cn: "爬梯(10尺)"
   cost: "1 sp"
@@ -857,10 +945,12 @@ gear:
   cn: "矿工镐"
   cost: "2 gp"
   weight: 10.0
+  legacy: true
 - key: g076
   cn: "岩钉"
   cost: "5 cp"
   weight: 0.25
+  legacy: true
 - key: g077
   cn: "基础毒药 (小瓶)"
   cost: "100 gp"
@@ -900,11 +990,12 @@ gear:
 - key: g086
   cn: "绳索，麻制（50尺）"
   cost: "1 gp"
-  weight: 10.0
+  weight: 5.0
 - key: g087
   cn: "绳索，丝制（50尺）"
   cost: "10 gp"
   weight: 5.0
+  legacy: true
 - key: g088
   cn: "麻袋"
   cost: "1 cp"
@@ -913,10 +1004,12 @@ gear:
   cn: "商人秤"
   cost: "5 gp"
   weight: 3.0
+  legacy: true
 - key: g090
   cn: "封蜡"
   cost: "5 sp"
   weight: 0.0
+  legacy: true
 - key: g091
   cn: "铲子"
   cost: "2 gp"
@@ -929,14 +1022,17 @@ gear:
   cn: "玺戒"
   cost: "5 gp"
   weight: 0.0
+  legacy: true
 - key: g094
   cn: "肥皂"
   cost: "2 cp"
   weight: 0.0
+  legacy: true
 - key: g095
   cn: "法术书"
   cost: "50 gp"
   weight: 3.0
+  legacy: true
 - key: g096
   cn: "铁钉（10）"
   cost: "1 gp"
@@ -969,6 +1065,27 @@ gear:
   cn: "磨刀石"
   cost: "1 cp"
   weight: 1.0
+  legacy: true
+- key: g104
+  cn: "地图"
+  cost: "1 gp"
+  weight: 0.0
+- key: g105
+  cn: "细线(50尺)"
+  cost: "1 sp"
+  weight: 0.0
+- key: g106
+  cn: "法术卷轴（戏法）"
+  cost: "30 gp"
+  weight: 0.0
+- key: g107
+  cn: "法术卷轴（一环）"
+  cost: "50 gp"
+  weight: 0.0
+- key: g108
+  cn: "枪械子弹(10)"
+  cost: "3 gp"
+  weight: 2.0
 tools:
 - key: t001
   cn: "炼金工具"
@@ -1123,9 +1240,9 @@ mounts:
   cn: "骆驼"
   cost: "50 gp"
   speed: "50尺"
-  carry: "480 磅"
+  carry: "450 磅"
 - key: m002
-  cn: "驴或骡子"
+  cn: "骡子"
   cost: "8 gp"
   speed: "40 尺"
   carry: "420 磅"
@@ -1168,6 +1285,7 @@ harness:
   cn: "辔具"
   cost: "2 gp"
   weight: 1.0
+  legacy: true
 - key: h003
   cn: "四轮客车"
   cost: "100 gp"
@@ -1196,6 +1314,7 @@ harness:
   cn: "鞍座·驮役"
   cost: "5 gp"
   weight: 15.0
+  legacy: true
 - key: h010
   cn: "鞍座·骑乘"
   cost: "10 gp"
@@ -1204,6 +1323,7 @@ harness:
   cn: "鞍囊"
   cost: "4 gp"
   weight: 8.0
+  legacy: true
 - key: h012
   cn: "雪橇"
   cost: "20 gp"
@@ -1218,26 +1338,30 @@ harness:
   weight: 400.0
 vehicles:
 - key: v001
+  cn: "飞艇"
+  cost: "40,000 gp"
+  speed: "8 mph"
+- key: v002
   cn: "桨帆船"
   cost: "30,000 gp"
   speed: "4 mph"
-- key: v002
+- key: v003
   cn: "龙骨船"
   cost: "3,000 gp"
   speed: "1 mph"
-- key: v003
+- key: v004
   cn: "单帆长船"
   cost: "10,000 gp"
   speed: "3 mph"
-- key: v004
+- key: v005
   cn: "划艇"
   cost: "50 gp"
   speed: "1½ mph"
-- key: v005
+- key: v006
   cn: "帆船"
   cost: "10,000 gp"
   speed: "2 mph"
-- key: v006
+- key: v007
   cn: "战舰"
   cost: "25,000 gp"
   speed: "2½ mph"
@@ -1245,42 +1369,55 @@ trade_goods:
 - key: tg001
   cn: "1磅小麦"
   cost: "1 cp"
+  legacy: true
 - key: tg002
   cn: "1磅面粉或一只鸡"
   cost: "2 cp"
+  legacy: true
 - key: tg003
   cn: "1磅盐"
   cost: "5 cp"
+  legacy: true
 - key: tg004
   cn: "1磅铁或1平方码帆布"
   cost: "1 sp"
+  legacy: true
 - key: tg005
   cn: "1磅铜或1平方码棉布"
   cost: "5 sp"
+  legacy: true
 - key: tg006
   cn: "1磅姜或一只山羊"
   cost: "1 gp"
+  legacy: true
 - key: tg007
   cn: "1磅肉桂或胡椒，或一只棉羊"
   cost: "2 gp"
+  legacy: true
 - key: tg008
   cn: "1磅丁香或一头猪"
   cost: "3 gp"
+  legacy: true
 - key: tg009
   cn: "1磅银子或1平方码亚麻布"
   cost: "5 gp"
+  legacy: true
 - key: tg010
   cn: "1平方码丝绸或一头牛"
   cost: "10 gp"
+  legacy: true
 - key: tg011
   cn: "1磅藏红花或一头牛"
   cost: "15 gp"
+  legacy: true
 - key: tg012
   cn: "1磅黄金"
   cost: "50 gp"
+  legacy: true
 - key: tg013
   cn: "1磅铂金"
   cost: "500 gp"
+  legacy: true
 lifestyle:
 - key: ls001
   cn: "乞食"
@@ -1302,17 +1439,19 @@ lifestyle:
   cost: "4 gp"
 - key: ls007
   cn: "奢华"
-  cost: "至少10 gp"
+  cost: "10 gp"
 food_lodging:
 - key: f001
   cn: "麦芽酒·加仑"
   cost: "2 sp"
+  legacy: true
 - key: f002
   cn: "麦芽酒·杯子"
   cost: "4 cp"
 - key: f003
   cn: "筵席（每人）"
   cost: "10 gp"
+  legacy: true
 - key: f004
   cn: "一条面包"
   cost: "2 cp"
@@ -1339,25 +1478,26 @@ food_lodging:
   cost: "4 gp"
 - key: f012
   cn: "餐膳（每天）·流浪"
-  cost: "3 cp"
+  cost: "1 cp"
 - key: f013
   cn: "餐膳（每天）·穷困"
-  cost: "6 cp"
+  cost: "2 cp"
 - key: f014
   cn: "餐膳（每天）·俭朴"
-  cost: "3 sp"
+  cost: "1 sp"
 - key: f015
   cn: "餐膳（每天）·舒适"
-  cost: "5 sp"
+  cost: "2 sp"
 - key: f016
   cn: "餐膳（每天）·富裕"
-  cost: "8 sp"
+  cost: "3 sp"
 - key: f017
   cn: "餐膳（每天）·奢华"
-  cost: "2 gp"
+  cost: "6 sp"
 - key: f018
   cn: "一块肉"
   cost: "3 sp"
+  legacy: true
 - key: f019
   cn: "红酒·普通（罐装）"
   cost: "2 sp"
