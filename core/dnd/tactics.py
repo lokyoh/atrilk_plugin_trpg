@@ -50,6 +50,7 @@ __all__ = [
     "hide_requirement_note",
     "light_obscurement",
     "mount_cost",
+    "mount_fall_note",
     "mount_stays_mounted",
     "normalize_tactic",
     "ready_note",
@@ -181,6 +182,13 @@ TACTIC_ALIASES: dict[str, str] = {
     "mount": "上马",
     "下马": "下马",
     "unmount": "下马",
+    # 坐骑出事（PHB 2024 骑乘）：坐骑被击倒 / 骑手被强制移动 → DC10 敏捷豁免。
+    # 两个触发共用同一次豁免，归到一个动作里，trigger 写具体发生了什么。
+    "坐骑倒地": "坐骑倒地",
+    "坠马": "坐骑倒地",
+    "落马": "坐骑倒地",
+    "坐骑被击倒": "坐骑倒地",
+    "强制移动": "坐骑倒地",
     # —— 职业资源类（花了次数 / 功力换效果）——
     "狂暴": "狂暴",
     "进入狂暴": "狂暴",
@@ -257,6 +265,17 @@ def mount_cost(speed: int) -> int:
 def mount_stays_mounted(total: int, dc: int = MOUNT_SAVE_DC) -> bool:
     """骑乘时被强制移动 / 坐骑倒地：敏捷豁免 ``total >= DC`` 则稳住，否则在坐骑 5 尺内倒地。"""
     return int(total or 0) >= int(dc)
+
+
+def mount_fall_note(trigger: str = "") -> str:
+    """坐骑出事的规则说明（豁免前 / 结果里都会带一句）。"""
+    what = str(trigger or "").strip() or "坐骑被击倒 / 你被强制移动"
+    return (
+        f"{what} → 过 **DC10 敏捷豁免**：成功稳住仍骑在坐骑背上；"
+        "失败从坐骑上摔下来，在它 5 尺内倒地。"
+        "（规则原文：坐骑倒地时你可以**用反应**安全下马——那样就不掷豁免，"
+        "要不要这么做由你裁定）"
+    )
 
 
 def light_obscurement(level: str) -> str:

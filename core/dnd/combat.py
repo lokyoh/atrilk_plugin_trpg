@@ -102,11 +102,14 @@ from .subclass_grants import first_hit_dice, first_hit_entry, initiative_advanta
 from .tactics import (
     HIDE_DC,
     LIGHT_LEVELS,
+    MOUNT_SAVE_DC,
     dodge_expires,
     hide_check,
     hide_requirement_note,
     light_obscurement,
     mount_cost,
+    mount_fall_note,
+    mount_stays_mounted,
     normalize_tactic,
     ready_note,
 )
@@ -143,6 +146,7 @@ __all__ = [
     "count_legendary_use",
     "cover_text",
     "current_actor",
+    "darkvision_range",
     "do_flurry",
     "do_patient_defense",
     "do_rage",
@@ -166,6 +170,7 @@ __all__ = [
     "light_text",
     "load_combat",
     "medicine_check",
+    "mount_fall_check",
     "move_combatant",
     "parse_enemy_list",
     "party_level",
@@ -275,6 +280,9 @@ class Combatant:
     #: **不占动作的攻击次数**（武僧「疾风步」给 2 次）。下一次 :func:`attack`
     #: 先扣这里——扣完才回到正常行动经济。
     free_attacks: int = 0
+    #: 正骑着的**坐骑名**（空 = 没骑）。坐骑不是战场实体——它只在这一个字段里
+    #: 存名字，供「坐骑倒地 / 被强制移动 → DC10 敏捷豁免」与展示用。
+    mount: str = ""
     #: **鲁莽攻击**（野蛮人 2 级）：本回合力量攻击有优势，但到它下个回合开始，
     #: 打它的攻击也有优势。有指针是因为**对方的攻击结算要读它**（见
     #: :func:`enemy_attack` 的优势计算）。
@@ -345,6 +353,7 @@ class Combatant:
             "condition_rounds": dict(self.condition_rounds),
             "knocked_out": self.knocked_out,
             "readied": self.readied,
+            "mount": self.mount,
             "free_attacks": self.free_attacks,
             "reckless": self.reckless,
             "fury_used": self.fury_used,
@@ -395,6 +404,7 @@ class Combatant:
             },
             knocked_out=bool(data.get("knocked_out", False)),
             readied=str(data.get("readied", "") or ""),
+            mount=str(data.get("mount", "") or ""),
             free_attacks=max(0, _int_or(data.get("free_attacks"), 0)),
             reckless=bool(data.get("reckless", False)),
             fury_used=bool(data.get("fury_used", False)),
@@ -816,6 +826,8 @@ SPECIAL_SENSES: tuple[str, ...] = ("黑暗视觉", "盲视", "震颤感知", "�
 #: 「盲视 30 尺」/「30 尺盲视」这类带距离的感官（图鉴里两种语序都有）
 _SENSE_RANGE_RE = re.compile(r"(盲视|震颤感知)\s*(\d+)\s*尺")
 _SENSE_RANGE_PREFIX_RE = re.compile(r"(\d+)\s*尺\s*(盲视|震颤感知)")
+#: 「黑暗视觉 60 尺」「黑暗视觉提升至 120 尺」——种族 / 亚种 / 图鉴三种写法都有
+_DARKVISION_RE = re.compile(r"黑暗视觉(?:提升至)?\s*(\d+)\s*尺")
 
 
 def _senses_blob(save: Save, combatant: Combatant) -> str:
@@ -853,6 +865,17 @@ def _sense_range(blob: str, name: str) -> int:
     return 0
 
 
+def darkvision_range(blob: str) -> int:
+    """黑暗视觉的射程（尺）；``0`` = 没写射程或根本没有——按「不受限」处理。
+
+    图鉴与种族表基本都带数字（60 / 120 尺），个别条目只写「黑暗视觉」三个字：
+    与其把这种当成「0 尺 = 完全看不见」让角色在黑暗里瞎掉，不如沿用老行为
+    （无条件降一级），宁可少扣玩家也不凭空瞎。
+    """
+    match = _DARKVISION_RE.search(blob)
+    return int(match.group(1)) if match else 0
+
+
 def vision_obscurement(
     save: Save, state: CombatState | None, combatant: Combatant, *, distance: int = -1
 ) -> str:
@@ -861,7 +884,8 @@ def vision_obscurement(
     光照本身只决定「这个区域有多暗」（见 :func:`~.tactics.light_obscurement`），
     能不能看穿还得看它自己：
 
-    - **黑暗视觉**：黑暗当微光、微光当明亮；
+    - **黑暗视觉**：黑暗当微光、微光当明亮——**但只到它的射程为止**（60 / 120 尺）；
+      射程外的黑暗对它仍是重度遮蔽。距离不明时按射程内算（近战基本都在 60 尺内）；
     - **盲视 / 震颤感知**：射程内完全不靠光（射程外照旧；距离不明时按射程内算）；
     - **真实视觉**：一律正常。
 
@@ -877,10 +901,12 @@ def vision_obscurement(
         if reach and (distance < 0 or distance <= reach):
             return "无"
     if "黑暗视觉" in blob:
-        if obscured == "重度":
-            obscured = "轻度"
-        elif obscured == "轻度":
-            obscured = "无"
+        reach = darkvision_range(blob)
+        if reach <= 0 or distance < 0 or distance <= reach:
+            if obscured == "重度":
+                obscured = "轻度"
+            elif obscured == "轻度":
+                obscured = "无"
     return obscured
 
 
@@ -2526,6 +2552,7 @@ _TACTIC_COMBAT_ONLY = frozenset(
         "借机攻击",
         "上马",
         "下马",
+        "坐骑倒地",
         "疾风步",
         "患者防御",
         "鲁莽攻击",
@@ -2695,7 +2722,9 @@ def do_reckless(save: Save, state: CombatState, ref: str) -> str:
     if card.level < 2:
         return f"{card.name} 还没到 2 级，用不了「鲁莽攻击」"
     if actor.reckless:
-        return f"{actor.name} 本回合已经在鲁莽攻击了（自己回合攻击有优势、打它也有优势）"
+        return (
+            f"{actor.name} 本回合已经在鲁莽攻击了（自己回合攻击有优势、打它也有优势）"
+        )
     actor.reckless = True
     save_combat(save, state)
     return (
@@ -2728,10 +2757,7 @@ def do_superiority(
         return f"{card.name} 没有「卓越骰」（战斗大师 3 级特性）"
     cap = card.resource_max("superiority")
     if not card.use_resource("superiority"):
-        return (
-            f"（{card.name} 的卓越骰用完了（{cap}/{cap}），"
-            "短休或长休后回满）"
-        )
+        return f"（{card.name} 的卓越骰用完了（{cap}/{cap}），短休或长休后回满）"
     result = roll(f"1d{die}", label="卓越骰", rng=rng)
     set_character(save, card)
     name = str(maneuver or "").strip() or "战技"
@@ -2869,9 +2895,7 @@ def do_morale(
     )
 
 
-def do_enemy_flee(
-    save: Save, state: CombatState, ref: str, *, rng: Any = None
-) -> str:
+def do_enemy_flee(save: Save, state: CombatState, ref: str, *, rng: Any = None) -> str:
     """按 DMG 2024 判定敌人是否该跑；真跑了就退场（逃跑不给经验）。
 
     两条触发条件见 :func:`~.morale.flee_reasons`。触发后让它过一次 DC10 感知豁免：
@@ -2917,6 +2941,51 @@ def do_enemy_flee(
     )
 
 
+def mount_fall_check(
+    save: Save,
+    state: CombatState,
+    ref: str,
+    *,
+    trigger: str = "",
+    rng: Any = None,
+) -> str:
+    """坐骑被击倒 / 骑手被强制移动时的 DC10 敏捷豁免（PHB 2024 骑乘）。
+
+    成功稳住仍骑在坐骑背上；失败从坐骑上摔下来、在它 5 尺内**倒地**并脱离坐骑。
+    规则原文给了第三条路——用**反应**安全下马就不掷豁免——那是 DM 的裁定，
+    这里在回执里提醒一句，不代他决定。
+    """
+    actor = find_combatant(state, ref)
+    if actor is None:
+        return f"场上没有「{ref}」这个人"
+    if not actor.mount:
+        return f"{actor.name} 没骑坐骑，用不上这条"
+    mount = actor.mount
+    if actor.kind == "player":
+        card = get_character(save, actor.cid)
+        if card is None:
+            return f"找不到 {actor.name} 的角色卡，无法掷敏捷豁免"
+        result = card.check_save("dex", MOUNT_SAVE_DC, rng=rng)
+    else:
+        monster = resolve_monster(actor.monster)
+        bonus = monster.modifier("dex") if monster is not None else 0
+        if monster is not None and "dex" in monster.saves:
+            bonus += monster.proficiency
+        result = roll_check(bonus, MOUNT_SAVE_DC, kind="敏捷豁免", rng=rng)
+    if mount_stays_mounted(result.total):
+        return (
+            f"【{actor.name}】{result.describe()} → 稳住了：仍骑在{mount}背上。\n"
+            f"（{mount_fall_note(trigger)}）"
+        )
+    actor.mount = ""
+    note = apply_condition(save, actor, ["倒地"])
+    save_combat(save, state)
+    return (
+        f"【{actor.name}】{result.describe()} → 没稳住：从{mount}上摔下来，"
+        f"在它 5 尺内倒地。{note}\n（{mount_fall_note(trigger)}）"
+    )
+
+
 def do_tactic(
     save: Save,
     state: CombatState | None,
@@ -2957,6 +3026,7 @@ def do_tactic(
         return (
             f"没认出战术动作「{action}」。可用：回避（闪避 / 躲避）、"
             "躲藏（隐藏）、预备（准备）、借机攻击、上马、下马、"
+            "坐骑倒地（坠马 / 强制移动，DC10 敏捷豁免）、"
             "士气（DC10 感知豁免）、逃跑（按 DMG 判定并退场）、"
             "狂暴、回气、疾风步、患者防御、鲁莽攻击、卓越骰"
         )
@@ -2996,6 +3066,9 @@ def do_tactic(
         return do_patient_defense(save, state, ref, rng=rng)
     if kind == "鲁莽攻击":
         return do_reckless(save, state, ref)
+
+    if kind == "坐骑倒地":
+        return mount_fall_check(save, state, ref, trigger=trigger, rng=rng)
 
     if kind == "回避":
         speed = combatant_speed(save, actor)
@@ -3067,13 +3140,17 @@ def do_tactic(
         )
     actor.move_used += cost
     actor.moved = True
-    save_combat(save, state)
     mount = str(target or "").strip()
+    # 坐骑名记在参战者身上（战斗块会显示），「坐骑倒地」的 DC10 豁免靠它触发；
+    # 下马就摘掉。坐骑不是战场实体——不占格子、不掷先攻、不参与结算。
+    actor.mount = mount or "坐骑" if kind == "上马" else ""
+    save_combat(save, state)
     if kind == "上马":
         tail = (
-            f"骑上{mount or '坐骑'}了：被强制移动或坐骑倒地时过 **DC10 敏捷豁免**，"
-            "失败就在坐骑 5 尺内失足倒地；受训坐骑受你控制（先攻与你同值，"
-            "只能疾走 / 撤离 / 回避），它触发借机攻击时攻击者可选择打你或打它"
+            f"骑上{mount}了：被强制移动或坐骑倒地时过 **DC10 敏捷豁免**"
+            "（用 `tactic(坐骑倒地)` 结算：成功稳住，失败摔下来在它 5 尺内倒地）；"
+            "受训坐骑受你控制（先攻与你同值，只能疾走 / 撤离 / 回避），"
+            "它触发借机攻击时攻击者可选择打你或打它"
         )
     else:
         tail = "下了坐骑"
@@ -4264,6 +4341,8 @@ def combat_text(save: Save, state: CombatState, *, with_map: bool = True) -> str
             status += "　已倒下"
         if combatant.readied:
             status += f"　⏳ 已预备（触发：{combatant.readied}）"
+        if combatant.mount:
+            status += f"　🐎 骑乘：{combatant.mount}"
         turn_used = ""
         if combatant.kind == "player" and (
             current is None or combatant.cid == current.cid

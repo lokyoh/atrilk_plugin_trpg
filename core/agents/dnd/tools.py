@@ -57,6 +57,7 @@ from ...dnd.combat import (
     start_combat,
     use_attack,
     use_resource,
+    vision_obscurement,
 )
 from ...dnd.combat import (
     apply_damage as combat_damage,
@@ -348,6 +349,46 @@ def _resolve_check(card, kind: str, dc: int, advantage: Advantage, action: str =
     raise KeyError(text)
 
 
+def _light_perception_note(
+    save: Any, card: DndCharacter, kind: str, advantage: Advantage
+) -> tuple[Advantage, str]:
+    """战斗**光照**对基于视觉的察觉的影响（PHB 2024「遮蔽区域」）。
+
+    微光 = 轻度遮蔽 → 察觉**劣势**；黑暗 = 重度遮蔽 → 同样劣势，并提醒 DM
+    「靠看的直接失败由你裁定」——目盲条文自动失败的是**需要视觉**的检定，
+    听声辨位这类不受影响，而这次察觉靠不靠看程序判不了。
+
+    只在战斗中、战场光照非明亮、且这名玩家确实在场上时生效；
+    黑暗视觉 / 盲视 / 真实视觉由 :func:`~.combat.vision_obscurement` 按射程折算。
+    """
+    text = str(kind or "")
+    if "察觉" not in text and "perception" not in text.lower():
+        return advantage, ""
+    if save is None:
+        return advantage, ""
+    state = load_combat(save)
+    if state is None:
+        return advantage, ""
+    if str(getattr(state, "light", "bright") or "bright") == "bright":
+        return advantage, ""
+    combatant = find_combatant(state, str(card.user_id))
+    if combatant is None:
+        return advantage, ""
+    obscured = vision_obscurement(save, state, combatant)
+    if obscured == "无":
+        return advantage, ""
+    if obscured == "重度":
+        return (
+            combine_advantage(advantage, Advantage.DISADVANTAGE),
+            "（黑暗 = 重度遮蔽，等同目盲：基于视觉的察觉劣势；"
+            "这次若靠听觉 / 触觉则不受影响，靠看的直接失败由你裁定）",
+        )
+    return (
+        combine_advantage(advantage, Advantage.DISADVANTAGE),
+        "（微光 = 轻度遮蔽：基于视觉的察觉劣势）",
+    )
+
+
 class CheckTool(AgentTool):
     """用玩家角色卡做检定。"""
 
@@ -378,15 +419,19 @@ class CheckTool(AgentTool):
         player: str = "",
         **kwargs: Any,
     ) -> str:
-        card, _save = _load_character(context, player)
+        card, save = _load_character(context, player)
         if card is None:
             return "没找到该玩家的角色卡，无法检定"
+        # 战斗光照（微光 / 黑暗）对基于视觉的察觉有劣势——黑暗视觉按射程折算
+        final_advantage, light_note = _light_perception_note(
+            save, card, kind, _parse_advantage(advantage)
+        )
         try:
             result = _resolve_check(
                 card,
                 kind,
                 _parse_int(dc, 0),
-                _parse_advantage(advantage),
+                final_advantage,
                 str(context.data.get("action_text", "") or ""),
             )
         except KeyError as e:
@@ -401,7 +446,10 @@ class CheckTool(AgentTool):
         text = f"【{card.name}】{result.describe()}"
         # DMG 2024 的成败后果层只进 DM 回执，不写进玩家「🎲 判定」卡
         hint = getattr(result, "consequence_hint", "")
-        return f"{text} {hint}" if hint else text
+        text = f"{text} {hint}" if hint else text
+        if light_note:
+            text += light_note
+        return text
 
 
 # --------------------------------------------------------------------------- #
@@ -2456,6 +2504,7 @@ class TacticTool(AgentTool):
         "战术动作，系统掷骰并落状态：回避（到下回合开始被打劣势、敏捷豁免优势）、"
         "躲藏（隐匿 DC15，成功即隐形，出手就暴露）、预备（记下触发条件，触发时用反应）、"
         "借机攻击（用反应打一次近战）、上马 / 下马（花一半速度）、"
+        "坐骑倒地（坐骑被击倒 / 骑手被强制移动：DC10 敏捷豁免，失败摔下来倒地）、"
         "动作如潮（战士：本回合 +1 个动作）、狂暴（野蛮人：伤害+2/抗性）、"
         "回气（战士：1d10+等级回血）、疾风步 / 患者防御（武僧：花 1 功力）、"
         "鲁莽攻击（野蛮人：本回合攻有优势、挨打也有优势）、"
@@ -2468,6 +2517,7 @@ class TacticTool(AgentTool):
             "action",
             "str",
             "回避（=闪避/躲避）/ 躲藏（=隐藏）/ 预备（=准备）/ 借机攻击 / 上马 / 下马 / "
+            "坐骑倒地（=坠马/落马/强制移动）/ "
             "动作如潮 / 狂暴 / 回气 / 疾风步 / 患者防御 / 鲁莽攻击 / 卓越骰 / 士气 / 逃跑 / 追逐 / 旅程 / 关系",
         ),
         ToolArg("player", "str", "谁在做：角色名或 user_id；单人可留空"),
@@ -2904,7 +2954,9 @@ def _target_save(
             ability,
             dc,
             cover=cover,
-            advantage=Advantage.ADVANTAGE if (magical and save_adv) else Advantage.NORMAL,
+            advantage=Advantage.ADVANTAGE
+            if (magical and save_adv)
+            else Advantage.NORMAL,
         )
     if getattr(target, "kind", "") == "player":
         card = get_character(save, target.cid)
@@ -3046,23 +3098,48 @@ def _is_self(target: Any, card: Any) -> bool:
     return bool(uid) and str(uid) == str(getattr(card, "user_id", ""))
 
 
+def _grant_temp_hp(save, card: DndCharacter, amount: int, *, label: str = "") -> str:
+    """给角色临时生命（PHB 2024：**已有**临时生命时再获得，由角色自己选）。
+
+    规则原文是「你决定保留原有的还是拿新的」——不同来源的时限不同，
+    小的那份完全可能更划算（比如持续 1 小时的 5 点对上持续 1 分钟的 10 点）。
+    系统默认记较高者（常见简化），但必须把「他可以选」写进回执，
+    并给出覆盖默认值的入口（``update_character`` 的 ``temp_hp`` 字段）；
+    闷声取高等于替玩家做了规则留给他的决定（审计 B10）。
+    """
+    name = str(label) or card.name
+    amount = max(0, int(amount))
+    existing = int(card.temp_hp or 0)
+    if amount <= 0:
+        return f"{name} 这次没有获得临时生命。"
+    if existing <= 0:
+        card.temp_hp = amount
+        set_character(save, card)
+        return f"{name} 获得 {amount} 点临时生命。"
+    card.temp_hp = max(existing, amount)
+    set_character(save, card)
+    defaulted = "默认保留原有的" if amount <= existing else "默认拿新的"
+    return (
+        f"{name} 已有 {existing} 点临时生命，这次又获得 {amount} 点——"
+        "规则原文由**角色自己**决定保留旧的还是拿新的（两份的时限可能不同）。"
+        f"系统按取高记为 {card.temp_hp} 点（{defaulted}）；"
+        "若他选另一边，用 update_character 的 temp_hp 字段改成那个数即可。"
+    )
+
+
 def _spell_heal(save, state, target: Any, amount: int, *, temp: bool = False) -> str:
-    """对目标结算法术治疗（``temp`` 为真时给临时生命，不叠加只取高者）。"""
+    """对目标结算法术治疗（``temp`` 为真时给临时生命，详见 :func:`_grant_temp_hp`）。"""
     amount = max(0, int(amount))
     if isinstance(target, DndCharacter):
         if temp:
-            target.temp_hp = max(target.temp_hp, amount)
-            set_character(save, target)
-            return f"{target.name} 获得 {target.temp_hp} 点临时生命。"
+            return _grant_temp_hp(save, target, amount)
         target.current_hp = min(target.max_hp, target.hp + amount)
         set_character(save, target)
         return f"{target.name} 剩余 {target.hp}/{target.max_hp}。"
     if temp and target.kind == "player":
         card = get_character(save, target.cid)
         if card is not None:
-            card.temp_hp = max(card.temp_hp, amount)
-            set_character(save, card)
-            return f"{target.name} 获得 {card.temp_hp} 点临时生命。"
+            return _grant_temp_hp(save, card, amount, label=target.name)
     return heal_combatant(save, state, target, amount)
 
 
