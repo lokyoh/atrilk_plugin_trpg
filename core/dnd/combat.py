@@ -289,6 +289,11 @@ class Combatant:
     reckless: bool = False
     #: **狂怒**已经触发过（狂战士 3 级：每回合只有第一次命中加骰）。
     fury_used: bool = False
+    #: **本回合已经消耗过法术位**（PHB 2024「每回合仅能施展一道消耗法术位的法术」）。
+    #:
+    #: 规则原文限制的是**消耗法术位**，不是「施法」本身——戏法与仪式都不扣位，
+    #: 所以它们不受这条限制（2014 那套「附赠施法后只能再放戏法」在 2024 已作废）。
+    slot_spent: bool = False
 
     @property
     def is_enemy(self) -> bool:
@@ -319,6 +324,7 @@ class Combatant:
         # 鲁莽攻击 / 狂怒都是「本回合」的记账：自己回合结束时失效
         self.reckless = False
         self.fury_used = False
+        self.slot_spent = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -357,6 +363,7 @@ class Combatant:
             "free_attacks": self.free_attacks,
             "reckless": self.reckless,
             "fury_used": self.fury_used,
+            "slot_spent": self.slot_spent,
         }
 
     @classmethod
@@ -408,6 +415,7 @@ class Combatant:
             free_attacks=max(0, _int_or(data.get("free_attacks"), 0)),
             reckless=bool(data.get("reckless", False)),
             fury_used=bool(data.get("fury_used", False)),
+            slot_spent=bool(data.get("slot_spent", False)),
         )
 
 

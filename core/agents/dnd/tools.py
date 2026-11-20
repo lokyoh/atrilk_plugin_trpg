@@ -31,12 +31,15 @@ from ...dnd.battlemap import (
 )
 from ...dnd.bestiary import bestiary_text, find_bestiary
 from ...dnd.card import DndCharacter
+from ...dnd.cast_check import component_block, ritual_block, slot_limit_block
 from ...dnd.class_features import CLASS_FEATURES, features_for
 from ...dnd.class_resources import RESOURCE_CN, resources_text
+from ...dnd.coins import add_coins, format_coins, parse_cost
 from ...dnd.combat import (
     apply_condition,
     apply_threat_profile,
     auto_crit_on_hit,
+    can_act,
     clear_combat,
     combat_text,
     combatant_conditions,
@@ -3161,6 +3164,7 @@ class CastSpellTool(AgentTool):
         ToolArg("player", "str", "谁在施法：角色名或 user_id；单人可留空"),
         ToolArg("slot", "str", "用第几环（可选，默认本法环阶）"),
         ToolArg("advantage", "str", "普通 / 优势 / 劣势"),
+        ToolArg("ritual", "str", "仪式施展（是/否，默认否）：不耗法术位但多花 10 分钟"),
     )
 
     @staticmethod
@@ -3171,6 +3175,7 @@ class CastSpellTool(AgentTool):
         player: Any = "",
         slot: Any = "",
         advantage: Any = "普通",
+        ritual: Any = "",
         **kwargs: Any,
     ) -> str:
         save = load_save(context.save_id) if context.save_id else None
@@ -3214,8 +3219,38 @@ class CastSpellTool(AgentTool):
                 "长休后可用 update_character 的「准备」改列表）\n"
             )
 
-        # —— 射程校验（先查够不够得着，够不着就别花法术位）——
+        # —— 施法限制（PHB 2024 第四章「施法」）——
         pre_state = load_combat(save)
+        actor = (
+            find_combatant(pre_state, card.user_id, kind="player")
+            if pre_state is not None
+            else None
+        )
+        # 倒下的 / 震慑麻痹昏迷石化的不能施法（这些状态本来就做不了动作）
+        if actor is not None and not can_act(save, actor):
+            return (
+                f"{card.name} 现在无法行动（已倒下或处于失能类状态），"
+                f"施展不了 {spell_obj.cn}。"
+            )
+        # 言语成分：沉默 / 堵嘴时念不出咒文。姿势与材料成分要「空闲的手」，
+        # 引擎不记手持物，那两项仍由 DM 裁定（见 cast_check 模块说明）。
+        speech = component_block(
+            spell_obj,
+            combatant_conditions(save, actor)
+            if actor is not None
+            else normalize_conditions(card.conditions),
+        )
+        if speech:
+            return speech
+
+        # —— 仪式施法（2024 是通用规则：不绑职业，但只对已准备的仪式法术生效）——
+        as_ritual = str(ritual or "").strip().lower() in {"是", "1", "true", "yes", "仪式"}
+        if as_ritual:
+            block = ritual_block(spell_obj, card.prepared_spells)
+            if block:
+                return warn + block
+
+        # —— 射程校验（先查够不够得着，够不着就别花法术位）——
         refs = str(target or "").strip()
         if refs.lower() in {"", "自己", "自身", "self"}:
             probe: list[Any] = [card]
@@ -3230,7 +3265,18 @@ class CastSpellTool(AgentTool):
         requested = _parse_int(str(slot or "").strip(), 0)
         if requested > 0:
             slot_level = max(spell_obj.level, requested)
-        if spell_obj.level > 0:
+        if spell_obj.level > 0 and as_ritual:
+            # 仪式：不扣位、也就谈不上升环，代价是施法时间多 10 分钟
+            slot_note = "　（仪式施展：不消耗法术位，耗时 +10 分钟）"
+            ward_note = ""
+        elif spell_obj.level > 0:
+            # PHB 2024「每回合仅能施展一道消耗法术位的法术」：限制的是**扣位**
+            # 而不是施法本身，所以戏法与仪式不受影响（另两支各自处理）。
+            # 反应施法发生在别人的回合里，记在施法者身上会污染它自己的回合，
+            # 所以不参与这条 —— 这种情况罕见，交 DM 裁定。
+            on_own_turn = resource_of(spell_obj.casting_time) != "reaction"
+            if actor is not None and on_own_turn and actor.slot_spent:
+                return warn + slot_limit_block(spell_obj, slot_spent=True)
             if not card.slot_available(slot_level):
                 if not str(slot or "").strip():
                     highest = card.highest_slot()
@@ -3243,6 +3289,9 @@ class CastSpellTool(AgentTool):
                     )
             card.spend_slot(slot_level)
             set_character(save, card)
+            if actor is not None and on_own_turn:
+                actor.slot_spent = True
+                save_combat(save, pre_state)
             if slot_level > spell_obj.level:
                 upcast = f"（升环：用 {slot_level} 环施展）" + (
                     f"，{spell_obj.upcast}" if spell_obj.upcast else ""
@@ -3329,8 +3378,8 @@ class CastSpellTool(AgentTool):
                 note = result.describe()
             if add_mod:
                 note += f" + 施法属性 {casting_mod:+d}"
-            # 生命门徒：只算**消耗法术位**的那次（戏法环阶为 0，不吃这条）
-            if life_bonus and slot_level > 0:
+            # 生命门徒：只算**消耗法术位**的那次（戏法环阶为 0、仪式不扣位，都不吃）
+            if life_bonus and slot_level > 0 and not as_ritual:
                 amount += 2 + slot_level
                 note += f" + 生命门徒 {2 + slot_level}"
             lines.append(f"治疗量 {amount}（{note}）")
@@ -3343,6 +3392,7 @@ class CastSpellTool(AgentTool):
             if (
                 life_self
                 and slot_level > 0
+                and not as_ritual
                 and any(not _is_self(item, card) for item in targets)
             ):
                 healed = min(2 + slot_level, max(0, card.max_hp - card.hp))
