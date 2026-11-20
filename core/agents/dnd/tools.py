@@ -87,7 +87,15 @@ from ...dnd.difficulty import (
 )
 from ...dnd.dm_tables import format_hazard, format_improvised, format_treasure
 from ...dnd.encounter import calibrate_specs
-from ...dnd.equipment import ARMORS, SHIELDS, WEAPONS, get_armor, get_weapon
+from ...dnd.equipment import (
+    ARMORS,
+    SHIELDS,
+    SUPPLY_TABLES,
+    WEAPONS,
+    get_armor,
+    get_supply,
+    get_weapon,
+)
 from ...dnd.evolution import note_scene_change
 from ...dnd.feats import get_feat
 from ...dnd.items import ITEMS, format_item_list, get_item
@@ -168,6 +176,7 @@ from ...dnd.subclass import (
     subclass_choices,
 )
 from ...dnd.subclass_grants import heal_marks, spell_defense
+from ...dnd.trade import buy, money_text, parse_wallet, price_of, sell
 from ...dnd.world_store import (
     DOC_KIND_LABELS,
     DOC_KINDS,
@@ -204,6 +213,7 @@ __all__ = [
     "RollDiceTool",
     "SecretRollTool",
     "StartCombatTool",
+    "TradeTool",
     "UpdateCharacterTool",
     "UpdateNpcTool",
     "UpdateSceneTool",
@@ -794,6 +804,8 @@ def _query_weapon(name: str) -> str:
         lines.append(f"投掷射程：{weapon.thrown_normal}/{weapon.thrown_max} 尺")
     if weapon.is_ammunition:
         lines.append("弹药：" + " / ".join(weapon.ammo_names) + "（每次攻击耗一枚）")
+    if weapon.cost:
+        lines.append(f"价格：{weapon.cost}（出售半价）")
     return "\n".join(lines)
 
 
@@ -810,7 +822,50 @@ def _query_armor(name: str) -> str:
         lines.append(f"力量要求：{armor.strength_required}")
     if armor.stealth_disadvantage:
         lines.append("潜行：劣势")
+    if armor.cost:
+        lines.append(f"价格：{armor.cost}（出售半价）")
     return "\n".join(lines)
+
+
+#: 非战斗用品各表的中文名（价目查询用）
+_SUPPLY_TABLE_CN: dict[str, str] = {
+    "gear": "冒险用品",
+    "tools": "工具",
+    "mounts": "坐骑",
+    "harness": "鞍具",
+    "vehicles": "载具",
+    "trade_goods": "商业货物",
+    "lifestyle": "生活开支",
+    "food_lodging": "饮食住宿",
+}
+
+
+def _query_supply(name: str) -> str:
+    """价目查询：不写名字列各表条数，写名字给单价与出售价。
+
+    DM 报价、玩家逛街都从这里取数——``trade`` 不填 ``price`` 时也走同一套表价。
+    """
+    key = str(name or "").strip()
+    if not key:
+        listing = "；".join(
+            f"{cn} {len(SUPPLY_TABLES[table])} 条"
+            for table, cn in _SUPPLY_TABLE_CN.items()
+        )
+        return f"价目表：{listing}。写物品名查具体价格（如「火把」「箭矢」）"
+    found = price_of(key)
+    if found is None:
+        raise KeyError(f"没有表价：{key}（魔法物品的价格在城主指南，买卖时由 DM 定）")
+    canon, unit, table = found
+    label = _SUPPLY_TABLE_CN.get(table, table)
+    row = get_supply(canon, table) if table in SUPPLY_TABLES else None
+    weight = f"，重 {row.weight:g} 磅" if row is not None and row.weight else ""
+    if table == "trade_goods":
+        return f"{canon}：{money_text(unit)}（{label}{weight}）；出售按原价"
+    half = unit // 2
+    return (
+        f"{canon}：{money_text(unit)}（{label}{weight}）；"
+        f"出售 {money_text(half) if half else '不足 1 铜'}（半价）"
+    )
 
 
 def _looks_like_category(text: str) -> bool:
@@ -1103,6 +1158,7 @@ _DATA_TABLES = {
     "skill": _query_skill,
     "weapon": _query_weapon,
     "armor": _query_armor,
+    "supply": _query_supply,
     "monster": _query_monster,
     "bestiary": _query_bestiary,
     "item": _query_item,
@@ -1144,6 +1200,15 @@ _DATA_ALIASES = {
     "armor": "armor",
     "armour": "armor",
     "护甲": "armor",
+    "supply": "supply",
+    "supplies": "supply",
+    "supply_prices": "supply",
+    "用品": "supply",
+    "装备": "supply",
+    "价目": "supply",
+    "价目表": "supply",
+    "价格": "supply",
+    "物价": "supply",
     "monster": "monster",
     "怪物": "monster",
     "怪物图鉴": "monster",
@@ -1347,7 +1412,7 @@ def query_data_text(table: str, name: str, context: AgentContext | None = None) 
         if context is None:
             return (
                 "世界库文档由 DM 在主持时查询；玩家请用 /跑团.查 查规则与数据表"
-                "（怪物 / 法术 / 种族 / 职业 / 武器 / 护甲 / 魔法物品 等）。"
+                "（怪物 / 法术 / 种族 / 职业 / 武器 / 护甲 / 价目 / 魔法物品 等）。"
             )
         return _query_world_doc(context, key, text)
 
@@ -1368,7 +1433,7 @@ def query_data_text(table: str, name: str, context: AgentContext | None = None) 
     if handler is None:
         return (
             "未知数据表，可用：race / background / profession / subclass / class_feature / skill / "
-            "weapon / armor / "
+            "weapon / armor / supply（价目）/ "
             "monster / bestiary / item / spell / condition / difficulty / rule / "
             "improvised / hazard / treasure / journey / mob / mob_area / relations / settlement / npc_tier / npc，"
             "或世界库文档：world / realm / province / city / place / dungeon / scene / event"
@@ -1468,6 +1533,7 @@ class UpdateCharacterTool(AgentTool):
             "str",
             "hp / temp_hp / conditions / concentrating / 死亡豁免 / exhaustion / exp / "
             "level / name / notes / features / tags / spells / equipment / "
+            "钱（钱包加减或直设，如 value 写「+50 金」）/ "
             "inspiration（英雄激励，至多 1 个）/ attune（同调）/ "
             "准备（准备制职业的今日法术表）/ 掷血（升级掷生命骰）/ "
             "兼职（新职业加等级，写「法师=3」设到该级）/ 子职（写「职业:子职」）/ "
@@ -1863,6 +1929,32 @@ class UpdateCharacterTool(AgentTool):
                     f"【{card.name}】已经持有英雄激励了——一次只能有一个"
                     "（2024 规则：再获得时可以转赠给没有激励的队友）"
                 )
+        elif field in {"钱", "money", "金币", "钱包", "wallet"}:
+            # 钱包（赏金、战利品、DM 直接调整）。三种写法：
+            #   「钱 +50 金」/「钱 -20 金」 → 加减（同一条里可以混多种币）；
+            #   「钱 15 金 10 银」          → **直接设**成这个钱包；
+            #   「钱 清空」                 → 归零。
+            # 买卖走 trade（会连装备一起改），这里只管钱本身。
+            if text.lower() in {"清空", "清除", "无", "0", "none", "clear"}:
+                card.money = {}
+                message = "钱包已清空"
+            else:
+                parsed = parse_wallet(text)
+                if not parsed:
+                    return (
+                        f"看不懂这个金额「{text}」——写成「+50 金」「15 金 10 银」"
+                        "或「清空」"
+                    )
+                if text.startswith(("+", "-")):
+                    sign = -1 if text.startswith("-") else 1
+                    card.money = add_coins(
+                        card.money, {name: sign * count for name, count in parsed.items()}
+                    )
+                    message = f"钱包：{format_coins(card.money)}"
+                else:
+                    card.money = dict(parsed)
+                    message = f"钱包设为：{format_coins(card.money)}"
+                message += f"（{card.name}）" if card.name else ""
         elif field in {"attune", "attunement", "同调"}:
             # 同调（PHB，两版相同）：短休中专注一件物品完成；至多 3 件，不认重复的相同物品
             if text.lower() in _CONDITION_CLEAR_WORDS:
@@ -1885,7 +1977,7 @@ class UpdateCharacterTool(AgentTool):
                 "不支持的字段，可用：hp / temp_hp / conditions / concentrating / "
                 "死亡豁免 / exhaustion / exp / level / name / notes / features / "
                 "掷血（掷生命骰）/ tags / spells / equipment / 兼职 / 子职 / "
-                "inspiration（英雄激励）/ attune（同调）"
+                "钱（钱包）/ inspiration（英雄激励）/ attune（同调）"
             )
 
         if save is not None:
@@ -1894,6 +1986,74 @@ class UpdateCharacterTool(AgentTool):
             save_card(card)
         prefix = f"【{card.name}】" if card.name else ""
         return f"{prefix}{message}"
+
+
+class TradeTool(AgentTool):
+    """商店买卖的记账：查表价、扣钱 / 加钱、增删装备。"""
+
+    function_name = "trade"
+    description = (
+        "商店买卖记账（买 / 卖）：按表价扣钱或加钱、增删装备栏物品。"
+        "**只管记账**——有没有货、能不能议价、该不该卖都由你判，"
+        "判完的价格写 price 覆盖表价。卖装备半价、卖商业货物原价"
+    )
+    args = (
+        ToolArg("action", "str", "买 / 卖"),
+        ToolArg("item", "str", "物品名：武器 / 护甲 / 工具 / 冒险用品的中文名"),
+        ToolArg("qty", "str", "份数（可选，默认 1；「箭矢 (20)」这类按份算）"),
+        ToolArg("price", "str", "单价（可选）：议价结果或魔法物品由你定价，如「15 gp」"),
+        ToolArg("player", "str", "买家 / 卖家的角色名或 user_id（可选，默认当前玩家）"),
+    )
+
+    @staticmethod
+    async def call(
+        context: AgentContext,
+        action: Any = "",
+        item: Any = "",
+        qty: Any = "",
+        price: Any = "",
+        player: Any = "",
+        **kwargs: Any,
+    ) -> str:
+        card, save = _load_character(context, player)
+        if card is None:
+            return "没找到该玩家的角色卡，没法交易"
+        verb = str(action or "").strip()
+        name = str(item or "").strip()
+        if not name:
+            return "请给出要买卖的物品名"
+        count = max(1, _parse_int(qty, 1))
+        raw_price = str(price or "").strip()
+        unit = parse_cost(raw_price) if raw_price else None
+        if raw_price and not unit:
+            return f"看不懂这个价格「{raw_price}」，请写成「15 gp」或「5 sp」"
+
+        if verb in {"买", "购买", "买入", "buy"}:
+            result = buy(card, name, count, unit)
+            if not result.ok:
+                return f"没买成：{result.reason}"
+            tail = f"（{result.source}）" if result.source else ""
+            message = (
+                f"{card.name} 买下 {result.name}×{result.qty}，"
+                f"花 {result.total_text}{tail}；钱包 {format_coins(card.money)}"
+            )
+        elif verb in {"卖", "出售", "卖出", "sell"}:
+            result = sell(card, name, count, unit)
+            if not result.ok:
+                return f"没卖成：{result.reason}"
+            tail = f"（{result.source}）" if result.source else ""
+            message = (
+                f"{card.name} 卖掉 {result.name}×{result.qty}，"
+                f"收 {result.total_text}{tail}；钱包 {format_coins(card.money)}"
+            )
+        else:
+            return "action 只能写「买」或「卖」"
+
+        if save is not None:
+            set_character(save, card)
+        else:
+            save_card(card)
+        return message
 
 
 class AwaitPlayersTool(AgentTool):
@@ -4205,6 +4365,7 @@ DM_TOOLS: tuple[type[AgentTool], ...] = (
     QueryDataTool,
     ReadSceneTool,
     UpdateCharacterTool,
+    TradeTool,
     MoveSceneTool,
     UpdateSceneTool,
     StartCombatTool,
