@@ -192,8 +192,8 @@ class DungeonMasterAgent(ThinkingAgent):
     description = "结合玩家行动与当前局面，调用功能结算并生成主持叙述"
     #: 通用原则（剧情 / 战斗共用），战斗时再追加战斗规则
     system_prompt = _DM_CORE
-    #: DM 使用聊天模型，与生成类 agent 的工作模型区分开
-    model_type = ModelType.CHAT
+    #: 与生成类 agent 一样用通用文本模型（框架 2026-11-17 起按能力分类，不再分 WORK / CHAT）
+    model_type = ModelType.GENERAL
     #: 单轮主持最多思考 / 调用多少步（每步都是一次完整请求，别贪多）
     max_steps = 8
     #: 可用功能

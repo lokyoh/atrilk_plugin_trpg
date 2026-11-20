@@ -6,10 +6,9 @@
 
 约定：
 
-- 生成类 agent（世界 / 故事 / 区域 / 地点 / 场景）使用
-  :data:`~ATRI.system.agent.llm.ModelType.WORK`（工作模型），只负责产出文档；
-- :class:`~.dm.DungeonMasterAgent` 使用
-  :data:`~ATRI.system.agent.llm.ModelType.CHAT`（聊天模型），负责实际主持。
+- 全部环节（生成类 agent 与 :class:`~.dm.DungeonMasterAgent` 的实际主持）都用
+  :data:`~ATRI.system.agent.llm.ModelType.GENERAL`（通用文本模型）—— 框架
+  2026-11-17 起按**能力**分类模型，旧的 WORK / CHAT 用途分类已删除。
 
 模型统一走 ATRI 的 ``llm_manager``；没有可用模型、缺少输入或调用失败时
 抛出 :class:`AgentError`，由调用方决定如何降级。
@@ -74,7 +73,7 @@ class AgentResult:
     agent: str
     title: str
     content: str
-    model_type: ModelType = ModelType.WORK
+    model_type: ModelType = ModelType.GENERAL
     usage: Any = field(default=None)
     #: 本次运行里**每一次**模型调用的用量（思考循环可能调用多次）
     usages: list[UsageEntry] = field(default_factory=list)
@@ -99,7 +98,7 @@ class TrpgAgent:
     #: 系统提示词（内联）
     system_prompt: ClassVar[str] = ""
     #: 使用的模型类型
-    model_type: ClassVar[ModelType] = ModelType.WORK
+    model_type: ClassVar[ModelType] = ModelType.GENERAL
     #: 输入声明
     inputs: ClassVar[tuple[AgentInput, ...]] = ()
 
