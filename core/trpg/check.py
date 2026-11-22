@@ -15,6 +15,7 @@ __all__ = [
     "DC_LEVELS",
     "CheckResult",
     "dc_level",
+    "group_check_passes",
     "reroll_check",
     "roll_check",
 ]
@@ -94,6 +95,10 @@ class CheckResult:
 
         攻击检定（``auto_critical``）不适用「有代价的成功」与「更坏后果」——
         命中就是命中、失手就是失手，但成功程度（比试计分）仍然适用。
+
+        ⚠️ ``check`` 的返回会同时被 :func:`...agents.dnd.game._player_rulings`
+        收进玩家的判定卡，所以 ``game._strip_dm_noise`` 在发出去之前会按上面四句
+        的开头把整段剥掉。加新句式时记得同步那条正则，否则这句又漏到玩家脸上。
         """
         if self.forced_success or self.forced_failure:
             return ""
@@ -205,6 +210,16 @@ def roll_check(
         rolls=rolls,
         auto_critical=auto_critical,
     )
+
+
+def group_check_passes(successes: int, total: int) -> bool:
+    """DMG 2024 团体检定：至少一半成功则整组成功（平局算成功）。
+
+    原文（第二章「团体检定」）：「当多个角色一起进行同一项属性检定或豁免时，
+    每个人都进行检定；如果**至少一半**的人成功，整组就成功。」没有「过半」的
+    额外要求——4 人 2 人成功也算整组成功；0 人不算。
+    """
+    return total > 0 and successes * 2 >= total
 
 
 def reroll_check(result: CheckResult, *, rng: Random | None = None) -> CheckResult:
