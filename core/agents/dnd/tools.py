@@ -185,7 +185,7 @@ from ...dnd.world_store import (
     load_doc,
     read_doc,
 )
-from ...trpg.check import roll_check
+from ...trpg.check import group_check_passes, roll_check
 from ...trpg.dice import Advantage, DiceError, parse_dice, roll
 from ..thinking import AgentContext, AgentFinishError, AgentTool, ToolArg
 from .chase_actions import do_chase
@@ -402,11 +402,74 @@ def _light_perception_note(
     )
 
 
+_GROUP_WORDS = {"全队", "全员", "全体", "大家", "队伍", "所有人", "全组"}
+
+
+def _load_group_cards(context: AgentContext, player: str) -> tuple[list, Any]:
+    """团体检定的目标：多人时返回 (cards, save)，单人 / 空返回 ([], save)。"""
+    save = load_save(context.save_id) if context.save_id else None
+    if save is None:
+        return [], None
+    raw = str(player or "").strip()
+    if raw and any(word in raw for word in _GROUP_WORDS):
+        cards = [
+            card
+            for uid in save.player_ids
+            if (card := get_character(save, uid)) is not None
+        ]
+        return cards, save
+    names = [part.strip() for part in re.split(r"[、,，/]", raw) if part.strip()]
+    if len(names) <= 1:
+        return [], save
+    cards = []
+    for name in names:
+        card = find_character(save, name)
+        if card is not None:
+            cards.append(card)
+    return cards, save
+
+
+def _run_group_check(
+    cards: list,
+    save: Any,
+    kind: str,
+    dc: Any,
+    advantage: Any,
+    action: str = "",
+) -> str:
+    """DMG 2024 团体检定：每人各掷一次，至少一半成功则整组成功。"""
+    target_dc = _parse_int(dc, 0)
+    base_adv = _parse_advantage(advantage)
+    rows: list[str] = []
+    successes = 0
+    for card in cards:
+        final_adv, light_note = _light_perception_note(save, card, kind, base_adv)
+        try:
+            result = _resolve_check(card, kind, target_dc, final_adv, action)
+        except KeyError as e:
+            return f"无法识别检定对象：{e}"
+        ok = result.success
+        successes += 1 if ok else 0
+        note = f" {light_note.strip()}" if light_note.strip() else ""
+        rows.append(
+            f"· {card.name or card.user_id}：{result.total} vs DC {result.dc} "
+            f"{'成功' if ok else '失败'}{note}"
+        )
+    total = len(cards)
+    passed = group_check_passes(successes, total)
+    head = (
+        f"团体检定·{kind or '检定'}（DC {target_dc}）："
+        f"{total} 人中 {successes} 人成功 → 整组{'成功' if passed else '失败'}"
+    )
+    tail = "（DMG 2024：每人各掷一次，至少一半成功则整组成功，平局算成功）"
+    return "\n".join([head, *rows, tail])
+
+
 class CheckTool(AgentTool):
     """用玩家角色卡做检定。"""
 
     function_name = "check"
-    description = "用角色卡做技能 / 属性 / 豁免检定"
+    description = "用角色卡做技能 / 属性 / 豁免检定；player 写「全队」或多人用「、」分隔即团体检定（过半成功）"
     args = (
         ToolArg(
             "kind",
@@ -419,7 +482,8 @@ class CheckTool(AgentTool):
         ToolArg(
             "player",
             "str",
-            "为哪名玩家检定：角色名或 user_id；只有一名玩家时可留空",
+            "为哪名玩家检定：角色名或 user_id；只有一名玩家时可留空；"
+            "写「全队」或「甲、乙、丙」做团体检定",
         ),
     )
 
@@ -432,6 +496,16 @@ class CheckTool(AgentTool):
         player: str = "",
         **kwargs: Any,
     ) -> str:
+        group_cards, group_save = _load_group_cards(context, player)
+        if len(group_cards) > 1:
+            return _run_group_check(
+                group_cards,
+                group_save,
+                kind,
+                dc,
+                advantage,
+                str(context.data.get("action_text", "") or ""),
+            )
         card, save = _load_character(context, player)
         if card is None:
             return "没找到该玩家的角色卡，无法检定"
@@ -457,7 +531,8 @@ class CheckTool(AgentTool):
                 + "、".join(a.cn for a in ABILITIES)
             )
         text = f"【{card.name}】{result.describe()}"
-        # DMG 2024 的成败后果层只进 DM 回执，不写进玩家「🎲 判定」卡
+        # DMG 2024 的成败后果层：附在 DM 回执里；玩家判定卡那一路由
+        # game._strip_dm_noise 剥掉（同一份返回会被两边收走）
         hint = getattr(result, "consequence_hint", "")
         text = f"{text} {hint}" if hint else text
         if light_note:
@@ -765,6 +840,13 @@ def _query_mob_area(name: str) -> str:
     from ...dnd.mob import format_area_query
 
     return format_area_query(name)
+
+
+def _query_dmg(name: str) -> str:
+    """DMG 2024 明文表：维护费用 / 冒险随机表 / 位面 / 价目 / 词条 / 赠礼（第二~七章）。"""
+    from ...dnd.dmg_tables import format_dmg_query
+
+    return format_dmg_query(name)
 
 
 def _query_relations(name: str) -> str:
@@ -1189,6 +1271,7 @@ _DATA_TABLES = {
     "relations": _query_relations,
     "settlement": _query_settlement,
     "bastion": _query_bastion,
+    "dmg": _query_dmg,
 }
 
 _DATA_ALIASES = {
@@ -1319,6 +1402,32 @@ _DATA_ALIASES = {
     "据点": "bastion",
     "设施": "bastion",
     "特色设施": "bastion",
+    # —— DMG 明文表（core/dnd/dmg_tables.py）——
+    "dmg": "dmg",
+    "城主表": "dmg",
+    "城主指南": "dmg",
+    "维护费用": "dmg",
+    "周期开支": "dmg",
+    "冒险开场": "dmg",
+    "冒险高潮": "dmg",
+    "冒险反派": "dmg",
+    "冒险盟友": "dmg",
+    "冒险赞助者": "dmg",
+    "外层位面": "dmg",
+    "位面表": "dmg",
+    "星界彩池": "dmg",
+    "以太帷幕": "dmg",
+    "以太飓风": "dmg",
+    "外域门镇": "dmg",
+    "魔法物品价目": "dmg",
+    "特殊特性": "dmg",
+    "神器词条": "dmg",
+    "智能物品": "dmg",
+    "赠礼": "dmg",
+    "祝福": "dmg",
+    "护咒": "dmg",
+    "恐惧": "dmg",
+    "惊恐": "dmg",
     # —— 全局世界库文档 ——
     "world": "world",
     "世界": "world",
@@ -1399,7 +1508,7 @@ class QueryDataTool(AgentTool):
     description = (
         "查 DND 数据表（race/background/profession/subclass/class_feature/skill/weapon/armor/monster/"
         "bestiary/item/"
-        "spell/condition/difficulty/rule/npc_tier/npc/improvised/hazard/treasure/journey/mob/relations/settlement）或世界库文档（world/realm/"
+        "spell/condition/difficulty/rule/npc_tier/npc/improvised/hazard/treasure/journey/mob/relations/settlement/dmg）或世界库文档（world/realm/"
         "province/city/place/dungeon/scene/event），table 可写中文；"
         "bestiary=图鉴名录（cr 5 按 CR 挑）；monster 按类型/栖息地/群组查或写"
         "「随机 幽暗地域 亡灵x3」；rule 查探索规则（坠落/旅行步调/强行军）；"
@@ -1407,7 +1516,8 @@ class QueryDataTool(AgentTool):
         "treasure=宝石/艺术品/宝藏（可写「掷 宝石 100」）；journey=地形/旅程；"
         "mob=怪群免掷/区域目标（写「8 AC18 +3」出几只命中）；"
         "relations=态度/忠诚/声望（写「初始 热心」）；"
-        "settlement=聚落表（写「掷 小镇」出整张卡）"
+        "settlement=聚落表（写「掷 小镇」出整张卡）；"
+        "dmg=城主表（维护费用/冒险开场与高潮/位面/价目/神器词条/赠礼，写「赠礼」「恐惧」也行）"
     )
     args = (
         ToolArg("table", "str", "表名 / 文档类型"),
@@ -1451,13 +1561,19 @@ def query_data_text(table: str, name: str, context: AgentContext | None = None) 
         return record.brief()
 
     handler = _DATA_TABLES.get(key or "")
+    if key == "dmg" and not text:
+        # table 名本身可能就是语义（「赠礼」「护咒」「恐惧」），别把它丢掉
+        text = str(table or "").strip()
     if handler is None:
+        # 这条会原样发到玩家手里（/跑团.查），所以列中文表名而不是内部键
         return (
-            "未知数据表，可用：race / background / profession / subclass / class_feature / skill / "
-            "weapon / armor / supply（价目）/ "
-            "monster / bestiary / item / spell / condition / difficulty / rule / "
-            "improvised / hazard / treasure / journey / mob / mob_area / relations / settlement / bastion（据点）/ npc_tier / npc，"
-            "或世界库文档：world / realm / province / city / place / dungeon / scene / event"
+            "没认出这张表。能查的有：\n"
+            "· 建卡相关：种族 / 背景 / 职业 / 子职 / 职业特性 / 技能 / 武器 / 护甲 / "
+            "用品（价目）/ 魔法物品\n"
+            "· 怪物与战斗：怪物 / 图鉴名录 / 法术 / 状态 / 难度 / 规则 / 即兴伤害 / "
+            "危害 / 宝藏 / 怪群 / 效应区域\n"
+            "· 世界与 NPC：NPC 名单 / NPC 档位 / 关系 / 聚居地 / 旅行 / 据点 / 城主表\n"
+            "（例：/跑团.查 怪物 地精武者、/跑团.查 法术 火球术）"
         )
     try:
         return handler(text)
@@ -1558,7 +1674,8 @@ class UpdateCharacterTool(AgentTool):
             "inspiration（英雄激励，至多 1 个）/ attune（同调）/ "
             "准备（准备制职业的今日法术表）/ 掷血（升级掷生命骰）/ "
             "兼职（新职业加等级，写「法师=3」设到该级）/ 子职（写「职业:子职」）/ "
-            "资源（狂暴·回气·功力·术法点…的手工增减）",
+            "资源（狂暴·回气·功力·术法点…的手工增减）/ "
+            "充能（物品名 +1 消耗 / -1 找回 / =2 设已用 / 清空）",
         ),
         ToolArg(
             "value",
@@ -1566,7 +1683,8 @@ class UpdateCharacterTool(AgentTool):
             "新值；hp 可写「满血」；conditions/spells/equipment 用、分隔（可写「清空」）；"
             "concentrating 写法术名（换专注会顶替旧法术）或「中断」；"
             "features/tags 追加；死亡豁免可写 清空/复活/稳定/死亡/成功N/失败N；"
-            "attune 写物品名同调、终止+物品名解除（至多 3 件）；"
+            "attune 写物品名同调、终止+物品名解除（至多 3 件；"
+            "诅咒物品要写「移除诅咒 物品名」）；"
             "资源写「术法点 +1 / 狂暴 -1 / 术法点=3 / 满」",
         ),
         ToolArg("player", "str", "改谁：角色名或 user_id；单人可留空"),
@@ -1712,8 +1830,17 @@ class UpdateCharacterTool(AgentTool):
             else:
                 card.exp = max(0, _parse_int(text, card.exp))
             message = f"经验值 {before} → {card.exp} XP；{xp_progress_text(card)}"
+            leveled = False
             while can_level_up(card):
                 message += "\n" + level_up(card)
+                leveled = True
+            if leveled:
+                # level_up 的正文是给玩家看的（会进战斗结算的叙述），工具名写在这里：
+                message += (
+                    "\n（升级文本玩家也会看到，所以没写工具名——该职业这一级若解锁了"
+                    "新特性，用 update_character 的「特性」补；新法术用「法术」补；"
+                    "要替玩家掷生命骰，用「掷血」。）"
+                )
             # 升级后玩家还欠的决定（子职 / 属性加点 / 新法术）：开选择会话，答完自动写回
             tip = start_levelup_session(
                 card, save.save_id if save is not None else "", from_level=before_level
@@ -1858,6 +1985,9 @@ class UpdateCharacterTool(AgentTool):
             # 正常消耗走 tactic、恢复走 rest；这里兜的是「术法点换法术位」
             # 「DM 额外给一次狂暴」这类规则里没接的路。
             message = _adjust_resources(card, text)
+        elif field in {"充能", "item_charges", "物品充能"}:
+            # 魔法物品充能：正常扣减也走这里（没有单独工具），长休自动按黎明公式回
+            message = _adjust_item_charges(card, text)
         elif field == "name":
             card.name = text
             message = f"姓名已设为 {card.name or '（空）'}"
@@ -1957,9 +2087,21 @@ class UpdateCharacterTool(AgentTool):
         elif field in {"attune", "attunement", "同调"}:
             # 同调（PHB，两版相同）：短休中专注一件物品完成；至多 3 件，不认重复的相同物品
             if text.lower() in _CONDITION_CLEAR_WORDS:
-                dropped = len(card.attuned)
-                card.attuned = []
-                message = f"同调已全部终止（{dropped} 件）"
+                # 诅咒物品留着自己解不开（DMG 2024 第七章），清空也要跳过它们
+                keep = [k for k in card.attuned if card._is_cursed(k)]
+                dropped = len(card.attuned) - len(keep)
+                card.attuned = keep
+                message = f"同调已终止 {dropped} 件"
+                if keep:
+                    message += "；诅咒物品无法自行解除：" + "、".join(
+                        card._attuned_label(k) for k in keep
+                    )
+            elif text.startswith(("移除诅咒", "解除诅咒")):
+                target = text[4:].strip(" ：:")
+                ok, note = card.unattune(target, remove_curse=True)
+                if not ok:
+                    return f"【{card.name}】{note}" if card.name else note
+                message = note
             elif text.startswith(("终止", "解除", "放弃")):
                 target = text[2:].strip(" ：:")
                 ok, note = card.unattune(target)
@@ -2572,6 +2714,54 @@ _ACTION_SURGE_WORDS = {"动作如潮", "如潮", "action_surge", "action surge"}
 
 #: 资源的中文名 -> 内部键（``update_character`` 的「资源」字段认中文）
 _RESOURCE_KEYS: dict[str, str] = {cn: key for key, cn in RESOURCE_CN.items()}
+
+
+def _adjust_item_charges(card: Any, text: str) -> str:
+    """手工增减魔法物品的**已用充能**；长休按黎明公式自动回。
+
+    写法：``隐形斗篷 +1``（用完 1 次）/ ``隐形斗篷 -1``（找回 1 次）/
+    ``隐形斗篷=2``（已用设 2 次）/ ``清空``（全部回满）。物品名走别名归一。
+    """
+    from ...dnd.magic_items import get_magic_item
+
+    raw = str(text or "").strip()
+    if not raw:
+        raise ValueError("充能要写物品名，例如「隐形斗篷 +1」")
+    if raw.lower() in {"清空", "clear", "全部恢复", "满"}:
+        card.item_charges.clear()
+        return "所有魔法物品充能已恢复"
+    name, sep, tail = raw.partition("=")
+    if sep:
+        item = get_magic_item(name.strip())
+        if item is None or item.charges_max <= 0:
+            raise ValueError(f"「{name.strip()}」不是充能物品")
+        value = max(0, min(item.charges_max, int(str(tail).strip() or 0)))
+        if value:
+            card.item_charges[item.cn] = value
+        else:
+            card.item_charges.pop(item.cn, None)
+        return f"{item.cn} 已用充能设为 {value}/{item.charges_max}"
+    m = re.match(r"^(.*?)\s*([+-])\s*(\d+)$", raw)
+    if not m:
+        raise ValueError(
+            "充能写法：物品 +1（消耗）/ 物品 -1（找回）/ 物品=2（设已用）/ 清空"
+        )
+    name = m.group(1).strip()
+    amount = int(m.group(3)) * (1 if m.group(2) == "+" else -1)
+    item = get_magic_item(name)
+    if item is None:
+        raise ValueError(f"没有「{name}」这件魔法物品")
+    if item.charges_max <= 0:
+        raise ValueError(f"{item.cn} 没有记载充能，按原文由 DM 裁定")
+    if amount >= 0:
+        return card.use_item_charge(item.cn, amount or 1)
+    used = int(card.item_charges.get(item.cn, 0) or 0)
+    left_used = max(0, used + amount)
+    if left_used:
+        card.item_charges[item.cn] = left_used
+    else:
+        card.item_charges.pop(item.cn, None)
+    return f"{item.cn} 找回 {-amount} 次充能（剩 {item.charges_max - left_used}/{item.charges_max}）"
 
 
 def _adjust_resources(card: Any, text: str) -> str:
@@ -3936,6 +4126,10 @@ class RestTool(AgentTool):
                 # 至多持有 1 个，已经拿着就不再给（规则：一次只有一个）。
                 if card.race == "human" and card.grant_inspiration():
                     notes.append("人类特性：获得 1 个英雄激励（重骰一次）")
+                # 魔法物品充能：原文是「每日黎明恢复 NdM」，把长休当黎明
+                charge_note = card.reset_item_charges()
+                if charge_note:
+                    notes.append(charge_note)
                 if card.conditions:
                     notes.append("状态未自动清除：" + "、".join(card.conditions))
             else:
