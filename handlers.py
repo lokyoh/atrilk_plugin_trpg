@@ -457,14 +457,14 @@ async def _continue_creation(event: MessageEvent):
         _unmark_active(user_id)
         if is_levelup:
             note = (
-                "已跳过开卡补齐：这一局按定好的等级开着，"
-                "子职 / 属性加点 / 新法术仍缺着，随时用 /跑团.改卡 补。"
+                "已跳过等级带来的这几项选择：这一局照定好的等级开着，"
+                "子职 / 属性加点 / 新法术还缺着，随时用 /跑团.改卡 补。"
                 if keep_global
-                else "已跳过本次升级选择（角色卡保持原样）。"
-                "随时可以用 /跑团.改卡（子职 / 属性加点 / 法术）补上。"
+                else "已跳过这次升级选择，角色卡保持原样。"
+                "随时可以用 /跑团.改卡 补上（子职 / 属性加点 / 法术）。"
             )
             await continue_card.finish(note)
-        await continue_card.finish("已取消建卡，随时发送 /跑团.建卡 重新开始。")
+        await continue_card.finish("已取消建卡，随时发 /跑团.建卡 重新来。")
 
     out, character = await _advance(session, text)
     if character is not None:
@@ -496,13 +496,14 @@ def _check_daily_roll(session: CreationSession, text: str) -> None:
         result = load_roll_result(session.user_id, today=today)
         if result is not None:
             session.ability_candidates, session.ability_set_groups = result
-    hint = f"今天（{today}，北京时间）已经掷过属性了 —— 掷属性每天只有一次。"
+    hint = f"今天的属性已经掷过了（{today}，北京时间），每天只有一次机会。"
     if session.ability_candidates:
         hint += (
-            f"请从今天掷出的 {len(session.ability_candidates)} 组候选里回复序号挑一组"
-            "（或回复「自动」），"
+            f"从这 {len(session.ability_candidates)} 组里回复序号挑一组"
+            "（或回复「自动」），挑完接着往下走。"
         )
-    hint += "明天可再掷新的（取消建卡重来不会刷新次数）。"
+    else:
+        hint += "今天掷出的结果没能找回来，明天可以再掷一次。"
     raise CreationError(hint)
 
 
@@ -529,7 +530,7 @@ async def _advance(
         _persist_roll_result(session)
     except CreationError as e:
         save_session(session)
-        return f"⚠️ {e}\n\n{_reply(session)}\n（不想建了可以回复「取消」）", None
+        return f"⚠️ {e}\n\n{_reply(session)}\n（想退出可以回复「取消」）", None
 
     save_session(session)
 
@@ -559,16 +560,18 @@ async def _advance(
         delete_session(session.user_id)
         if session.purpose == "levelup":
             done = (
-                "✅ 开卡等级带来的选择已补齐，这张卡已经按本局等级就位，"
-                "继续等人齐了 /跑团.开始 就行。"
+                "✅ 等级带来的选择补完了，这张卡已经按本局等级就位，"
+                "等人齐了 /跑团.开始 就行。"
                 if session.keep_global
                 else "✅ 升级选择完成，已写回角色卡，继续游戏吧！"
             )
             return await _card_result(done, character), character
         return (
             await _card_result(
-                "🎲 角色卡已保存！\n"
-                "发送 /跑团.看卡 查看，/跑团.检定 察觉 DC15 开始检定。",
+                "🎲 角色卡建好了，已经替你存下。\n"
+                "· 看卡：/跑团.看卡\n"
+                "· 开跑：/跑团.开局 开一局新的，或 /跑团.加入 进朋友那一局\n"
+                "· 想改哪一步：/跑团.改卡 种族（换成你要重做的那一步）",
                 character,
             ),
             character,
@@ -605,7 +608,7 @@ async def _start_creation(event: MessageEvent, args: Message = CommandArg()):
     prompt = _reply(session)
     if is_new and existing is not None:
         prompt = f"⚠️ 你已有一张角色卡，完成建卡后会将其覆盖。\n\n{prompt}"
-    await create_card.send(f"{prompt}\n\n（回复「取消」可中途放弃建卡）")
+    await create_card.send(f"{prompt}\n\n（想退出可以回复「取消」）")
 
 
 # --------------------------------------------------------------------------- #
@@ -706,8 +709,9 @@ async def _query_data(event: MessageEvent, args: Message = CommandArg()):
     if not raw or " " not in raw:
         await query_data_cmd.finish(
             "用法：/跑团.查 <表> <名字>\n"
-            "表：怪物 / 法术 / 种族 / 背景 / 职业 / 子职 / 武器 / 护甲 / 魔法物品\n"
-            "例：/跑团.查 怪物 地精武者　/跑团.查 法术 火球术　/跑团.查 子职 狂战士"
+            "常查的表：怪物 / 法术 / 种族 / 背景 / 职业 / 子职 / 职业特性 / 技能 / "
+            "武器 / 护甲 / 用品价目 / 魔法物品 / 状态 / 规则 / 宝藏 / NPC 名单\n"
+            "例：/跑团.查 怪物 地精武者 · /跑团.查 法术 火球术 · /跑团.查 子职 狂战士"
         )
     table, name = raw.split(" ", 1)
     name = name.strip()
@@ -771,9 +775,9 @@ _STEP_LABELS: dict[CreationStep, str] = {step: words[0] for step, words in _REDO
 #: 通用用法提示：改卡就是重做建卡中的一步
 _EDIT_USAGE = (
     "用法：/跑团.改卡 <步骤>\n"
-    "改卡就是重做建卡中的一步：回复步骤后，按提示给出新的选择即可。\n"
-    + "\n".join(f"· /跑团.改卡 {words[0]}" for _, words in _REDO_STEPS)
-    + "\n也可以直接带上新选择，例如 /跑团.改卡 种族 精灵。"
+    "改卡就是重做建卡里的某一步：回复步骤后，按提示重新选就行。\n"
+    "可重做的步骤：" + "、".join(words[0] for _, words in _REDO_STEPS) + "\n"
+    "也可以直接带上新选择，比如 /跑团.改卡 种族 精灵。"
 )
 
 
@@ -1097,8 +1101,8 @@ def _world_chooser(worlds, note: str = "") -> str:
         "· 生成一个新世界 → /跑团.开局 生成 [主题]（不给主题就随机）",
         "· 一条命令开无尽局 → /跑团.开局 无尽（装预设世界 + 按无尽节奏跑）",
         "",
-        "选完世界（与入场事件）会再问一句本局**开卡等级**（1–20），然后才建档。",
-        "世界是所有存档共享的；选完之后每一局会自己织自己的事件，互不影响。",
+        "选完世界和入场事件，还会问一句本局等级（1–20），然后才建档。",
+        "世界是所有存档共享的；每局的事件各织各的，互不影响。",
     ]
     return "\n".join(lines)
 
@@ -1129,11 +1133,11 @@ def _story_chooser(world_key: str, note: str = "") -> str:
         "接下来：",
         f"· 挑一件 → /跑团.开局 <序号>（{int(_START_PICK_TTL // 60)} 分钟内有效）",
         "",
-        "选完的那一件就是这一局的入场事件，DM 会从它写开场白。",
-        "如果你们想自己另起一个故事——开局时跟 DM 说一声就行，",
-        "这些是**可选的**，不是全部。",
+        "选中的那件就是这一局的入场事件，DM 会从它写开场白。",
+        "想自己另起一个故事也行 —— 开局时跟 DM 说一声，",
+        "上面这些只是可选的开头。",
         "",
-        "挑完之后还会问一句本局开卡等级（1–20），然后才建档。",
+        "挑完之后还会问一句本局等级（1–20），然后才建档。",
     ]
     return "\n".join(lines)
 
@@ -1157,13 +1161,13 @@ def _level_chooser(world_title: str = "", note: str = "") -> str:
         lines.append("")
     where = f"（世界「{world_title}」）" if world_title else ""
     lines += [
-        f"🎚️ 本局开卡等级{where}：",
+        f"🎚️ 本局从几级开始{where}：",
         f"· 1 级 → /跑团.开局 1（{int(_START_PICK_TTL // 60)} 分钟内有效）",
         "· 高等级 → /跑团.开局 5（数字就是等级，1–20）",
         "",
-        "建卡不分等级，卡是同一条；等级只落在**这一局的存档**上。",
-        "3 级以上要选子职、4 级起有属性提升、法术数量随等级涨——"
-        "这些会在建档 / 加入时各开一轮选择问玩家，答完自动写回。",
+        "建卡出的卡不分等级，等级只记在这一局的存档里。",
+        "3 级起要选子职、4 级起有属性提升、法术数量也跟着涨 —— "
+        "建档和加入时会逐项问你，答完自动写回。",
     ]
     return "\n".join(lines)
 
@@ -1260,7 +1264,7 @@ def _apply_start_level(save, user_id: str, level: int) -> str:
         return ""
     note = set_level(card, level)
     set_character(save, card)
-    lines = [f"🎚️ 本局开卡等级 Lv.{level}：{note}"]
+    lines = [f"🎚️ 本局等级 Lv.{level}：{note}"]
     tip = start_session(card, save.save_id, from_level=1, keep_global=True)
     if tip:
         lines += ["", tip]
@@ -1319,14 +1323,14 @@ def _open_save(
 
     text = (
         f"🎲 冒险已就绪：存档 {save.save_id}\n"
-        f"世界「{world_name}」· {mode_text(save)} · 开卡等级 Lv.{level}\n"
-        "这一局的事件会在**开局时按队伍的实际水平织出来**；"
-        "区域 / 城镇 / 自然地点 / 地下城 / 场景同样在用到时按需生成。\n\n"
+        f"世界「{world_name}」· {mode_text(save)} · 本局等级 Lv.{level}\n"
+        "这一局的事件会在开局时按队伍的实际水平织出来；"
+        "区域、城镇、地点、地下城和场景也是用到时才生成。\n\n"
         "先等大家加入，人齐了再开局：\n"
-        f"· 加入：/跑团.加入 {save.save_id}（本群直接发 /跑团.加入 也行）\n"
-        f"· 还没有角色卡的先 /跑团.建卡\n"
-        "· 人齐后由**任意已加入的玩家**发 /跑团.开始 正式开局\n"
-        "· /跑团.存档 查看谁已经加入、进度与用量"
+        f"· 加入：/跑团.加入 {save.save_id}（在本群直接发 /跑团.加入 也行）\n"
+        "· 还没有角色卡的先 /跑团.建卡\n"
+        "· 人齐后任意已加入的玩家发 /跑团.开始，正式开局\n"
+        "· /跑团.存档 看谁已经加入、进度和用量"
     )
     level_note = _apply_start_level(save, user_id, level)
     if level_note:
@@ -1463,7 +1467,7 @@ async def _start_game(
             )
         _START_PENDING.pop(key, None)
         await matcher.send(
-            f"🌍 使用世界「{world_title}」· 开卡等级 Lv.{level}，正在建立存档……"
+            f"🌍 用世界「{world_title}」开局 · 本局等级 Lv.{level}，正在建档……"
         )
         save_id, text = _open_save(
             user_id,
@@ -1528,22 +1532,22 @@ async def _start_game(
         if rest.isdigit():
             # /跑团.开局 无尽 5：等级一步给到，不用多问一轮
             await matcher.send(
-                f"🌍 使用预设世界「{title}」· 开卡等级 Lv.{rest}，"
-                "正在建立无尽模式的存档……"
+                f"🌍 用预设世界「{title}」开局 · 本局等级 Lv.{rest}，"
+                "正在建无尽模式的存档……"
             )
             save_id, text = _open_save(
                 user_id, key, preset_key, mode="endless", start_level=int(rest)
             )
             await start_game.finish(text)
         _set_pending_pick(key, user_id, "level", preset_key, mode="endless")
-        await start_game.finish(_level_chooser(title, note="无尽模式：先定本局开卡等级。"))
+        await start_game.finish(_level_chooser(title, note="无尽模式：先定本局等级。"))
 
     # ·「生成」：生成一个新世界（事件在建档、开局时才织，不在这一步）
     if head in _GEN_WORDS:
         _START_PENDING.pop(key, None)
         await matcher.send(
             "🎲 开始准备这一局（需要一些时间，完成后我会汇报）：\n"
-            "① 生成世界地图　② 定本局开卡等级、建立存档、等人加入\n"
+            "① 生成世界地图　② 定本局等级、建档、等人加入\n"
             "开局时会按队伍的实际水平织出第一章。\n"
             "期间可以先做别的，不必等在这里。"
         )
@@ -2005,7 +2009,7 @@ async def _join_save(event: MessageEvent, args: Message = CommandArg()):
         lines.append("这一局已经开局了，直接 @我 描述行动即可。")
     else:
         lines.append(
-            "等人齐了，由**任意已加入的玩家**发 /跑团.开始 正式开局"
+            "等人齐了，由任意已加入的玩家发 /跑团.开始 正式开局"
             "（在那之前 @我 不会开场）。"
         )
     await join_save.finish("\n".join(lines))
@@ -2044,11 +2048,13 @@ async def _show_save(event: MessageEvent, args: Message = CommandArg()):
 
     started = is_started(save)
     names = _save_player_names(save)
+    scene = save.current_scene or ("（还没开场）" if not started else "（未设置）")
     lines = [
-        f"存档 {save.save_id}",
-        f"玩家 {len(save.player_ids)} 人" + (f"：{'、'.join(names)}" if names else ""),
-        f"世界：{world_name}    事件：{event_no or '（未开第一章）'}    "
-        f"当前场景：{save.current_scene or ('（还没开局）' if not started else '（未设置）')}",
+        f"存档 {save.save_id}"
+        + (f"（{len(save.player_ids)} 人：{'、'.join(names)}）" if names else ""),
+        f"世界：{world_name}",
+        f"事件：{event_no or '（还没有入场事件）'}",
+        f"当前场景：{scene}",
         "",
     ]
     if save.progress.get("ended"):
@@ -2065,19 +2071,14 @@ async def _show_save(event: MessageEvent, args: Message = CommandArg()):
         lines.append("")
     combat = load_combat(save)
     if combat is not None:
-        lines.append(combat_text(save, combat, with_map=False))
+        lines.append(combat_text(save, combat, with_map=False, for_player=True))
         lines.append("")
     if list_npcs(save):
-        lines.append(npcs_text(save))
+        lines.append(npcs_text(save, for_player=True))
         lines.append("")
     volumes = story_files(save.save_id)
     if volumes:
-        lines.append(
-            "复盘：saves/"
-            + save.save_id
-            + "/"
-            + "、".join(path.name for path in volumes)
-        )
+        lines.append(f"📖 复盘：{len(volumes)} 卷（存放于 saves/{save.save_id}/）")
         lines.append("")
     card = get_character(save, event.get_user_id())
     if card is None:
@@ -2126,7 +2127,7 @@ async def _finish_game(event: MessageEvent):
     await finish_game.finish(
         "🏁 已把本局标记为「准备结档」。\n"
         "DM 会在接下来的叙述里收拢伏笔、交代各人结局，并在合适的时候为这一局收官；\n"
-        "收官后本会话会自动解除绑定，**存档与复盘都会保留**。\n"
+        "收官后本会话会自动解除绑定，存档与复盘都会保留。\n"
         "（想先歇一歇可以直接 /跑团.结束 暂停，之后用 /跑团.继续 接着玩。）"
     )
 

@@ -60,8 +60,11 @@ def alignment_choices() -> tuple[str, ...]:
 
 
 def alignment_options() -> str:
-    """带序号的阵营清单（建卡提示用）。"""
-    return "；".join(f"{index}.{a.cn}" for index, a in enumerate(ALIGNMENTS, 1))
+    """带序号的阵营清单（建卡提示用，每行 5 项）。"""
+    items = [f"{index}.{a.cn}" for index, a in enumerate(ALIGNMENTS, 1)]
+    return "\n".join(
+        "　".join(items[start : start + 5]) for start in range(0, len(items), 5)
+    )
 
 
 def normalize_alignment(text: str) -> str:

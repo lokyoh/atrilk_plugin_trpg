@@ -41,20 +41,20 @@ REJECT_RULES: tuple[KeywordRule, ...] = (
     KeywordRule(
         r"(我是神|我就是神|无所不能|想做什么就做什么|直接赢|立即获胜|秒杀全场)",
         Verdict.REJECT,
-        reason="宣言式的「无敌」行动不符合跑团规则。",
-        suggestion="请描述角色**具体**做什么，例如「我冲向地精并用长剑攻击」。",
+        reason="「我说了算」这种宣言没法按规则结算。",
+        suggestion="说清角色具体做什么，例如「我冲向地精，用长剑砍它」。",
     ),
     KeywordRule(
         r"(修改|篡改|删掉|重写)(我|角色)?(的)?(属性|骰子|结果|血量|生命值)",
         Verdict.REJECT,
-        reason="玩家不能直接修改角色数据或骰子结果。",
-        suggestion="想改变结果可以尝试其他行动，或接受这次失败继续推进剧情。",
+        reason="角色数值和骰子结果不能直接改。",
+        suggestion="换个做法试试，或者接受这次失败，让剧情往下走。",
     ),
     KeywordRule(
         r"(跳过|略过)(检定|判定|规则)",
         Verdict.REJECT,
-        reason="跑团需要按规则进行判定，不能跳过。",
-        suggestion="请描述行动，我会按规则掷骰结算。",
+        reason="检定不能跳过，得按规则掷。",
+        suggestion="直接说角色做什么，我来掷骰结算。",
     ),
 )
 
@@ -63,20 +63,20 @@ NEED_INFO_RULES: tuple[KeywordRule, ...] = (
     KeywordRule(
         r"^\s*(我|我要|我想)\s*[。.!！?？]*\s*$",
         Verdict.NEED_INFO,
-        reason="没有说明具体行动。",
-        suggestion="例如「我用长剑砍向最近的敌人」「我检查墙上的浮雕」。",
+        reason="还没说角色要做什么。",
+        suggestion="比如「我用长剑砍向最近的敌人」「我看看墙上刻着什么」。",
     ),
     KeywordRule(
         r"(怎么办|做什么|接下来呢|随便|你决定)\s*[?？]?\s*$",
         Verdict.NEED_INFO,
-        reason="需要你决定角色的行动。",
-        suggestion="可以描述一个具体动作，或说「观察四周」让我先描述环境。",
+        reason="这一步得你来拿主意。",
+        suggestion="说个具体动作就行，或者「观察四周」，我先描述环境。",
     ),
     KeywordRule(
         r"(死亡豁免|濒死豁免|掷死亡豁免)",
         Verdict.NEED_INFO,
-        reason="死亡豁免由系统在轮到你的回合时自动掷（DC 10），不用自己提交。",
-        suggestion="等自己的回合，或让队友用治疗让你恢复意识。",
+        reason="死亡豁免在你回合开始时会自动掷（DC 10），不用自己申请。",
+        suggestion="等队友施救，或者等自己的回合。",
     ),
 )
 
@@ -331,7 +331,7 @@ class DndRuleJudge(KeywordRuleJudge):
             "行动请尽量具体：做什么、用什么、对谁。\n"
             "可直接下检定指令，如「察觉」「力量检定」「察觉 DC15」「2d6+3」。\n"
             "身上有英雄激励时，在指令里写「重骰」（或「重投」）即可消耗它重掷一次，"
-            "但**必须采用新结果**。"
+            "但必须采用新结果。"
         )
 
 

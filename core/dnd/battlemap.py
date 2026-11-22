@@ -689,8 +689,14 @@ def map_digest(state: Any) -> str:
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
 
 
-def battlefield_text(state: Any, *, with_map: bool = True) -> str:
-    """战场现状：尺寸、地形风格、地图（可选）、坐标、图例与各人对目标的距离。"""
+def battlefield_text(
+    state: Any, *, with_map: bool = True, for_player: bool = False
+) -> str:
+    """战场现状：尺寸、地形风格、地图（可选）、坐标、图例与各人对目标的距离。
+
+    :param for_player: 玩家侧不画图（``/跑团.存档`` 里地图没法逐轮重画），
+        也就别留「地图布局与上一轮相同」这种只有 DM 看得懂的节流说明。
+    """
     if not has_map(state):
         return ""
     label = str(getattr(state, "terrain_label", "") or "").strip()
@@ -704,7 +710,7 @@ def battlefield_text(state: Any, *, with_map: bool = True) -> str:
         legend = legend_text(state)
         if legend:
             lines.append(legend)
-    else:
+    elif not for_player:
         lines.append("（地图布局与上一轮相同，不再重画；坐标见下面的「位置」行）")
 
     spots = [

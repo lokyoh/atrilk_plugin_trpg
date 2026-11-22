@@ -25,7 +25,6 @@ from enum import Enum
 from typing import Any
 
 from ..trpg.dice import roll_4d6_drop_lowest
-from ..trpg.text import bullet
 from .alignment import alignment_options, normalize_alignment
 from .attributes import (
     ABILITIES,
@@ -420,18 +419,18 @@ def _levelup_spell_prompt(session: CreationSession, profession: DndClass) -> str
         parts.append(f"法术书 {spells} 条" if book else f"可准备 {spells} 个")
     head = "、".join(parts) or "没有新法术"
     lines = [
-        f"Lv.{session.level} 的新法术（{profession.cn}：{head}，"
+        f"Lv.{session.level} 的新法术（{profession.cn}：{head}；"
         f"可挑一环~{_circle_text(top)}）："
     ]
     lines.extend(_spell_list_lines(options, top, descending=True))
     if book:
         lines.append(
-            "（抄进**法术书**，长休后从书里挑今日准备的；准备数见卡上的「准备」）"
+            "（抄进法术书，长休后从书里挑今日准备的；准备数见卡上的「准备」）"
         )
     elif session.prepared:
-        lines.append("（会同时加进你的**准备列表**——现在是当日可用的了）")
+        lines.append("（同时进你的准备列表，今天就可用）")
     lines.append(
-        "回复序号（例如「1 3」）或法术名（逗号分隔）；回复「自动」由我挑（优先高环）；"
+        "回复序号（例如「1 3」）或法术名（逗号分隔）；回复「自动」我按高环先挑；"
         "回复「跳过」留给 DM 后补"
     )
     return "\n".join(lines)
@@ -440,54 +439,50 @@ def _levelup_spell_prompt(session: CreationSession, profession: DndClass) -> str
 def creation_prompt(step: CreationStep, session: CreationSession | None = None) -> str:
     """给出某一步的提示文本。"""
     if step is CreationStep.MODE:
-        options = bullet(
+        options = "\n".join(
             f"{i}. {name}"
             for i, name in enumerate(dict.fromkeys(SUPPORTED_SYSTEMS.values()), 1)
         )
-        return f"欢迎来到跑团！先选择要玩的规则模式：\n{options}\n回复序号即可（目前仅支持 DND 5e）。"
+        return f"欢迎来到跑团！先选规则模式：\n{options}\n回复序号就行（目前只有 DND 5e）。"
 
     if step is CreationStep.ABILITY:
         candidates = session.ability_candidates if session else []
         if candidates:
             lines = [
-                f"第 1 步：选择属性组。已掷出 {len(candidates)} 组"
-                "（每项 4d6 取最高的三个，按「"
+                f"属性掷好了（{len(candidates)} 组，每组按"
                 + " ".join(a.cn for a in ABILITIES)
-                + "」顺序展示）："
+                + " 排）："
             ]
             for i, scores in enumerate(candidates, 1):
                 shown = "  ".join(f"{v:>2}" for v in scores)
-                lines.append(f"{i}. {shown}（合计 {sum(scores)}）")
+                lines.append(f"{i}. {shown}  合计 {sum(scores)}")
             lines.append(
-                f"回复序号（1~{len(candidates)}）选一组直接使用，"
-                "或回复「自动」由我挑合计最高的一组。"
+                f"回复序号（1~{len(candidates)}）挑一组，"
+                "回复「自动」就用合计最高的那组。"
             )
-            lines.append(
-                "（属性**只能靠掷骰获得**、每天只有一次：今天不能再掷，"
-                "请从上面挑一组，明天可再掷新的。）"
-            )
+            lines.append("今天只能掷这一次，这几组会一直留着，明天可以再掷。")
         else:
             lines = [
-                "第 1 步：roll 属性。",
-                f"回复「roll」掷 {ABILITY_SET_COUNT} 组完整属性"
-                "（DND 5e：每项 4d6 取最高的三个），再从里面挑一组直接使用。",
-                "（属性**只能靠掷骰获得**、每天只有一次：没有标准数组，也没有手填属性；"
-                "今天掷出的候选会替你留着，取消建卡重来也不会刷新次数。）",
+                "掷属性：回复「roll」。",
+                f"一次掷 {ABILITY_SET_COUNT} 组，每组每项 4d6 取最高的三颗，"
+                "掷完从里面挑一组用。",
+                "属性只能靠掷骰得到，每天一次；掷出来的结果会留着，"
+                "不用一次挑完。",
             ]
         return "\n".join(lines)
 
     if step is CreationStep.RACE:
         lines = [
             "选择种族：",
-            bullet(f"{i}. {name}" for i, name in enumerate(race_choice_lines(), 1)),
+            "\n".join(
+                f"{i}. {name}" for i, name in enumerate(race_choice_lines(), 1)
+            ),
         ]
         if session and session.base_scores:
             lines.append("")
             lines.append("当前属性：" + session.final_scores_text())
-        lines.append(
-            "回复序号或种族名；血系已列在种族后面，可写「精灵 高等精灵」直接指定。"
-        )
-        lines.append("（PHB 2024：种族不提供属性加值，属性提升已在上一步由背景给出。）")
+        lines.append("（2024 规则里种族不再给属性加值，加值已经由背景给过了。）")
+        lines.append("回复序号或种族名；带血系的可以直接写「精灵 高等精灵」。")
         return "\n".join(lines)
 
     if step is CreationStep.LANGUAGES:
@@ -496,11 +491,11 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
             standard_language_names()
         )
         lines = [
-            f"选择语言：除了人人都懂的 {COMMON}，再自选 {session_count} 门"
-            "（第二章 2133，可回复「跳过」）：",
-            bullet(f"{i}. {name}" for i, name in enumerate(session_pool, 1)),
-            f"回复 {session_count} 个序号或语言名（例如「1 5」）；"
-            "种族额外给的自选已经算进上面的数量里。",
+            f"选择语言：除了人人都会的{COMMON}，还能自选 {session_count} 门"
+            "（回复「跳过」也行）：",
+            "\n".join(f"{i}. {name}" for i, name in enumerate(session_pool, 1)),
+            f"回复 {session_count} 个序号或语言名（例如「1 5」）。"
+            "种族自带的那门已经算在这几门里了。",
         ]
         return "\n".join(lines)
 
@@ -508,7 +503,7 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
         return "\n".join(
             [
                 "选择职业：",
-                bullet(f"{i}. {name}" for i, name in enumerate(class_choices(), 1)),
+                "\n".join(f"{i}. {name}" for i, name in enumerate(class_choices(), 1)),
                 "回复序号或职业名。",
             ]
         )
@@ -520,26 +515,30 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
         profession = session.profession_obj if session else None
         lines = [
             f"选择子职（{profession.cn if profession else '本职业'}，"
-            f"PHB 2024 所有职业都在 {SUBCLASS_LEVEL} 级获得）：",
-            bullet(f"{i}. {sub.short}（{sub.cn}）" for i, sub in enumerate(options, 1)),
-            "回复序号或子职名（写短名或全名都行）。",
+            f"{SUBCLASS_LEVEL} 级获得）：",
+            "\n".join(
+                f"{i}. {sub.short}"
+                + (f"（{sub.cn}）" if sub.cn and sub.cn != sub.short else "")
+                for i, sub in enumerate(options, 1)
+            ),
+            "回复序号或子职名，短名全名都行。",
         ]
         for sub in options:
             if sub.desc:
-                lines.append(f"{sub.short}：{sub.desc}")
+                lines.append("")
+                lines.append(f"· {sub.short}：{sub.desc}")
         return "\n".join(lines)
 
     if step is CreationStep.BACKGROUND:
         return "\n".join(
             [
-                "确定你的起源：选择背景（可回复「跳过」）：",
-                bullet(
+                "选择背景（回复「跳过」也行）：",
+                "\n".join(
                     f"{i}. {name}" for i, name in enumerate(background_choices(), 1)
                 ),
-                "背景会给你：三项属性提升（下一步选 +2/+1 或三项各 +1）、"
-                "两项技能熟练、一项工具熟练、起始物品（与职业技能不重复）。",
-                "2024 起背景还固定给**一项起源专长**（第五章，如侍僧→魔法学徒），"
-                "它会直接记在你的角色卡上。",
+                "背景会给你：三项属性提升（下一步分配）、两项技能熟练、一件工具熟练、"
+                "起始物品（不与职业技能重复）。",
+                "另外每个背景都固定给一项起源专长，比如侍僧给魔法学徒。",
             ]
         )
 
@@ -553,17 +552,15 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
         )
         return "\n".join(
             [
-                f"背景属性提升（{background.cn}）：",
-                f"PHB 2024：属性加值只来自背景 —— 你这项背景给了这三项："
-                f"{background.bonus_text}",
-                f"当前（未提升）：{current}",
+                f"背景属性提升（{background.cn}）",
+                f"这项背景能提升的只有这三项：{background.bonus_text}",
+                f"当前（还没提升）：{current}",
                 "",
                 "选一种：",
-                "1. 一项 +2、另一项 +1 —— 回复「1 智力 感知」"
-                "（前一项 +2、后一项 +1）",
+                "1. 一项 +2、另一项 +1 —— 回复「1 智力 感知」（前者 +2）",
                 "2. 三项各 +1 —— 回复「2」",
-                f"（合计 +3，单项不超过 {ABILITY_SCORE_MAX}；"
-                "回复「跳过」不加，但会弱于规则角色）",
+                f"合计 +3，单项最多 {ABILITY_SCORE_MAX}。"
+                "回复「跳过」就不加 —— 但会明显弱于同水平的角色。",
             ]
         )
 
@@ -573,17 +570,17 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
             return "选择技能：需要先确定职业。"
         lines = [
             f"选择技能（{profession.cn}，选 {profession.skill_count} 项）：",
-            bullet(
+            "\n".join(
                 f"{i}. {name}" for i, name in enumerate(profession.skill_names(), 1)
             ),
-            "回复序号或技能名，多项用空格 / 逗号分隔（例如「1 3」）。",
         ]
         if session and session.background_obj:
             provided = session.background_skill_names()
             if provided:
                 lines.append(
-                    f"背景「{session.background_obj.cn}」已提供：" + "、".join(provided)
+                    f"背景「{session.background_obj.cn}」已经给了：" + "、".join(provided)
                 )
+        lines.append("回复序号或技能名，多个用空格或逗号隔开（例如「1 3」）。")
         return "\n".join(lines)
 
     if step is CreationStep.FEATURES:
@@ -608,7 +605,7 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
             [
                 f"选择起始装备包（{profession.cn}）：",
                 profession.format_equipment(),
-                "回复包序号（例如「1」），或回复「跳过」使用默认装备。",
+                "回复包序号（例如「1」），或回复「跳过」用默认装备。",
             ]
         )
 
@@ -639,19 +636,18 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
             )
             head = f"{count_text}，可挑一环~{top} 环、环阶组合随意"
         lines = [
-            f"选择法术（{profession.cn}：{head}，"
-            f"施法属性 {profession.casting_text}）："
+            f"选择法术（{profession.cn}：{head}；施法属性 {profession.casting_text}）"
         ]
         lines.extend(_spell_list_lines(options, top))
         if profession.key == "wizard":
             limit = prepared_at(profession.key, session.level if session else 1)
             lines.append(
-                f"（法师挑的是**法术书**：共 {known} 条；今日可准备 {limit} 个，"
-                "长休后从法术书里挑）"
+                f"（法师挑的是法术书：共 {known} 条，今日可准备 {limit} 个，"
+                "长休后再从书里选）"
             )
         lines.append(
-            "回复序号（例如「1 3 5 8 9 10」），或直接写法术名（用逗号分隔）；"
-            "回复「自动」由我挑（优先高环）"
+            "回复序号（例如「1 3 5」）或法术名（逗号分隔）；"
+            "回复「自动」我按高环先挑"
         )
         return "\n".join(lines)
 
@@ -660,27 +656,27 @@ def creation_prompt(step: CreationStep, session: CreationSession | None = None) 
         done = session.asi_done if session else 0
         total = session.asi_count() if session else 0
         lines = [
-            f"属性提升（ASI）：这次是第 {done + 1} / {total} 次"
-            + (f"（还剩 {pending} 次）" if pending else ""),
+            f"属性提升：第 {done + 1} / {total} 次"
+            + (f"（这次之后还有 {pending - 1} 次）" if pending > 1 else ""),
             "选一种：",
-            "1. 一项 +2 —— 回复「力量 +2」（「力量+2」也行）",
+            "1. 一项 +2 —— 回复「力量 +2」",
             "2. 两项各 +1 —— 回复「力量 +1 体质 +1」",
-            f"（单项不超过 {ABILITY_SCORE_MAX}；回复「自动」加到主属性，"
-            "回复「跳过」放弃剩余加点）",
+            f"单项最多 {ABILITY_SCORE_MAX}。回复「自动」加到主属性，"
+            "回复「跳过」放弃剩下的加点。",
         ]
         if session and session.base_scores:
             lines.append("当前属性：" + session.final_scores_text())
         if session and session.epic_boon_unlocked():
             lines.append(
-                f"⚠️ Lv.{EPIC_BOON_LEVEL} 还该有一项**传奇恩惠**（第五章，不是属性提升）："
-                "建卡后由 DM 与你一起挑一项，用「改卡 特性」补上。"
+                f"⚠️ Lv.{EPIC_BOON_LEVEL} 还有一项传奇恩惠（不是属性提升）："
+                "建卡后跟 DM 一起挑，或用「改卡 特性」补上。"
             )
         return "\n".join(lines)
 
     if step is CreationStep.ALIGNMENT:
         return "\n".join(
             [
-                "选择阵营（纯扮演标记，**没有任何机械效果**；可以回复「跳过」）：",
+                "选择阵营（只影响扮演，没有数值效果；回复「跳过」也行）：",
                 alignment_options(),
                 "回复序号或阵营名（例如「混乱善良」「CG」）。",
             ]
@@ -975,15 +971,13 @@ class CreationSession:
     def assigned_scores_text(self) -> str:
         if not self.base_scores:
             return "未分配"
-        return "  ".join(f"{a.cn}{self.base_scores.get(a.key, '?')}" for a in ABILITIES)
+        return "、".join(f"{a.cn} {self.base_scores.get(a.key, '?')}" for a in ABILITIES)
 
     def final_scores_text(self) -> str:
         """含背景提升与 ASI 的属性展示（提升选完之后才有区别）。"""
         if not self.base_scores:
             return "未分配"
-        return "  ".join(
-            f"{a.cn}{self.final_score(a.key)}" for a in ABILITIES
-        )
+        return "、".join(f"{a.cn} {self.final_score(a.key)}" for a in ABILITIES)
 
     def total_boost(self, key: str) -> int:
         """某项属性的全部加值（背景提升 + 等级带来的 ASI）。"""
@@ -1183,7 +1177,7 @@ class CreationSession:
             return "\n".join(lines)
         if item == "expertise":
             pool = self.expertise_pool()
-            lines = ["专精：从你**已熟练**的技能里选 2 项，其熟练加值翻倍："]
+            lines = ["专精：从你已经熟练的技能里选 2 项，熟练加值翻倍："]
             lines.extend(
                 f"{index}. {cn}" for index, (_, cn) in enumerate(pool, 1)
             )
@@ -1230,7 +1224,7 @@ class CreationSession:
             other_pool = [s for s in pool if s.level > 0]
             lines = [
                 f"起源专长 魔法学徒（{class_cn}）：从{class_cn}法术表里选 "
-                f"{cantrips} 道戏法 + {count} 道{level}环法术："
+                f"{cantrips} 道戏法 + {count} 道{_circle_text(level)}法术："
             ]
             offset = 0
             if cantrips:
@@ -1243,14 +1237,17 @@ class CreationSession:
                 )
                 offset += len(cantrip_pool)
             if count and other_pool:
-                lines.append(f"◆ {level}环法术（选 {count} 道）：")
+                lines.append(f"◆ {_circle_text(level)}法术（选 {count} 道）：")
                 lines.append(
                     "  "
                     + "  ".join(
                         f"{i}.{s.cn}" for i, s in enumerate(other_pool, offset + 1)
                     )
                 )
-            lines.append(f"回复 {cantrips + count} 个序号或法术名（先戏法后{level}环法术）。")
+            lines.append(
+                f"回复 {cantrips + count} 个序号或法术名"
+                f"（先戏法后{_circle_text(level)}法术）。"
+            )
             return "\n".join(lines)
         return "1 级特性都选好了。"
 
@@ -1407,8 +1404,8 @@ class CreationSession:
             if not self.ability_candidates:
                 # 属性只有 roll 一条路：标准数组 / 手填六项数值都不再是入口
                 raise CreationError(
-                    "属性只能靠掷骰获得：请回复「roll」掷出候选属性组"
-                    "（每天一次），再从里面挑一组。"
+                    "属性只能靠掷骰得到：回复「roll」掷一组候选（每天一次），"
+                    "再从里面挑一组。"
                 )
             if lowered in _AUTO_WORDS:
                 best = max(
@@ -1420,8 +1417,8 @@ class CreationSession:
             index = _to_index(parts[0]) if len(parts) == 1 else None
             if index is None or not 0 <= index < len(self.ability_candidates):
                 raise CreationError(
-                    f"请回复 1~{len(self.ability_candidates)} 选一组属性，"
-                    "或回复「自动」由我挑；今天不能再掷，明天可再掷新的。"
+                    f"回复 1~{len(self.ability_candidates)} 挑一组，"
+                    "或回复「自动」；今天不能再掷，明天可以再掷。"
                 )
             return self.choose_ability_set(index)
         if step is CreationStep.RACE:
@@ -1522,7 +1519,7 @@ class CreationSession:
         self.record(f"属性：第 {index + 1} 组 {picked} → {self.assigned_scores_text()}")
         self.advance()
         return (
-            f"已选择第 {index + 1} 组属性：{self.assigned_scores_text()}"
+            f"就用第 {index + 1} 组：{self.assigned_scores_text()}"
             f"\n\n{creation_prompt(self.step, self)}"
         )
 

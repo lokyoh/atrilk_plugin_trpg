@@ -4252,11 +4252,17 @@ def state_tile(state: CombatState, combatant: Combatant):
 # --------------------------------------------------------------------------- #
 
 
-def light_text(state: CombatState) -> str:
-    """战场光照的一句话说明（给 DM 看）：遮蔽级别 + 会带来什么后果。"""
+def light_text(state: CombatState, *, brief: bool = False) -> str:
+    """战场光照的一句话说明。
+
+    :param brief: 只报遮蔽级别，不展开一整段规则解释——玩家侧
+        （``/跑团.存档``）看的是现状，不是规则条文。
+    """
     key = str(getattr(state, "light", "bright") or "bright")
     name = LIGHT_LEVELS.get(key, "明亮")
     obscured = light_obscurement(key)
+    if brief:
+        return f"光照：{name}" + (f"（{obscured}遮蔽）" if obscured else "")
     if obscured == "重度":
         return (
             f"光照：{name}（重度遮蔽——看不见里面的人，等同目盲：看不见目标的一方"
@@ -4308,22 +4314,31 @@ def threat_text(state: CombatState) -> str:
     return "【威胁】" + "；".join(parts)
 
 
-def combat_text(save: Save, state: CombatState, *, with_map: bool = True) -> str:
-    """战斗现状文本，用于 DM 输入与玩家提示。"""
+def combat_text(
+    save: Save, state: CombatState, *, with_map: bool = True, for_player: bool = False
+) -> str:
+    """战斗现状文本，用于 DM 输入与玩家提示。
+
+    :param for_player: 玩家侧（``/跑团.存档``）只留现状——去掉「系统已自动结算」
+        这类对 DM 的交代、会剧透的威胁层级（增援未到、首领传奇行动），
+        以及结尾那段死亡豁免规则说明；光照也只报遮蔽级别。
+        DM 侧保持原文，那些正是它要照着叙述的东西。
+    """
     current = current_actor(state)
     lines = [
         f"【战斗】第 {state.round} 轮，当前回合：{current.name if current else '（无人可行动）'}"
     ]
-    if state.pending:
+    if state.pending and not for_player:
         lines.append("系统已自动结算（请在叙述里体现）：")
         lines.extend(f"  · {item}" for item in state.pending)
     if state.note:
         lines.append(f"起因 / 环境：{state.note}")
-    threat_line = threat_text(state)
-    if threat_line:
-        lines.append(threat_line)
-    lines.append(light_text(state))
-    board = battlefield_text(state, with_map=with_map)
+    if not for_player:
+        threat_line = threat_text(state)
+        if threat_line:
+            lines.append(threat_line)
+    lines.append(light_text(state, brief=for_player))
+    board = battlefield_text(state, with_map=with_map, for_player=for_player)
     if board:
         lines.append(board)
     lines.append("先攻顺序：")
@@ -4361,8 +4376,9 @@ def combat_text(save: Save, state: CombatState, *, with_map: bool = True) -> str
             f" HP {hp_now}/{hp_max}　AC {effective_ac(save, combatant, state)}"
             f"{cover_text(state, combatant)}{status}{turn_used}{mark}"
         )
-    lines.append(
-        "（轮到倒地濒死的玩家时由系统自动掷死亡豁免：DC 10，3 次成功伤势稳定、3 次失败死亡；"
-        "倒地期间挨打会累计失败次数，任何治疗都能让他恢复意识）"
-    )
+    if not for_player:
+        lines.append(
+            "（轮到倒地濒死的玩家时由系统自动掷死亡豁免：DC 10，3 次成功伤势稳定、3 次失败死亡；"
+            "倒地期间挨打会累计失败次数，任何治疗都能让他恢复意识）"
+        )
     return "\n".join(lines)

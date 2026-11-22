@@ -478,10 +478,16 @@ def _player_rulings(
 #: 第一个全角 `）`，再收掉随之多出来的一个右括号。
 _DM_NOISE_RE = re.compile(r"（自动选用的武器：.+?））?")
 
+#: :attr:`CheckResult.consequence_hint`（DMG 2024 的成败后果层）也挂在 check
+#: 的返回里——注释写的是「只进 DM 回执」，可返回文本同时被 :func:`_player_rulings`
+#: 收进玩家的「🎲 判定」卡，于是「（只差 1~2：可给有代价的成功）」这种
+#: 裁定建议会直接摆到玩家面前。这里按这四句的开头把整段剥掉。
+_DM_HINT_RE = re.compile(r"（(?:大幅超出|明显超出|只差 1~2|差 ≥5)[^）]*）")
+
 
 def _strip_dm_noise(text: str) -> str:
     """判定明细发出去之前，先剥掉 DM 专有的说明。"""
-    return _DM_NOISE_RE.sub("", text).strip()
+    return _DM_HINT_RE.sub("", _DM_NOISE_RE.sub("", text)).strip()
 
 
 def _party_wiped(save) -> bool:
@@ -921,11 +927,11 @@ def _combat_banner(save, state, narration: str) -> str:
     先攻顺序、站位与距离照 ``combat_text`` 给，操作说明单独两行。
     """
     lines = ["⚔️ 战斗开始！先攻顺序与站位如下，之后每回合系统都会提示轮到谁："]
-    for line in combat_text(save, state, with_map=False).splitlines():
-        # 「地图布局与上一轮相同」是给 DM 的地图节流说明，开战第一帧没有上一轮
-        if line.startswith("（地图布局"):
-            continue
-        lines.append(line)
+    # for_player：不带「系统已自动结算」这类对 DM 的交代、会剧透的威胁层级，
+    # 以及只有 DM 用得上的地图节流说明（开战第一帧根本没有上一轮）
+    lines.extend(
+        combat_text(save, state, with_map=False, for_player=True).splitlines()
+    )
     actor = current_actor(state)
     if actor is not None:
         lines.append(

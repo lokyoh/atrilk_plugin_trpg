@@ -220,7 +220,12 @@ def set_level(card: Any, level: int) -> str:
 
 
 def level_up(card: Any, into: str = "") -> str:
-    """把角色卡升一级并返回给 DM 看的说明文本。
+    """把角色卡升一级并返回说明文本。
+
+    这段文字会跟着战斗结算一起进**玩家叙述**（见 :meth:`SettlementResult.text`），
+    所以措辞面向玩家：只说升级带来了什么、玩家接下来要做什么决定，
+    **不写工具名**。要提醒 DM 补特性 / 法术，由 DM 侧的调用点（``tools.py``）
+    另外附一句。
 
     :param into: 这一级加在**哪个职业**（职业键 / 中文名）。留空 = 主职业。
         兼职时由 DM 指定（``update_character`` 的「兼职」或升级选择里挑）；
@@ -274,30 +279,27 @@ def level_up(card: Any, into: str = "") -> str:
         f"生命上限 {old_max} → {new_max}（当前生命不变）",
         f"熟练加值 +{getattr(card, 'proficiency', 0)}",
     ]
-    # 生命上限默认按**平均值**算（手册给的选项之一）；想掷骰由 DM 补一句指令。
-    lines.append(
-        "（想掷生命骰而不是取平均：用 update_character 的「掷血」字段给这一级掷一次。）"
-    )
+    # 生命上限默认按**平均值**算（手册给的选项之一）；想掷骰由 DM 代掷。
+    # 这段文字会跟着战斗结算一起进玩家叙述（``settlement.text()``），
+    # 所以只讲玩家能自己做的事，不写 update_character 之类的工具名。
+    lines.append("这一级的生命上限按平均值算；想掷生命骰，跟 DM 说一声。")
     if card_is_multiclass(card):
         lines.append(
-            f"兼职卡：这一级记在 {profession}（等级最高的职业）。要改加到别的职业就先 "
-            "update_character 的「level」把等级减回 1 级，再用「兼职 职业名」加回去。"
+            f"兼职卡：这一级记在「{_class_cn(profession)}」（等级最高的职业）。"
+            "要加到别的职业上，跟 DM 说一声。"
         )
     class_level_now = card.class_level(profession) if profession else card.level
     if class_level_now in asi_levels_for(profession):
         lines.append(
-            f"Lv.{class_level_now} 可以选择属性提升（+2 点属性，或换成一项专长）——"
-            "请 DM 询问玩家的选择后再用 update_character 落盘。"
+            f"Lv.{class_level_now} 可以得到一次属性提升"
+            "（+2 点属性，或换成一项专长）—— 稍后会问你选什么。"
         )
     elif card.level == EPIC_BOON_LEVEL:
         lines.append(
-            f"Lv.{EPIC_BOON_LEVEL} 获得一项**传奇恩惠**（Epic Boon，见第五章）——"
-            "**不是 +2 属性**；请 DM 与玩家一起挑一项，再用 update_character 的"
-            "「特性」落盘。"
+            f"Lv.{EPIC_BOON_LEVEL} 获得一项传奇恩惠（不是 +2 属性）—— 和 DM 一起挑一项。"
         )
     lines.append(
-        "职业技能特性 / 新法术按职业表解锁；若该职业在此等级有新特性，请 DM 用 "
-        "update_character 的「特性」补上。"
+        "这一级的新特性 / 新法术按职业表解锁；系统没自动发放的部分，DM 会替你补到卡上。"
     )
     # 法术数量随等级涨（2024 职业表）：升级文本里直接算出「这一级该多几道」，
     # 免得 DM 每次都要翻表——引擎不替玩家挑，只把差额报出来。
@@ -311,6 +313,23 @@ def card_is_multiclass(card: Any) -> bool:
     """是不是兼职卡（不 import card，避免循环依赖）。"""
     levels = getattr(card, "class_levels", None)
     return isinstance(levels, dict) and len(levels) > 1
+
+
+def _class_cn(key: str) -> str:
+    """职业内部键 → 中文名。
+
+    升级说明会进玩家叙述，不能直接把 ``fighter`` 这种内部键摆给玩家看；
+    认不出来就原样返回——为一句提示抛错不值当。
+    """
+    text = str(key or "").strip()
+    if not text:
+        return ""
+    try:
+        from .profession import get_class
+
+        return get_class(text).cn
+    except Exception:
+        return text
 
 
 def spell_gain_text(profession: str, level: int) -> str:

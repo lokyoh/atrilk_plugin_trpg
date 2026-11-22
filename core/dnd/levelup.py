@@ -93,8 +93,8 @@ def start_session(
     """
     if getattr(card, "is_multiclass", False):
         return (
-            "（兼职卡不自动开升级选择会话：子职用 update_character 的"
-            "「子职 职业:子职名」，属性加点与这一级的新法术也请用 update_character 补。）"
+            "（这张是兼职卡，子职、属性加点和新法术要按这次升级的那个职业算，"
+            "系统不自动开选择：跟 DM 说一声，他会逐项帮你补到卡上。）"
         )
     session = _session_for(card, from_level, keep_global)
     todo = [step for step in _ORDER if session.levelup_step_needed(step)]
@@ -115,12 +115,13 @@ def start_session(
         else f"⬆️ Lv.{session.from_level} → Lv.{card.level} 的升级选择"
     )
     lines = [
-        head + "（回复后自动继续；回复「取消」跳过，稍后可用 /跑团.改卡 补）：",
+        head
+        + "。回复后自动往下走，选完直接存回角色卡并回到游戏；"
+        "不想现在选就回「取消」，之后用 /跑团.改卡 补：",
         "",
         creation_prompt(session.step, session),
         "",
-        "（选择期间你的消息会被当作选择内容；选完自动保存并回到游戏，"
-        "不想现在选就回复「取消」。）",
+        "（这一小段里你的消息都当作选择内容，其他指令等选完再发。）",
     ]
     rest = todo[1:]
     if rest:

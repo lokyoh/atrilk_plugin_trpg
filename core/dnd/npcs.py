@@ -664,8 +664,13 @@ _VOICE_HINT_LINE = (
 )
 
 
-def npcs_text(save: Save, limit: int = 20) -> str:
-    """名单文本（DM 查询 / 玩家看到的熟人）。"""
+def npcs_text(save: Save, limit: int = 20, *, for_player: bool = False) -> str:
+    """名单文本（DM 查询 / 玩家看到的熟人）。
+
+    :param for_player: 玩家侧（``/跑团.存档``）不附 :data:`_VOICE_HINT_LINE`——
+        那句是叫 DM 去 ``update_npc`` 里补说话风格的**操作提示**，
+        连工具名一起摆给玩家只会莫名其妙。
+    """
     records = list_npcs(save)
     if not records:
         return "（这局还没有记录在案的 NPC）"
@@ -674,7 +679,7 @@ def npcs_text(save: Save, limit: int = 20) -> str:
         lines.append("  " + record.brief())
     if len(records) > limit:
         lines.append(f"  ……还有 {len(records) - limit} 名")
-    if not any(record.voice for record in records):
+    if not for_player and not any(record.voice for record in records):
         lines.append(_VOICE_HINT_LINE)
     return "\n".join(lines)
 
