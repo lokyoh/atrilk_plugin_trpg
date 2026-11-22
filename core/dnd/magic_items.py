@@ -45,12 +45,27 @@ class MagicItem:
     text: str
     aliases: tuple[str, ...] = ()
     loot_tables: tuple[str, ...] = ()
+    #: 充能上限（0 = 不按充能运作）；由正文正则抽取，77 条物品有值。
+    charges_max: int = 0
+    #: 黎明恢复公式（如 ``1d6`` / ``1d4+4``）；空 = 原文没给固定公式，交 DM。
+    charges_recharge: str = ""
+    #: 正文带【诅咒】小节（中文包只标了明确写了诅咒的条目，覆盖不全）。
+    cursed: bool = False
 
     def describe(self) -> str:
         """给 DM 看的完整条目（原文已剥 5etools 标签）。"""
         lines = [f"{self.cn}（{self.en}）  {self.rarity} / {self.kind}"]
         if self.attunement:
             lines.append(f"同调：{self.attunement}")
+        if self.cursed:
+            lines.append("⚠️ 诅咒物品：同调后不能自行结束，需要『移除诅咒』或类似魔法")
+        if self.charges_max:
+            rec = (
+                f"黎明恢复 {self.charges_recharge}"
+                if self.charges_recharge
+                else "恢复方式按原文"
+            )
+            lines.append(f"充能：上限 {self.charges_max} 次，{rec}")
         lines.append(f"出处：XDMG p.{self.page}" if self.page else "出处：XDMG")
         if self.text:
             lines.append(self.text)
@@ -68,6 +83,9 @@ def _row(data: dict) -> MagicItem:
         text=str(data.get("text") or ""),
         aliases=as_texts(data.get("aliases")),
         loot_tables=as_texts(data.get("loot_tables")),
+        charges_max=int((data.get("charges") or {}).get("max") or 0),
+        charges_recharge=str((data.get("charges") or {}).get("recharge") or ""),
+        cursed=bool(data.get("cursed")),
     )
 
 

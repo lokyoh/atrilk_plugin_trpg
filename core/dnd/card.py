@@ -478,6 +478,10 @@ class DndCharacter(TrpgCharacter):
     #: 荒野形态 / 术法点 / 宿敌 / 动作如潮）。上限按等级查
     #: ``res/dnd/class_resources.yaml``，休息时按各自的恢复口径清零。
     resources: dict[str, int] = field(default_factory=dict)
+    #: **魔法物品的已用充能**：``{物品名: 已用}``。上限与黎明恢复公式查
+    #: ``res/dnd/magic_items.yaml``（77 条带充能的物品）；长休按「黎明」重置。
+    #: 与职业 ``resources`` 分开存——那套是按 ``SPENDABLE`` 白名单恢复的。
+    item_charges: dict[str, int] = field(default_factory=dict)
     #: 游泳速度（尺）；水生种族（海精灵 / 崔斯特 / 蜥蜴人等）在建卡或 DM 设定后非零。
     #: 用于水下战斗——有游泳速度时水下近战武器攻击不受劣势（见 combat.attack）。
     swim_speed: int = 0
@@ -556,6 +560,12 @@ class DndCharacter(TrpgCharacter):
         self.resources = {
             str(k): max(0, int(v or 0))
             for k, v in (self.resources or {}).items()
+            if str(k).strip() and int(v or 0) > 0
+        }
+        # 物品充能同理：只留正数，负值当 0
+        self.item_charges = {
+            str(k): max(0, int(v or 0))
+            for k, v in (self.item_charges or {}).items()
             if str(k).strip() and int(v or 0) > 0
         }
         # 生命骰消耗不能超过等级、也不能为负
@@ -996,6 +1006,69 @@ class DndCharacter(TrpgCharacter):
             self.action_surge_used = 0
             return True
         return False
+
+    # —— 魔法物品充能（DMG 2024 第七章：黎明恢复）——
+
+    def item_charge_state(self, name: str) -> tuple[int, int]:
+        """(已用, 上限)；不是充能物品返回 ``(0, 0)``。"""
+        from .magic_items import get_magic_item
+
+        item = get_magic_item(name)
+        if item is None or item.charges_max <= 0:
+            return 0, 0
+        used = max(0, min(item.charges_max, int(self.item_charges.get(item.cn, 0) or 0)))
+        return used, item.charges_max
+
+    def use_item_charge(self, name: str, count: int = 1) -> str:
+        """消耗物品充能；上限 / 余额不足直接拒绝，卡一点不动。"""
+        from .magic_items import get_magic_item
+
+        item = get_magic_item(name)
+        if item is None:
+            raise ValueError(f"没有「{name}」这件魔法物品")
+        if item.charges_max <= 0:
+            raise ValueError(f"{item.cn} 没有记载充能，按原文由 DM 裁定")
+        used, cap = self.item_charge_state(item.cn)
+        want = max(1, int(count or 1))
+        if used + want > cap:
+            raise ValueError(f"{item.cn} 只剩 {cap - used} 次充能（上限 {cap}）")
+        self.item_charges[item.cn] = used + want
+        return f"{item.cn} 消耗 {want} 次充能（剩 {cap - used - want}/{cap}）"
+
+    def reset_item_charges(self, rng: Any = None) -> str:
+        """长休后的「黎明」重置；返回给 DM 的说明，没有变化返回空串。
+
+        原文写「每日黎明恢复 1d6 个已消耗充能」这类公式的自动掷；只写了特殊
+        恢复方式（例如「必须浸入龙血」）的列进提示，交 DM 裁定。
+        """
+        from .magic_items import get_magic_item
+
+        if not self.item_charges:
+            return ""
+        done: list[str] = []
+        manual: list[str] = []
+        for name, used in list(self.item_charges.items()):
+            item = get_magic_item(name)
+            if item is None or item.charges_max <= 0:
+                self.item_charges.pop(name, None)
+                continue
+            if not item.charges_recharge:
+                manual.append(item.cn)
+                continue
+            back = roll(item.charges_recharge, rng=rng).total
+            left = max(0, min(item.charges_max, int(used) - back))
+            if left:
+                self.item_charges[name] = left
+                done.append(f"{item.cn} 回 {back} 次（还剩 {left} 次没回）")
+            else:
+                self.item_charges.pop(name, None)
+                done.append(f"{item.cn} 回满（+{back}）")
+        parts: list[str] = []
+        if done:
+            parts.append("黎明充能：" + "；".join(done))
+        if manual:
+            parts.append("恢复方式原文特殊、未自动算：" + "、".join(manual))
+        return "；".join(parts)
 
     # —— 职业资源（狂暴 / 回气 / 功力 / 引导神力……）——
 
@@ -1905,36 +1978,74 @@ class DndCharacter(TrpgCharacter):
         """与一件魔法物品同调（短休中专注完成）。
 
         规则：需同调的物品才谈得上同调；**同时至多 3 件**；不能与多于一件
-        **相同**的物品同调（两枚防护戒指只认一枚）。
+        **相同**的物品同调（两枚防护戒指只认一枚）。战役物品（``items.yaml``）
+        与官方表（``magic_items.yaml``）都认，官方表条目用中文名作 key。
 
         :return: ``(是否成功, 说明)``
         """
         item = get_item(name)
-        if item is None:
-            return False, f"「{name}」不是表里的魔法物品，谈不到同调。"
-        if not item.requires_attunement:
-            return False, f"{item.cn}不需要同调，拿着就能用。"
-        if item.key in self.attuned:
-            return False, f"已经与{item.cn}同调了。"
-        if len(self.attuned) >= 3:
-            held = "、".join(
-                (get_item(key).cn if get_item(key) else key) for key in self.attuned
-            )
-            return (
-                False,
-                f"同调已满 3 件（{held}）——先终止一个再同调{item.cn}。",
-            )
-        self.attuned = [*self.attuned, item.key]
-        return True, f"与{item.cn}完成同调（{len(self.attuned)}/3）。"
+        if item is not None:
+            key, label = item.key, item.cn
+            needs = item.requires_attunement
+        else:
+            from .magic_items import get_magic_item
 
-    def unattune(self, name: str) -> tuple[bool, str]:
-        """终止与某件物品的同调（短休中主动放弃，或物品被拿走 / 失效）。"""
+            magic = get_magic_item(name)
+            if magic is None:
+                return False, f"「{name}」不是表里的魔法物品，谈不到同调。"
+            key, label = magic.cn, magic.cn
+            needs = bool(magic.attunement)
+        if not needs:
+            return False, f"{label}不需要同调，拿着就能用。"
+        if key in self.attuned:
+            return False, f"已经与{label}同调了。"
+        if len(self.attuned) >= 3:
+            held = "、".join(self._attuned_label(k) for k in self.attuned)
+            return False, f"同调已满 3 件（{held}）——先终止一个再同调{label}。"
+        self.attuned = [*self.attuned, key]
+        note = f"与{label}完成同调（{len(self.attuned)}/3）。"
+        if self._is_cursed(key):
+            note += "（DM：这是诅咒物品，玩家不会自动知道；何时揭示由你定）"
+        return True, note
+
+    def _attuned_label(self, key: str) -> str:
+        item = get_item(key)
+        return item.cn if item is not None else str(key)
+
+    def _is_cursed(self, key: str) -> bool:
+        """这件物品是不是诅咒物品（战役表 / 官方表任一标了就算）。"""
+        item = get_item(key)
+        if item is not None and getattr(item, "cursed", False):
+            return True
+        from .magic_items import get_magic_item
+
+        magic = get_magic_item(key)
+        return bool(magic and magic.cursed)
+
+    def unattune(self, name: str, *, remove_curse: bool = False) -> tuple[bool, str]:
+        """终止与某件物品的同调（短休中主动放弃，或物品被拿走 / 失效）。
+
+        ⚠️ **诅咒物品不能自己结束**（DMG 2024 第七章）：只有 ``remove_curse=True``
+        （移除诅咒 / 类似魔法）才解得开；DM 按剧情裁定也走这个参数。
+        """
         item = get_item(name)
-        key = item.key if item else str(name).strip()
+        if item is not None:
+            key, label = item.key, item.cn
+        else:
+            from .magic_items import get_magic_item
+
+            magic = get_magic_item(name)
+            key = magic.cn if magic is not None else str(name).strip()
+            label = key
         if key not in self.attuned:
             return False, f"本来就没和「{name}」同调。"
+        if self._is_cursed(key) and not remove_curse:
+            return (
+                False,
+                f"{label}是诅咒物品：你不能主动结束同调，"
+                "需要『移除诅咒』或类似魔法（DM 也可按剧情裁定）。",
+            )
         self.attuned = [k for k in self.attuned if k != key]
-        label = item.cn if item else key
         return True, f"已终止与{label}的同调（剩 {len(self.attuned)}/3）。"
 
     def attunement_text(self) -> str:
@@ -2987,6 +3098,7 @@ class DndCharacter(TrpgCharacter):
             "alignment",
             "exp",
             "resources",
+            "item_charges",
             "hp_rolls",
             "prepared_spells",
             "current_hp",
