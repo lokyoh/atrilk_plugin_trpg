@@ -1373,7 +1373,12 @@ async def run_dm_round(
                 scene=scene,
                 npcs=roster,
                 bible=bible,
-                event_no=_event_brief(save),
+                # 键名必须与 ``DungeonMasterAgent.inputs`` 里的 ``AgentInput.name``
+                # 一致：``build_prompt`` 只按声明取键，多余的键**静默丢弃**
+                # （2026-11-23 审计发现这里曾写成 ``event_no``，于是【冒险构架】
+                # 整块连同 _EVENT_RULES 一直没进过提示词）。测试
+                # ``test_agent_run_passes_exactly_declared_inputs`` 锁死这一致性。
+                event=_event_brief(save),
                 ending=_ending_text(save),
                 combat=combat_block,
                 history=history,
