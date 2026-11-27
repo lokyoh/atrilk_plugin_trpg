@@ -106,12 +106,14 @@ from .matchers import (
     end_game,
     finish_game,
     join_save,
+    leave_game,
     make_check,
     query_data_cmd,
     resume_game,
     roll_dice,
     show_card,
     show_save,
+    skip_turn,
     start_game,
     start_round,
 )
@@ -2208,23 +2210,12 @@ dm_action = plugin.on_message(
 )
 
 
-@dm_action.handle()
-async def _dm_action(event: MessageEvent):
-    from .core.agents.dnd import submit_action
+async def _turn_message(result, save_id: str) -> Message:
+    """把一次主持结果拼成要发的消息（战斗图 / 叙述卡 / 结档尾巴都在这里）。
 
-    key = _chat_key(event)
-    save_id = get_binding(key)
-    result = await submit_action(
-        save_id=save_id,
-        user_id=event.get_user_id(),
-        action=event.get_plaintext().strip(),
-        chat_id=key,
-    )
-
-    # 只是提示（还没轮到你 / 请描述行动）：一句话回完就走，不拼前缀也不附图
-    if result.notice_only:
-        await dm_action.finish(result.text)
-
+    行动与「跳过」两条入口共用：跳过在战斗里同样会产出叙述与下一回合提示，
+    各自再抄一份渲染迟早会有一边忘了附图。
+    """
     actor_hint = _combat_actor_hint(save_id)
     in_combat = bool(actor_hint)
 
@@ -2253,4 +2244,105 @@ async def _dm_action(event: MessageEvent):
             for seg in images:
                 msg += seg
             msg += Message("\n\n" + _combat_quick_footer(save_id))
-    await dm_action.finish(msg)
+    return msg
+
+
+@dm_action.handle()
+async def _dm_action(event: MessageEvent):
+    from .core.agents.dnd import submit_action
+
+    key = _chat_key(event)
+    save_id = get_binding(key)
+    result = await submit_action(
+        save_id=save_id,
+        user_id=event.get_user_id(),
+        action=event.get_plaintext().strip(),
+        chat_id=key,
+    )
+
+    # 只是提示（还没轮到你 / 请描述行动）：一句话回完就走，不拼前缀也不附图
+    if result.notice_only:
+        await dm_action.finish(result.text)
+
+    await dm_action.finish(await _turn_message(result, save_id))
+
+
+@skip_turn.handle()
+async def _skip_turn(event: MessageEvent, args: Message = CommandArg()):
+    """本轮不再等某些玩家：有人掉线 / 长时间不回时，用它把这一轮推过去。
+
+    不带名字 = 跳过名单上所有还没提交的人；战斗中 = 当前行动者本回合弃权。
+    只是**这一轮**的事，被跳过的人随时可以再 @ 我 提交。
+    """
+    from .core.agents.dnd import is_started, resolve_players, skip_waiting
+
+    key = _chat_key(event)
+    save_id = get_binding(key)
+    if not save_id:
+        await skip_turn.finish("本会话没有进行中的冒险。发送 /跑团.开局 开一局吧。")
+
+    save = load_save(save_id)
+    if save is None:
+        await skip_turn.finish("这局冒险的存档不见了，发送 /跑团.开局 重新开启。")
+    if not is_started(save):
+        await skip_turn.finish("这一局还没开局，不用跳过谁：人齐了先发 /跑团.开始。")
+    if get_character(save, event.get_user_id()) is None:
+        await skip_turn.finish(f"你还没加入这一局，先发 /跑团.加入 {save.save_id}。")
+
+    raw = args.extract_plain_text().strip()
+    targets: list[str] | None = None
+    if raw:
+        ids, unknown = resolve_players(save, raw)
+        if unknown:
+            await skip_turn.finish(
+                f"没认出：{'、'.join(unknown)}。写角色名或 user_id，多个用、分隔。"
+            )
+        if not ids:
+            await skip_turn.finish("没认出要跳过的玩家：写角色名或 user_id。")
+        targets = ids
+
+    result = await skip_waiting(save_id=save_id, targets=targets, chat_id=key)
+    # 只是提示（还在等谁 / 没人可跳）：一句话回完就走，不拼前缀也不附图
+    if not result.narration:
+        await skip_turn.finish(result.text)
+
+    prefix = ""
+    if result.skipped_labels:
+        prefix = f"⏭️ 这一轮不再等：{'、'.join(result.skipped_labels)}。\n\n"
+    msg = await _turn_message(result, save_id)
+    await skip_turn.finish(Message(prefix) + msg if prefix else msg)
+
+
+@leave_game.handle()
+async def _leave_game(event: MessageEvent):
+    """开局前离队：角色卡留在插件目录，只是不在这一局里。"""
+    from .core.agents.dnd import is_started, leave_save
+
+    key = _chat_key(event)
+    save_id = get_binding(key)
+    if not save_id:
+        await leave_game.finish("本会话没有进行中的冒险。发送 /跑团.开局 开一局吧。")
+
+    save = load_save(save_id)
+    if save is None:
+        await leave_game.finish("这局冒险的存档不见了，发送 /跑团.开局 重新开启。")
+    if is_started(save):
+        await leave_game.finish(
+            "这一局已经开局，不能直接退出（你的角色在局里，血量 / 经验都记在存档上）。\n"
+            "· 只是暂时不在：让大家发 /跑团.跳过，这一轮先不等你\n"
+            "· 想让这一局收尾：/跑团.结档\n"
+            "· 想彻底不玩：等这局结档后再 /跑团.开局 开新的"
+        )
+    if get_character(save, event.get_user_id()) is None:
+        await leave_game.finish(f"你不在这一局里（存档 {save.save_id}）。")
+
+    leave_save(save, event.get_user_id())
+    left = len(save.player_ids)
+    tail = (
+        f"这一局还剩 {left} 人。"
+        if left
+        else "这一局的玩家都走了——可以 /跑团.结束 删除 收掉这个存档。"
+    )
+    await leave_game.finish(
+        f"👋 已离开存档 {save.save_id}（角色卡还在，下局直接 /跑团.加入 就能用）。\n{tail}"
+    )

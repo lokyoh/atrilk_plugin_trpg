@@ -70,6 +70,7 @@ from ...dnd.save_store import (
     log_event,
     next_story_round,
     read_scene,
+    remove_player,
     save_round,
     save_save,
     set_character,
@@ -90,12 +91,14 @@ __all__ = [
     "TurnResult",
     "build_scene_for_save",
     "is_started",
+    "leave_save",
     "open_scene",
     "resolve_players",
     "run_dm_round",
     "run_opening",
     "scene_brief",
     "scene_text",
+    "skip_waiting",
     "submit_action",
 ]
 
@@ -123,6 +126,8 @@ class TurnResult:
     #: 开场轮整理出的世界背景手册：落盘路径与正文（没有则为 ``None`` / 空串）
     world_brief_path: Any = None
     world_brief_text: str = ""
+    #: 本轮被 ``/跑团.跳过`` 剔出名单的玩家显示名（只用于给玩家一句提示）
+    skipped_labels: list[str] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -616,14 +621,19 @@ def _can_act(save, user_id: str) -> bool:
 
 
 def _filter_waiting(save, ids: list[str] | None) -> list[str] | None:
-    """把倒地 / 阵亡的玩家从等待名单里剔掉。
+    """把**交不出行动的人**从等待名单里剔掉。
 
-    他们交不出真正的行动，留在名单里只会把整局卡住；他们若想说话仍可以 @我，
-    提交的内容会带着「倒地 / 阵亡」标注一起交给 DM。
+    两类：倒地 / 阵亡的玩家（他们说话的描述只能当呓语），以及已经不在这一局
+    里的人（用 ``/跑团.退出`` 离开的）。留着只会把整局卡住；倒地者若想说话仍
+    可以 @我，提交的内容会带着「倒地 / 阵亡」标注一起交给 DM。
     """
     if ids is None:
         return None
-    return [uid for uid in ids if _can_act(save, uid)]
+    return [
+        uid
+        for uid in ids
+        if _can_act(save, uid) and str(uid) in {str(x) for x in save.player_ids}
+    ]
 
 
 def _downed_note(card) -> str:
@@ -973,6 +983,41 @@ def _shadow_intent(text: str, save, combat, card, actor) -> None:
         log.warning(f"战斗意图影子解析失败（不影响结算）：{str_traceback(e)}")
 
 
+async def _run_final_round(
+    save,
+    state,
+    *,
+    chat_id: str,
+    history_limit: int,
+    combat,
+    keep_resolution_for: str | None = None,
+) -> TurnResult:
+    """名单到齐（或被跳过）后，把攒下的行动交给 DM 做整轮总结。
+
+    抽出来是因为「末位玩家提交」与「有人被跳过」两条路都要走它——跳过之后
+    名单直接空掉，如果各自再抄一份，两边的 ``skip_resolution`` 迟早会不一致。
+
+    :param keep_resolution_for: 最后提交的那名玩家。逐人结算时别人的检定已经
+        回显过，整轮里不再重复；他的还没回显过，所以留着。``None`` = 一个都不留
+        （调用方保证这些行动都已经各自回显过，例如「跳过剩余名单」）。
+    """
+    actions = state.actions
+    state.actions = {}
+    save_round(save, state)
+    skip_resolution = None
+    if combat is None and settings.use_partial(save):
+        keep = str(keep_resolution_for or "")
+        skip_resolution = {str(uid) for uid in actions if str(uid) != keep}
+    return await run_dm_round(
+        save_id=save.save_id,
+        actions=actions,
+        chat_id=chat_id,
+        history_limit=history_limit,
+        phase=_FINAL_PHASE if combat is None else "",
+        skip_resolution=skip_resolution,
+    )
+
+
 async def submit_action(
     *,
     save_id: str,
@@ -1138,22 +1183,156 @@ async def submit_action(
         return partial
 
     # 名单上的人都提交了：清空本轮行动（保留名单），再交给 DM 做整轮总结。
-    actions = state.actions
-    state.actions = {}
-    save_round(save, state)
-    return await run_dm_round(
-        save_id=save.save_id,
-        actions=actions,
+    return await _run_final_round(
+        save,
+        state,
         chat_id=chat_id,
         history_limit=history_limit,
-        phase=_FINAL_PHASE if combat is None else "",
-        # 前面几名的检定结果已经在逐人结算时回显过，整轮总结里不重复
-        skip_resolution=(
-            {str(uid) for uid in actions if str(uid) != str(user_id)}
-            if combat is None and settings.use_partial(save)
-            else None
-        ),
+        combat=combat,
+        keep_resolution_for=str(user_id),
     )
+
+
+#: 战斗中代替掉线玩家提交的「行动」文本：让 DM 叙述他这一回合没动，并把回合交出去
+_SKIP_COMBAT_PROMPT = (
+    "【系统】{name} 这一回合没有行动（其他玩家代发「跳过」，他可能掉线或不在）。"
+    "请用一句话交代他愣住 / 迟疑 / 失神，**不要替他做任何决定**、也不要替他掷骰，"
+    "然后把回合交给下一位。"
+)
+
+
+async def skip_waiting(
+    *,
+    save_id: str,
+    targets: list[str] | None = None,
+    chat_id: str = "",
+    history_limit: int = 10,
+) -> TurnResult:
+    """把玩家从**本轮**的等待里剔掉：一个人掉线不该把整局卡住。
+
+    - **剧情轮**：``targets`` 为空 = 跳过名单上所有还没提交的人。剔完之后名单空了，
+      就把已经收到的行动直接交给 DM 做整轮总结（被跳过的人这轮没有动作）。
+    - **战斗轮**：名单由先攻决定，只有当前行动者能被跳过；效果是他**本回合弃权**，
+      交给 DM 叙述后由系统推进到下一名（敌人回合照常自动结算）。
+
+    跳过只影响**这一轮**：被跳过的人随时可以再 @ 我 提交，赶得上就一起算。
+    不删角色卡、不动血量、不改等待名单的「下一轮」语义（名单照旧由 DM / 先攻决定）。
+    """
+    save = load_save(save_id)
+    if save is None:
+        return TurnResult(
+            Verdict.NEED_INFO,
+            message="这局冒险的存档不见了，发送 /跑团.开局 重新开启。",
+        )
+    if not is_started(save):
+        return TurnResult(Verdict.NEED_INFO, message="这一局还没开局，不用跳过谁。")
+
+    combat = load_combat(save)
+    if combat is not None:
+        actor = current_actor(combat)
+        if actor is None:
+            return TurnResult(Verdict.NEED_INFO, message="现在没有轮到谁行动。")
+        if targets and str(actor.cid) not in {str(t) for t in targets}:
+            return TurnResult(
+                Verdict.NEED_INFO,
+                message=(
+                    f"战斗中只有当前回合的【{actor.name}】能跳过"
+                    "（别人本来就不在名单上）。要让他弃权就发 /跑团.跳过。"
+                ),
+            )
+        return await run_dm_round(
+            save_id=save.save_id,
+            actions={
+                str(actor.cid): {
+                    "action": _SKIP_COMBAT_PROMPT.format(name=actor.name),
+                    # 历史 / 复盘里只写这一句，别把系统代发的正文抄进去
+                    "log": "（本回合弃权：其他玩家代发「跳过」）",
+                    "resolution": "",
+                    "note": "",
+                    "hint": "",
+                }
+            },
+            chat_id=chat_id,
+            history_limit=history_limit,
+        )
+
+    state = load_round(save)
+    # waiting 为 None = 还没指定过，按全员算；先固化下来，才能把谁剔出去写回存档。
+    if state.waiting is None:
+        state.waiting = _filter_waiting(save, list(save.player_ids)) or []
+    pending = state.pending_ids()
+    if targets:
+        wanted = {str(t) for t in targets}
+        skipped = [uid for uid in pending if str(uid) in wanted]
+    else:
+        skipped = list(pending)
+    if not skipped:
+        return TurnResult(
+            Verdict.NEED_INFO,
+            message=(
+                "名单上没有人需要跳过——大家都已经提交了。"
+                if not pending
+                else "没认出要跳过的玩家：写角色名或 user_id，多个用、分隔。"
+            ),
+        )
+    state.waiting = [uid for uid in state.waiting if uid not in skipped]
+    save_round(save, state)
+
+    names = "、".join(_player_label(save, uid) for uid in skipped)
+    still = state.pending_ids()
+    if still:
+        return TurnResult(
+            Verdict.ACCEPT,
+            message=(
+                f"⏭️ 这一轮不再等：{names}。\n"
+                f"还在等：{'、'.join(_player_label(save, uid) for uid in still)}。"
+            ),
+            waiting_for=still,
+        )
+    if not state.actions:
+        # 谁都没提交就被跳完了：没有可结算的内容，把名单还原，别把这一轮悄悄吃掉
+        state.waiting = [*state.waiting, *skipped]
+        save_round(save, state)
+        return TurnResult(
+            Verdict.NEED_INFO,
+            message=(
+                f"这一轮还没有任何人提交行动，跳过 {names} 之后没有可结算的内容。\n"
+                "先描述你要做什么，或者直接发 /跑团.结束 暂停这一局。"
+            ),
+        )
+    result = await _run_final_round(
+        save,
+        state,
+        chat_id=chat_id,
+        history_limit=history_limit,
+        combat=None,
+        keep_resolution_for=None,
+    )
+    result.skipped_labels = [name for name in names.split("、") if name]
+    return result
+
+
+def leave_save(save, user_id: str) -> bool:
+    """把玩家移出这一局（**只在未开局时**由调用方放行）。
+
+    顺带把他从本轮等待名单与已提交行动里抹掉——否则剩下的人会一直等一个
+    已经不在存档里的人。角色卡本身留在插件目录，下一局还能用。
+    """
+    if get_character(save, user_id) is None:
+        return False
+    state = load_round(save)
+    touched = False
+    if state.waiting is not None and str(user_id) in [
+        str(uid) for uid in state.waiting
+    ]:
+        state.waiting = [uid for uid in state.waiting if str(uid) != str(user_id)]
+        touched = True
+    if str(user_id) in state.actions:
+        state.actions.pop(str(user_id), None)
+        touched = True
+    if touched:
+        save_round(save, state)
+    return remove_player(save, str(user_id))
 
 
 #: 开场轮交给 DM 的「行动」文本：代替玩家提交，让 DM 直接给出开场白
@@ -1184,6 +1363,8 @@ async def run_dm_round(
     """把本轮的玩家行动交给 DM 主持、落事件日志，并记下 DM 决定的下一轮等待名单。
 
     :param actions: ``{user_id: {"action": ..., "resolution": ...}}``。
+        可选的 ``log`` 是**进历史 / 复盘时替代 action 的文本**：系统代发的条目
+        （例如 ``/跑团.跳过`` 让谁弃权）不该把给模型的正文原样抄进「已发生」。
     :param opening: ``True`` 时为开场轮：没有玩家行动，DM 直接给出开场白。
     :param phase: 本轮进度说明（逐人结算 / 整轮总结），只说给 DM 听。
     :param partial: ``True`` 表示逐人结算：只讲这一名玩家的结果，**不**推进等待名单、
@@ -1230,8 +1411,12 @@ async def run_dm_round(
 
         # 逐人结算先不记行动流水：整轮总结时会把所有行动一起记下来，
         # 免得历史里同一句行动出现两遍（那一轮的叙述照样会记）。
+        #
+        # ``log`` 是**给历史 / 复盘看的替代文本**：弃权这类系统代发的条目，
+        # 交给模型的正文（"【系统】…"）不该原样进「已发生」。
         if not partial:
-            log_event(save, "action", action, actor=str(user_id))
+            log_text = str(item.get("log", "") or "").strip() or action
+            log_event(save, "action", log_text, actor=str(user_id))
             if resolution:
                 log_event(save, "check", resolution, actor=str(user_id))
 
@@ -1557,7 +1742,10 @@ async def run_dm_round(
                 else [
                     (
                         _player_label(save, uid),
-                        str((actions.get(uid) or {}).get("action", "")),
+                        str(
+                            (actions.get(uid) or {}).get("log", "")
+                            or (actions.get(uid) or {}).get("action", "")
+                        ),
                     )
                     for uid in order
                 ]
