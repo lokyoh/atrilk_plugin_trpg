@@ -76,6 +76,7 @@ from .combat import (
     party_level,
     peek_following,
     player_status,
+    record_defeat,
     resource_of,
     resources_text,
     save_combat,

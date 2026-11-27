@@ -119,7 +119,6 @@ __all__ = [
     "ensure_site",
     "epithet_agent",
     "epoch_deeds",
-    "event_plan",
     "get_agent",
     "is_started",
     "normalize_kind",
